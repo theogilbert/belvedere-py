@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dbelveder-py"
+version = "0.1.0"
+description = "Database backend for dbelveder.nvim"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+dbelveder = "dbelveder.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dbelveder"]

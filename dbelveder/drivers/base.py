@@ -1,0 +1,34 @@
+from abc import ABC, abstractmethod
+from typing import Any
+
+from ..protocol import ExploreItem
+
+
+class BaseDriver(ABC):
+    """
+    All drivers receive the raw `params` dict from the connect request,
+    e.g. {"driver": "sqlite", "database": "/path/to/db.sqlite"}.
+
+    explore_list(path) uses a path list to navigate the hierarchy:
+      []              → top-level items  (schemas, databases, …)
+      ["schema"]      → items inside schema
+      ["schema","tbl"]→ items inside table (columns, indices, …)
+    """
+
+    def __init__(self, params: dict[str, Any]) -> None:
+        self.params = params
+
+    @abstractmethod
+    async def connect(self) -> None: ...
+
+    @abstractmethod
+    async def disconnect(self) -> None: ...
+
+    @abstractmethod
+    async def execute(self, sql: str, binds: list[Any]) -> tuple[list[str], list[list[Any]]]: ...
+
+    @abstractmethod
+    async def explore_list(self, path: list[str]) -> list[ExploreItem]: ...
+
+    @abstractmethod
+    async def explore_describe(self, path: list[str]) -> dict[str, Any]: ...

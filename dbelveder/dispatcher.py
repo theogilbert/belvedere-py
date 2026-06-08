@@ -6,10 +6,10 @@ from .drivers.base import BaseDriver
 
 class Dispatcher:
     def __init__(self) -> None:
-        self._driver: BaseDriver | None = None
+        self._connections: dict[str, BaseDriver] = {}
+        self._next_id: int = 0
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        # "explore.list" → "_handle_explore_list"
         handler_name = "_handle_" + method.replace(".", "_")
         handler = getattr(self, handler_name, None)
         if handler is None:
@@ -19,47 +19,47 @@ class Dispatcher:
     # ── connection ──────────────────────────────────────────────────────────
 
     async def _handle_connect(self, params: dict[str, Any]) -> dict[str, Any]:
-        driver_name: str = params["driver"]
-        if self._driver is not None:
-            await self._driver.disconnect()
-        self._driver = get_driver(driver_name)(params)
-        await self._driver.connect()
-        return {"ok": True}
+        driver = get_driver(params["driver"])(params)
+        await driver.connect()
+        conn_id = str(self._next_id)
+        self._next_id += 1
+        self._connections[conn_id] = driver
+        return {"connection_id": conn_id}
 
     async def _handle_disconnect(self, params: dict[str, Any]) -> dict[str, Any]:
-        if self._driver:
-            await self._driver.disconnect()
-            self._driver = None
+        conn_id: str = params["connection_id"]
+        driver = self._connections.pop(conn_id, None)
+        if driver:
+            await driver.disconnect()
         return {"ok": True}
 
     # ── query ────────────────────────────────────────────────────────────────
 
     async def _handle_execute(self, params: dict[str, Any]) -> dict[str, Any]:
-        self._require_connected()
+        driver = self._require_connection(params["connection_id"])
         sql: str = params["sql"]
         binds: list[Any] = params.get("params") or []
-        assert self._driver
-        columns, rows = await self._driver.execute(sql, binds)
+        columns, rows = await driver.execute(sql, binds)
         return {"columns": columns, "rows": rows}
 
     # ── exploration ──────────────────────────────────────────────────────────
 
     async def _handle_explore_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        self._require_connected()
+        driver = self._require_connection(params["connection_id"])
         path: list[str] = params.get("path") or []
-        assert self._driver
-        items = await self._driver.explore_list(path)
+        items = await driver.explore_list(path)
         return {"items": items}
 
     async def _handle_explore_describe(self, params: dict[str, Any]) -> dict[str, Any]:
-        self._require_connected()
+        driver = self._require_connection(params["connection_id"])
         path: list[str] = params.get("path") or []
-        assert self._driver
-        details = await self._driver.explore_describe(path)
+        details = await driver.explore_describe(path)
         return {"details": details}
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
-    def _require_connected(self) -> None:
-        if self._driver is None:
-            raise RuntimeError("Not connected — call 'connect' first")
+    def _require_connection(self, conn_id: str) -> BaseDriver:
+        driver = self._connections.get(conn_id)
+        if driver is None:
+            raise KeyError(f"Unknown connection_id: {conn_id!r}")
+        return driver

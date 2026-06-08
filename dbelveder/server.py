@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from json import JSONDecodeError
 from typing import BinaryIO
 
 from .dispatcher import Dispatcher
@@ -31,8 +32,15 @@ class Server:
             line = await reader.readline()
             if not line:
                 break
-            msg: Request = decode(line)
-            asyncio.create_task(self._handle(msg))
+            try:
+                msg: Request = decode(line)
+                asyncio.create_task(self._handle(msg))
+            except JSONDecodeError:
+                err = Result(id=None, result=None, error="decode error")
+                await self._send(err)
+            except TypeError:
+                err = Result(id=None, result=None, error="invalid request")
+                await self._send(err)
 
     async def _handle(self, msg: Request) -> None:
         async def send_progress(status: str, message: str) -> None:

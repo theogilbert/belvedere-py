@@ -1,7 +1,8 @@
 from typing import Any
 
 from .drivers import get_driver
-from .drivers.base import BaseDriver
+from .drivers.base import BaseDriver, ConnectionLostError
+from .protocol import ProgressCallback
 
 
 class Dispatcher:
@@ -9,11 +10,15 @@ class Dispatcher:
         self._connections: dict[str, BaseDriver] = {}
         self._next_id: int = 0
 
-    async def dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def dispatch(
+        self, method: str, params: dict[str, Any], send_progress: ProgressCallback
+    ) -> dict[str, Any]:
         handler_name = "_handle_" + method.replace(".", "_")
         handler = getattr(self, handler_name, None)
         if handler is None:
             raise ValueError(f"Unknown method: {method!r}")
+        if method == "execute":
+            return await handler(params, send_progress)
         return await handler(params)
 
     # ── connection ──────────────────────────────────────────────────────────
@@ -35,11 +40,19 @@ class Dispatcher:
 
     # ── query ────────────────────────────────────────────────────────────────
 
-    async def _handle_execute(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_execute(
+        self, params: dict[str, Any], send_progress: ProgressCallback
+    ) -> dict[str, Any]:
         driver = self._require_connection(params["connection_id"])
         sql: str = params["sql"]
         binds: list[Any] = params.get("params") or []
-        columns, rows = await driver.execute(sql, binds)
+        try:
+            columns, rows = await driver.execute(sql, binds)
+        except ConnectionLostError:
+            await send_progress("reconnecting", "Connection lost — reconnecting…")
+            await driver.connect()
+            await send_progress("executing", "Retrying query…")
+            columns, rows = await driver.execute(sql, binds)
         return {"columns": columns, "rows": rows}
 
     # ── exploration ──────────────────────────────────────────────────────────

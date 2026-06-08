@@ -4,6 +4,10 @@ from typing import Any
 from ..protocol import ExploreItem
 
 
+class ConnectionLostError(Exception):
+    """Raised by a driver when the database connection has been lost and a reconnect should be attempted."""
+
+
 class BaseDriver(ABC):
     """
     All drivers receive the raw `params` dict from the connect request,
@@ -25,7 +29,9 @@ class BaseDriver(ABC):
     async def disconnect(self) -> None: ...
 
     @abstractmethod
-    async def execute(self, sql: str, binds: list[Any]) -> tuple[list[str], list[list[Any]]]: ...
+    async def execute(
+        self, sql: str, binds: list[Any]
+    ) -> tuple[list[str], list[list[Any]]]: ...
 
     @abstractmethod
     async def explore_list(self, path: list[str]) -> list[ExploreItem]: ...

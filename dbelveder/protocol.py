@@ -8,32 +8,38 @@ Progress (python → nvim): {id: int, progress: {status: str, message: str}}
 
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any, TypedDict
+from dataclasses import asdict, dataclass
+from typing import Any
 
 
-class Request(TypedDict):
+@dataclass
+class Request:
     id: int
     method: str
     params: dict[str, Any]
 
 
-class Result(TypedDict):
+@dataclass
+class Result:
     id: int | None
     result: Any
     error: str | None
 
 
-class ProgressDetail(TypedDict):
+@dataclass
+class ProgressDetail:
     status: str
     message: str
 
 
-class Progress(TypedDict):
+@dataclass
+class Progress:
     id: int
     progress: ProgressDetail
 
 
-class ExploreItem(TypedDict):
+@dataclass
+class ExploreItem:
     name: str
     type: str
     expandable: bool
@@ -54,8 +60,8 @@ Arguments:
 
 
 def encode(msg: Response) -> bytes:
-    return (json.dumps(msg, separators=(",", ":")) + "\n").encode()
+    return (json.dumps(asdict(msg), separators=(",", ":")) + "\n").encode()
 
 
 def decode(line: bytes) -> Request:
-    return json.loads(line)
+    return Request(**json.loads(line))

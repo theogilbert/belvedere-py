@@ -48,21 +48,21 @@ class SQLiteDriver(BaseDriver):
                     "SELECT name, type FROM sqlite_master"
                     " WHERE type IN ('table','view') ORDER BY name"
                 ).fetchall()
-                return [{"name": r[0], "type": r[1], "expandable": True} for r in rows]
+                return [ExploreItem(name=r[0], type=r[1], expandable=True) for r in rows]
 
             case [_table]:
                 return [
-                    {"name": "columns", "type": "group", "expandable": True},
-                    {"name": "indices", "type": "group", "expandable": True},
+                    ExploreItem(name="columns", type="group", expandable=True),
+                    ExploreItem(name="indices", type="group", expandable=True),
                 ]
 
             case [table, "columns"]:
                 rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-                return [{"name": r[1], "type": r[2], "expandable": False} for r in rows]
+                return [ExploreItem(name=r[1], type=r[2], expandable=False) for r in rows]
 
             case [table, "indices"]:
                 rows = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
-                return [{"name": r[1], "type": "index", "expandable": False} for r in rows]
+                return [ExploreItem(name=r[1], type="index", expandable=False) for r in rows]
 
             case _:
                 return []

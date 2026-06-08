@@ -1,16 +1,23 @@
 import asyncio
 import sys
-from io import BufferedWriter
-from typing import Any
+from typing import BinaryIO
 
 from .dispatcher import Dispatcher
-from .protocol import Result, decode, encode
+from .protocol import (
+    Progress,
+    ProgressDetail,
+    Request,
+    Response,
+    Result,
+    decode,
+    encode,
+)
 
 
 class Server:
     def __init__(self) -> None:
         self._dispatcher = Dispatcher()
-        self._stdout: BufferedWriter = sys.stdout.buffer  # type: ignore[assignment]
+        self._stdout: BinaryIO = sys.stdout.buffer
         self._lock = asyncio.Lock()
 
     async def run(self) -> None:
@@ -24,28 +31,28 @@ class Server:
             line = await reader.readline()
             if not line:
                 break
-            msg: dict[str, Any] = decode(line)
+            msg: Request = decode(line)
             asyncio.create_task(self._handle(msg))
 
-    async def _handle(self, msg: dict[str, Any]) -> None:
-        msg_id: int | None = msg.get("id")
-        method: str = msg.get("method") or ""
-        params: dict[str, Any] = msg.get("params") or {}
-
+    async def _handle(self, msg: Request) -> None:
         async def send_progress(status: str, message: str) -> None:
             await self._send(
-                {"id": msg_id, "progress": {"status": status, "message": message}}
+                Progress(
+                    id=msg.id, progress=ProgressDetail(status=status, message=message)
+                )
             )
 
         response: Result
         try:
-            result = await self._dispatcher.dispatch(method, params, send_progress)
-            response = {"id": msg_id, "result": result, "error": None}
+            result = await self._dispatcher.dispatch(
+                msg.method or "", msg.params or {}, send_progress
+            )
+            response = Result(id=msg.id, result=result, error=None)
         except Exception as exc:
-            response = {"id": msg_id, "result": None, "error": str(exc)}
+            response = Result(id=msg.id, result=None, error=str(exc))
         await self._send(response)
 
-    async def _send(self, msg: Result) -> None:
+    async def _send(self, msg: Response) -> None:
         data = encode(msg)
         async with self._lock:
             self._stdout.write(data)

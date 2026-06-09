@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from dbelveder.dispatcher import Dispatcher
 from dbelveder.drivers.base import ConnectionLostError
-from dbelveder.protocol import ExploreItem
+from dbelveder.protocol import ColumnInfo, ExploreItem, TableDescription
 
 
 async def noop_progress(status: str, message: str) -> None:
@@ -23,7 +23,7 @@ def mock_driver() -> AsyncMock:
     d = AsyncMock()
     d.execute.return_value = ([], [])
     d.explore_list.return_value = []
-    d.explore_describe.return_value = {}
+    d.explore_describe.return_value = None
     return d
 
 
@@ -126,9 +126,10 @@ class TestExploreList:
 class TestExploreDescribe:
     async def test_should_return_details_from_driver(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
         disp, conn_id, driver = connected
-        driver.explore_describe.return_value = {"table": "t", "columns": []}
+        td = TableDescription(table="t", columns=[ColumnInfo(name="id", type="INTEGER")])
+        driver.explore_describe.return_value = td
         result = await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress)
-        assert result == {"details": {"table": "t", "columns": []}}
+        assert result == {"details": td}
 
     async def test_should_cache_result_on_repeated_calls(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
         disp, conn_id, driver = connected

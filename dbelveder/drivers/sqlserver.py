@@ -5,7 +5,7 @@ from asyncio import AbstractEventLoop
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from ..protocol import ExploreItem
+from ..protocol import ColumnInfo, ExploreItem, TableDescription
 from .base import BaseDriver, ConnectionLostError
 
 if TYPE_CHECKING:
@@ -157,10 +157,10 @@ class SQLServerDriver(BaseDriver):
             case _:
                 return []
 
-    async def explore_describe(self, path: list[str]) -> dict[str, Any]:
+    async def explore_describe(self, path: list[str]) -> TableDescription | None:
         return await self._run(self._explore_describe_sync, path)
 
-    def _explore_describe_sync(self, path: list[str]) -> dict[str, Any]:
+    def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
         assert self._conn
         match path:
             case [schema, table]:
@@ -172,22 +172,16 @@ class SQLServerDriver(BaseDriver):
                     " ORDER BY ORDINAL_POSITION",
                     (schema, table),
                 )
-                cols = cur.fetchall()
-                return {
-                    "schema": schema,
-                    "table": table,
-                    "columns": [
-                        {
-                            "name": r[0],
-                            "type": r[1],
-                            "nullable": r[2] == "YES",
-                            "default": r[3],
-                        }
-                        for r in cols
+                return TableDescription(
+                    table=table,
+                    schema=schema,
+                    columns=[
+                        ColumnInfo(name=r[0], type=r[1], nullable=r[2] == "YES", default=r[3])
+                        for r in cur.fetchall()
                     ],
-                }
+                )
             case _:
-                return {}
+                return None
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         assert self._loop

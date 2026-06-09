@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from dbelveder.drivers.sqlserver import SQLServerDriver
-from dbelveder.protocol import ExploreItem
+from dbelveder.protocol import ExploreItem, TableDescription
 
 
 def _params() -> dict:
@@ -214,16 +214,17 @@ class TestExploreDescribe:
             f"CREATE TABLE dbo.{table} (id INT NOT NULL, val VARCHAR(50) NULL)", []
         )
         desc = await driver.explore_describe(["dbo", table])
-        assert desc["schema"] == "dbo"
-        assert desc["table"] == table
-        cols = {c["name"]: c for c in desc["columns"]}
+        assert isinstance(desc, TableDescription)
+        assert desc.schema == "dbo"
+        assert desc.table == table
+        cols = {c.name: c for c in desc.columns}
         assert list(cols) == ["id", "val"]
-        assert cols["id"]["type"] == "int"
-        assert cols["id"]["nullable"] is False
-        assert cols["val"]["type"] == "varchar"
-        assert cols["val"]["nullable"] is True
+        assert cols["id"].type == "int"
+        assert cols["id"].nullable is False
+        assert cols["val"].type == "varchar"
+        assert cols["val"].nullable is True
 
-    async def test_should_return_empty_for_unknown_path(
+    async def test_should_return_none_for_unknown_path(
         self, driver: SQLServerDriver
     ) -> None:
-        assert await driver.explore_describe([]) == {}
+        assert await driver.explore_describe([]) is None

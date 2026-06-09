@@ -4,7 +4,7 @@ from asyncio import AbstractEventLoop
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ..protocol import ExploreItem
+from ..protocol import ColumnInfo, ExploreItem, TableDescription
 from .base import BaseDriver
 
 T = TypeVar("T")
@@ -75,23 +75,23 @@ class SQLiteDriver(BaseDriver):
             case _:
                 return []
 
-    async def explore_describe(self, path: list[str]) -> dict[str, Any]:
+    async def explore_describe(self, path: list[str]) -> TableDescription | None:
         return await self._run(self._explore_describe_sync, path)
 
-    def _explore_describe_sync(self, path: list[str]) -> dict[str, Any]:
+    def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
         assert self._conn
         match path:
             case [table]:
                 cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-                return {
-                    "table": table,
-                    "columns": [
-                        {"name": r[1], "type": r[2], "notnull": bool(r[3]), "pk": bool(r[5])}
+                return TableDescription(
+                    table=table,
+                    columns=[
+                        ColumnInfo(name=r[1], type=r[2], nullable=not bool(r[3]), pk=bool(r[5]))
                         for r in cols
                     ],
-                }
+                )
             case _:
-                return {}
+                return None
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         assert self._loop

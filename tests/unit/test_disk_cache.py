@@ -5,7 +5,7 @@ import pytest
 
 from dbelveder.dispatcher import Dispatcher
 from dbelveder.explore_cache import cache_file
-from dbelveder.protocol import ExploreItem
+from dbelveder.protocol import ExploreItem, TableDescription
 
 
 async def noop_progress(status: str, message: str) -> None:
@@ -16,7 +16,7 @@ async def noop_progress(status: str, message: str) -> None:
 def mock_driver() -> AsyncMock:
     d = AsyncMock()
     d.explore_list.return_value = [ExploreItem(name="t", type="table", expandable=True)]
-    d.explore_describe.return_value = {"table": "t", "columns": []}
+    d.explore_describe.return_value = TableDescription(table="t", columns=[])
     return d
 
 

@@ -90,23 +90,26 @@ class TestExploreDescribe:
     async def test_should_return_column_names_and_types(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         desc = await driver.explore_describe(["t"])
-        assert desc["table"] == "t"
-        assert [c["name"] for c in desc["columns"]] == ["id", "val"]
-        assert [c["type"] for c in desc["columns"]] == ["INTEGER", "TEXT"]
+        assert desc is not None
+        assert desc.table == "t"
+        assert [c.name for c in desc.columns] == ["id", "val"]
+        assert [c.type for c in desc.columns] == ["INTEGER", "TEXT"]
 
-    async def test_should_return_notnull_flag(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_nullable_flag(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", [])
         desc = await driver.explore_describe(["t"])
-        by_name = {c["name"]: c for c in desc["columns"]}
-        assert by_name["a"]["notnull"] is True
-        assert by_name["b"]["notnull"] is False
+        assert desc is not None
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["a"].nullable is False
+        assert by_name["b"].nullable is True
 
     async def test_should_return_pk_flag(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
         desc = await driver.explore_describe(["t"])
-        by_name = {c["name"]: c for c in desc["columns"]}
-        assert by_name["id"]["pk"] is True
-        assert by_name["val"]["pk"] is False
+        assert desc is not None
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["id"].pk is True
+        assert by_name["val"].pk is False
 
-    async def test_should_return_empty_when_path_is_invalid(self, driver: SQLiteDriver) -> None:
-        assert await driver.explore_describe([]) == {}
+    async def test_should_return_none_when_path_is_invalid(self, driver: SQLiteDriver) -> None:
+        assert await driver.explore_describe([]) is None

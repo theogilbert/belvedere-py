@@ -45,6 +45,22 @@ class ExploreItem:
     expandable: bool
 
 
+@dataclass
+class ColumnInfo:
+    name: str
+    type: str
+    nullable: bool | None = None
+    pk: bool = False
+    default: str | None = None
+
+
+@dataclass
+class TableDescription:
+    table: str
+    columns: list[ColumnInfo]
+    schema: str | None = None
+
+
 Response = Result | Progress | ExploreItem
 
 

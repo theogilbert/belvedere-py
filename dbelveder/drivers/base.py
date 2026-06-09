@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ..protocol import ExploreItem
+from ..protocol import ExploreItem, TableDescription
 
 
 class ConnectionLostError(Exception):
@@ -37,4 +37,4 @@ class BaseDriver(ABC):
     async def explore_list(self, path: list[str]) -> list[ExploreItem]: ...
 
     @abstractmethod
-    async def explore_describe(self, path: list[str]) -> dict[str, Any]: ...
+    async def explore_describe(self, path: list[str]) -> TableDescription | None: ...

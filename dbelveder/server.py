@@ -1,8 +1,8 @@
 import asyncio
+import json
 import logging
 import sys
-from json import JSONDecodeError
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from .dispatcher import Dispatcher
 from .protocol import (
@@ -17,13 +17,17 @@ from .protocol import (
 
 
 _LOG_CAP = 512
+_SENSITIVE_KEYS = frozenset({"password"})
 
 logger = logging.getLogger(__name__)
 
 
-def _truncate(data: bytes) -> str:
-    text = data.decode(errors="replace").rstrip()
+def _truncate(text: str) -> str:
     return text[:_LOG_CAP] + "…" if len(text) > _LOG_CAP else text
+
+
+def _redact(params: dict[str, Any]) -> dict[str, Any]:
+    return {k: "***" if k in _SENSITIVE_KEYS else v for k, v in params.items()}
 
 
 class Server:
@@ -44,11 +48,11 @@ class Server:
             line = await reader.readline()
             if not line:
                 break
-            logger.debug(f"Received {_truncate(line)}")
             try:
                 msg: Request = decode(line)
+                logger.debug(f"Received {_truncate(json.dumps({'id': msg.id, 'method': msg.method, 'params': _redact(msg.params)}))}")
                 asyncio.create_task(self._handle(msg))
-            except JSONDecodeError:
+            except json.JSONDecodeError:
                 asyncio.create_task(
                     self._send(Result(id=None, result=None, error="decode error"))
                 )
@@ -81,6 +85,6 @@ class Server:
     async def _send(self, msg: Response) -> None:
         data = encode(msg)
         async with self._lock:
-            logger.debug(f"Sent {_truncate(data)}")
+            logger.debug(f"Sent {_truncate(data.decode(errors='replace').rstrip())}")
             self._out.write(data)
             self._out.flush()

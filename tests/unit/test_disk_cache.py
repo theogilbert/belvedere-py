@@ -20,8 +20,14 @@ def mock_driver() -> AsyncMock:
     return d
 
 
+def _driver_class(driver: AsyncMock) -> AsyncMock:
+    cls = AsyncMock()
+    cls.create = AsyncMock(return_value=driver)
+    return cls
+
+
 async def connect(dispatcher: Dispatcher, driver: AsyncMock, params: dict) -> str:
-    with patch("dbelveder.dispatcher.get_driver", return_value=lambda _: driver):
+    with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(driver)):
         result = await dispatcher.dispatch("connect", params, noop_progress)
     return result["connection_id"]
 

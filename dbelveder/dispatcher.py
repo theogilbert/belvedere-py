@@ -52,8 +52,7 @@ class Dispatcher:
     # ── connection ──────────────────────────────────────────────────────────
 
     async def _handle_connect(self, params: dict[str, Any]) -> dict[str, Any]:
-        driver = get_driver(params["driver"])(params)
-        await driver.connect()
+        driver = await get_driver(params["driver"]).create(params)
         conn_id = str(self._next_id)
         self._next_id += 1
         self._connections[conn_id] = driver
@@ -90,7 +89,7 @@ class Dispatcher:
             result = await driver.execute(sql, binds)
         except ConnectionLostError:
             await send_progress("reconnecting", "Connection lost — reconnecting…")
-            await driver.connect()
+            await driver.reconnect()
             await send_progress("executing", "Retrying query…")
             result = await driver.execute(sql, binds)
         if isinstance(result, DMLResult):

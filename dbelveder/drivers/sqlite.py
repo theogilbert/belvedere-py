@@ -10,19 +10,25 @@ T = TypeVar("T")
 
 
 class SQLiteDriver(BaseDriver):
-    def __init__(self, params: dict[str, Any]) -> None:
+    def __init__(self, params: dict[str, Any], conn: sqlite3.Connection) -> None:
         super().__init__(params)
-        self._conn: sqlite3.Connection | None = None
+        self._conn = conn
 
-    async def connect(self) -> None:
+    @classmethod
+    async def create(cls, params: dict[str, Any]) -> "SQLiteDriver":
+        loop = asyncio.get_running_loop()
+        conn = await loop.run_in_executor(
+            None, lambda: sqlite3.connect(params["database"], check_same_thread=False)
+        )
+        return cls(params, conn)
+
+    async def reconnect(self) -> None:
         self._conn = await self._run(
             sqlite3.connect, self.params["database"], check_same_thread=False
         )
 
     async def disconnect(self) -> None:
-        if self._conn:
-            await self._run(self._conn.close)
-            self._conn = None
+        await self._run(self._conn.close)
 
     async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
         return await self._run(self._execute_sync, sql, binds)

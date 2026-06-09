@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Self
 
 from ..protocol import DMLResult, ExploreItem, SelectResult, TableDescription
 
@@ -22,8 +22,12 @@ class BaseDriver(ABC):
     def __init__(self, params: dict[str, Any]) -> None:
         self.params = params
 
+    @classmethod
     @abstractmethod
-    async def connect(self) -> None: ...
+    async def create(cls, params: dict[str, Any]) -> Self: ...
+
+    @abstractmethod
+    async def reconnect(self) -> None: ...
 
     @abstractmethod
     async def disconnect(self) -> None: ...

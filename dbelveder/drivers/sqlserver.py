@@ -15,29 +15,36 @@ _READ_ONLY_INTENT = "READ_ONLY"
 
 
 class SQLServerDriver(BaseDriver):
-    def __init__(self, params: dict[str, Any]) -> None:
+    def __init__(self, params: dict[str, Any], conn: mssql_python.Connection) -> None:
         super().__init__(params)
-        self._conn: mssql_python.Connection | None = None
+        self._conn = conn
 
-    async def connect(self) -> None:
-        host = self.params.get("host", "localhost")
-        port = self.params.get("port", 1433)
-        intent = self.params.get("applicationIntent", "")
-        self._conn = await self._run(
-            mssql_python.connect,
-            server=f"{host},{port}",
-            uid=self.params.get("user", ""),
-            pwd=self.params.get("password", ""),
-            database=self.params.get("database", ""),
-            intent=intent,
-            autocommit=intent == _READ_ONLY_INTENT,
-            trustservercertificate="yes",
-        )
+    @classmethod
+    async def create(cls, params: dict[str, Any]) -> "SQLServerDriver":
+        return cls(params, await cls._open(params))
+
+    async def reconnect(self) -> None:
+        self._conn = await self._open(self.params)
 
     async def disconnect(self) -> None:
-        if self._conn:
-            await self._run(self._conn.close)
-            self._conn = None
+        await self._run(self._conn.close)
+
+    @staticmethod
+    async def _open(params: dict[str, Any]) -> mssql_python.Connection:
+        intent = params.get("applicationIntent", "")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: mssql_python.connect(
+                server=f"{params.get('host', 'localhost')},{params.get('port', 1433)}",
+                uid=params.get("user", ""),
+                pwd=params.get("password", ""),
+                database=params.get("database", ""),
+                intent=intent,
+                autocommit=intent == _READ_ONLY_INTENT,
+                trustservercertificate="yes",
+            ),
+        )
 
     async def execute(
         self, sql: str, binds: list[Any]

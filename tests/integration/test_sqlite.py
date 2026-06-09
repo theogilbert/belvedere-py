@@ -8,8 +8,7 @@ from dbelveder.protocol import DMLResult, ExploreItem, SelectResult
 
 @pytest.fixture
 async def driver() -> AsyncGenerator[SQLiteDriver, None]:
-    d = SQLiteDriver({"database": ":memory:"})
-    await d.connect()
+    d = await SQLiteDriver.create({"database": ":memory:"})
     yield d
     await d.disconnect()
 

@@ -27,9 +27,15 @@ def mock_driver() -> AsyncMock:
     return d
 
 
+def _driver_class(mock_driver: AsyncMock) -> AsyncMock:
+    cls = AsyncMock()
+    cls.create = AsyncMock(return_value=mock_driver)
+    return cls
+
+
 @pytest.fixture
 async def connected(dispatcher: Dispatcher, mock_driver: AsyncMock) -> tuple[Dispatcher, str, AsyncMock]:
-    with patch("dbelveder.dispatcher.get_driver", return_value=lambda _: mock_driver):
+    with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)):
         result = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
     return dispatcher, result["connection_id"], mock_driver
 
@@ -67,7 +73,7 @@ class TestExecute:
 
         result = await disp.dispatch("execute", {"connection_id": conn_id, "sql": "SELECT 1"}, capture)
         assert result == {"columns": ["n"], "rows": [[42]]}
-        assert driver.connect.await_count == 2  # once on initial connect, once on reconnect
+        assert driver.reconnect.await_count == 1
         assert any("reconnect" in s for s, _ in progress_calls)
 
 
@@ -117,7 +123,7 @@ class TestExploreList:
         assert driver.explore_list.await_count == 4  # 2 initial + re-fetch [] + re-fetch ["dbo"]
 
     async def test_should_keep_separate_caches_per_connection(self, dispatcher: Dispatcher, mock_driver: AsyncMock) -> None:
-        with patch("dbelveder.dispatcher.get_driver", return_value=lambda _: mock_driver):
+        with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)):
             r1 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
             r2 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
         conn_a, conn_b = r1["connection_id"], r2["connection_id"]
@@ -160,7 +166,7 @@ class TestExploreDescribe:
 
 class TestConcurrency:
     async def _connect(self, dispatcher: Dispatcher, driver: AsyncMock) -> str:
-        with patch("dbelveder.dispatcher.get_driver", return_value=lambda _: driver):
+        with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(driver)):
             result = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
         return result["connection_id"]
 

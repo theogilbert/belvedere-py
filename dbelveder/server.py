@@ -32,12 +32,25 @@ def _redact(params: dict[str, Any]) -> dict[str, Any]:
 
 
 class Server:
+    """Stdio JSON server — reads requests from stdin, writes responses to out.
+
+    Args:
+        out: Binary stream to write responses to (typically ``sys.stdout.buffer``).
+        cache_dir: Directory for persisting explore caches between sessions. Disabled if None.
+        max_concurrency: Maximum concurrent requests allowed per connection.
+    """
+
     def __init__(self, out: BinaryIO, cache_dir: pathlib.Path | None = None, max_concurrency: int = 1) -> None:
         self._dispatcher = Dispatcher(max_concurrency=max_concurrency, cache_dir=cache_dir)
         self._out = out
         self._lock = asyncio.Lock()
 
     async def run(self) -> None:
+        """Start the read loop.
+
+        Reads newline-delimited JSON requests from stdin and dispatches each as
+        a concurrent task. Returns when stdin is closed.
+        """
         reader = asyncio.StreamReader()
         loop = asyncio.get_event_loop()
         await loop.connect_read_pipe(

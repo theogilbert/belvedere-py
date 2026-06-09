@@ -14,6 +14,14 @@ from typing import Any
 
 @dataclass
 class Request:
+    """Incoming request from the client.
+
+    Attributes:
+        id: Caller-chosen identifier echoed in the response.
+        method: Method name (e.g. ``"execute"``, ``"connect"``).
+        params: Method-specific parameters.
+    """
+
     id: int
     method: str
     params: dict[str, Any]
@@ -21,6 +29,14 @@ class Request:
 
 @dataclass
 class Result:
+    """Final response sent to the client.
+
+    Attributes:
+        id: Matches the originating request id; None for parse errors.
+        result: Return value on success; None on error.
+        error: Error message on failure; None on success.
+    """
+
     id: int | None
     result: Any
     error: str | None
@@ -28,18 +44,40 @@ class Result:
 
 @dataclass
 class ProgressDetail:
+    """Status update payload within a progress notification.
+
+    Attributes:
+        status: Machine-readable status key (e.g. ``"reconnecting"``).
+        message: Human-readable description of the current step.
+    """
+
     status: str
     message: str
 
 
 @dataclass
 class Progress:
+    """Mid-request progress notification sent before the final result.
+
+    Attributes:
+        id: Matches the originating request id.
+        progress: Status update payload.
+    """
+
     id: int
     progress: ProgressDetail
 
 
 @dataclass
 class ExploreItem:
+    """A single node in the database object tree returned by explore.list.
+
+    Attributes:
+        name: Display name of the node.
+        type: Node kind (e.g. ``"table"``, ``"schema"``, ``"index"``).
+        expandable: Whether the node has children that can be listed.
+    """
+
     name: str
     type: str
     expandable: bool
@@ -47,6 +85,16 @@ class ExploreItem:
 
 @dataclass
 class ColumnInfo:
+    """Metadata for a single column returned by explore.describe.
+
+    Attributes:
+        name: Column name.
+        type: Data type as reported by the database.
+        nullable: Whether the column allows NULL; None if unknown.
+        pk: Whether the column is part of the primary key.
+        default: Default expression, or None if not set.
+    """
+
     name: str
     type: str
     nullable: bool | None = None
@@ -56,6 +104,14 @@ class ColumnInfo:
 
 @dataclass
 class TableDescription:
+    """Full column metadata for a table returned by explore.describe.
+
+    Attributes:
+        table: Table name.
+        columns: Ordered list of column metadata.
+        schema: Schema name, or None for databases without schema support.
+    """
+
     table: str
     columns: list[ColumnInfo]
     schema: str | None = None
@@ -63,33 +119,63 @@ class TableDescription:
 
 @dataclass
 class SelectResult:
+    """Result of a SELECT query.
+
+    Attributes:
+        columns: Column names in order.
+        rows: Each row as a list of values.
+    """
+
     columns: list[str]
     rows: list[list[Any]]
 
 
 @dataclass
 class DMLResult:
-    # DML = Data Manipulation Language (INSERT, UPDATE, DELETE)
+    """Result of a DML statement (INSERT, UPDATE, DELETE).
+
+    Attributes:
+        rows_affected: Number of rows inserted, updated, or deleted.
+    """
+
     rows_affected: int
 
 
 Response = Result | Progress | ExploreItem
 
 
-# Async callable: send_progress(status, message)
 ProgressCallback = Callable[[str, str], Awaitable[None]]
-"""
-Async callback to report progress on an operation to the client.
+"""Async callback invoked to report a status update during a long-running operation.
 
-Arguments:
-    status - The current operation status.
-    message - A descriptive message reporting the current progress.
+Args:
+    status: Machine-readable status key.
+    message: Human-readable description of the current step.
 """
 
 
 def encode(msg: Response) -> bytes:
+    """Serialize a response message to a newline-terminated JSON byte string.
+
+    Args:
+        msg: The response to encode.
+
+    Returns:
+        UTF-8 encoded JSON line ending with ``\\n``.
+    """
     return (json.dumps(asdict(msg), separators=(",", ":")) + "\n").encode()
 
 
 def decode(line: bytes) -> Request:
+    """Parse a raw JSON line into a Request.
+
+    Args:
+        line: A single newline-terminated JSON byte string.
+
+    Returns:
+        The decoded Request.
+
+    Raises:
+        json.JSONDecodeError: If the line is not valid JSON.
+        TypeError: If the JSON object is missing required fields.
+    """
     return Request(**json.loads(line))

@@ -15,12 +15,28 @@ _READ_ONLY_INTENT = "READ_ONLY"
 
 
 class SQLServerDriver(BaseDriver):
+    """SQL Server driver backed by mssql-python.
+
+    Args:
+        params: Connect request fields (``host``, ``port``, ``user``, ``password``,
+            ``database``, ``applicationIntent``).
+        conn: Open mssql_python connection. Use :meth:`create` instead of constructing directly.
+    """
+
     def __init__(self, params: dict[str, Any], conn: mssql_python.Connection) -> None:
         super().__init__(params)
         self._conn = conn
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "SQLServerDriver":
+        """Open a SQL Server connection and return a ready-to-use driver.
+
+        Args:
+            params: Connect request fields; see class docstring for supported keys.
+
+        Returns:
+            A connected SQLServerDriver instance.
+        """
         return cls(params, await cls._open(params))
 
     async def reconnect(self) -> None:
@@ -49,6 +65,18 @@ class SQLServerDriver(BaseDriver):
     async def execute(
         self, sql: str, binds: list[Any]
     ) -> SelectResult | DMLResult:
+        """Run a SQL statement.
+
+        Args:
+            sql: SQL statement to execute.
+            binds: Positional bind parameters (``?`` placeholders).
+
+        Returns:
+            SelectResult for queries that return rows, DMLResult otherwise.
+
+        Raises:
+            ConnectionLostError: If the connection was lost during execution.
+        """
         try:
             return await self._run(self._execute_sync, sql, binds)
         except Exception as exc:
@@ -68,6 +96,15 @@ class SQLServerDriver(BaseDriver):
         return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
+        """List child nodes at the given path in the SQL Server object tree.
+
+        Args:
+            path: Path segments (``[]`` for schemas, ``[schema]`` for tables,
+                ``[schema, table]`` for groups, etc.).
+
+        Returns:
+            Child nodes, or an empty list if the path is unrecognised.
+        """
         return await self._run(self._explore_list_sync, path)
 
     def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
@@ -153,6 +190,14 @@ class SQLServerDriver(BaseDriver):
                 return []
 
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
+        """Return column metadata for the table at the given path.
+
+        Args:
+            path: Two-element path with schema and table name (e.g. ``["dbo", "users"]``).
+
+        Returns:
+            TableDescription if the path resolves to a table, None otherwise.
+        """
         return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:

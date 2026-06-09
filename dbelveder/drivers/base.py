@@ -5,18 +5,14 @@ from ..protocol import DMLResult, ExploreItem, SelectResult, TableDescription
 
 
 class ConnectionLostError(Exception):
-    """Raised by a driver when the database connection has been lost and a reconnect should be attempted."""
+    """Raised when the database connection is lost and a reconnect should be attempted."""
 
 
 class BaseDriver(ABC):
-    """
-    All drivers receive the raw `params` dict from the connect request,
-    e.g. {"driver": "sqlite", "database": "/path/to/db.sqlite"}.
+    """Base class for all database drivers.
 
-    explore_list(path) uses a path list to navigate the hierarchy:
-      []              → top-level items  (schemas, databases, …)
-      ["schema"]      → items inside schema
-      ["schema","tbl"]→ items inside table (columns, indices, …)
+    Args:
+        params: Raw connect request fields (e.g. ``{"driver": "sqlite", "database": "..."}``).
     """
 
     def __init__(self, params: dict[str, Any]) -> None:
@@ -24,21 +20,63 @@ class BaseDriver(ABC):
 
     @classmethod
     @abstractmethod
-    async def create(cls, params: dict[str, Any]) -> Self: ...
+    async def create(cls, params: dict[str, Any]) -> Self:
+        """Open a new connection and return a ready-to-use driver instance.
+
+        Args:
+            params: Raw connect request fields.
+
+        Returns:
+            A fully connected driver instance.
+        """
+        ...
 
     @abstractmethod
-    async def reconnect(self) -> None: ...
+    async def reconnect(self) -> None:
+        """Re-establish the database connection on the current instance."""
+        ...
 
     @abstractmethod
-    async def disconnect(self) -> None: ...
+    async def disconnect(self) -> None:
+        """Close the database connection."""
+        ...
 
     @abstractmethod
-    async def execute(
-        self, sql: str, binds: list[Any]
-    ) -> SelectResult | DMLResult: ...
+    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+        """Run a SQL statement and return the result.
+
+        Args:
+            sql: SQL statement to execute.
+            binds: Positional bind parameters.
+
+        Returns:
+            SelectResult for queries that return rows, DMLResult for INSERT/UPDATE/DELETE.
+
+        Raises:
+            ConnectionLostError: If the connection was lost during execution.
+        """
+        ...
 
     @abstractmethod
-    async def explore_list(self, path: list[str]) -> list[ExploreItem]: ...
+    async def explore_list(self, path: list[str]) -> list[ExploreItem]:
+        """List child nodes at the given path in the object tree.
+
+        Args:
+            path: Ordered path segments from the root (e.g. ``["dbo", "users"]``).
+
+        Returns:
+            Child nodes, or an empty list if the path is unrecognised.
+        """
+        ...
 
     @abstractmethod
-    async def explore_describe(self, path: list[str]) -> TableDescription | None: ...
+    async def explore_describe(self, path: list[str]) -> TableDescription | None:
+        """Return column metadata for the node at the given path.
+
+        Args:
+            path: Ordered path segments identifying a table.
+
+        Returns:
+            Column metadata, or None if the path does not resolve to a table.
+        """
+        ...

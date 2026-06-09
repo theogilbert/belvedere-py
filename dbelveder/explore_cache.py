@@ -14,15 +14,32 @@ _SENSITIVE_PARAMS = frozenset({"password"})
 
 @dataclass
 class ExploreCache:
+    """In-memory cache of explore results for a single connection.
+
+    Attributes:
+        list_results: Cached explore.list results keyed by path tuple.
+        describe_results: Cached explore.describe results keyed by path tuple.
+    """
+
     list_results: dict[tuple[str, ...], list[ExploreItem]] = field(default_factory=dict)
     describe_results: dict[tuple[str, ...], TableDescription | None] = field(default_factory=dict)
 
     def clear(self) -> None:
+        """Discard all cached list and describe results."""
         self.list_results.clear()
         self.describe_results.clear()
 
 
 def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:
+    """Return the cache file path derived from the connection params.
+
+    Args:
+        params: Raw connection params; sensitive fields are excluded from the hash.
+        cache_dir: Directory where cache files are stored.
+
+    Returns:
+        Path of the form ``<cache_dir>/<driver>_<sha256[:12]>.json``.
+    """
     safe = {k: v for k, v in sorted(params.items()) if k not in _SENSITIVE_PARAMS}
     digest = hashlib.sha256(json.dumps(safe).encode()).hexdigest()[:12]
     driver = params.get("driver", "unknown")
@@ -30,6 +47,14 @@ def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:
 
 
 def load_cache(path: pathlib.Path) -> ExploreCache:
+    """Load an ExploreCache from disk.
+
+    Args:
+        path: Path to the JSON cache file.
+
+    Returns:
+        Populated ExploreCache, or an empty one if the file is missing or corrupt.
+    """
     if not path.exists():
         return ExploreCache()
     try:
@@ -56,6 +81,16 @@ def load_cache(path: pathlib.Path) -> ExploreCache:
 
 
 def save_cache(path: pathlib.Path, cache: ExploreCache, params: dict[str, Any]) -> None:
+    """Atomically persist the cache to disk, excluding sensitive connection params.
+
+    Writes to a ``.tmp`` file then replaces the target to avoid partial writes.
+    Failures are logged and silently ignored.
+
+    Args:
+        path: Destination file path.
+        cache: Cache data to serialize.
+        params: Connection params used to populate the ``_connection`` metadata block.
+    """
     try:
         data: dict[str, Any] = {
             "_connection": {k: v for k, v in params.items() if k not in _SENSITIVE_PARAMS},

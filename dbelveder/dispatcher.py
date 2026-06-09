@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 class Dispatcher:
+    """Routes method calls to handlers and manages per-connection state.
+
+    Args:
+        max_concurrency: Maximum concurrent requests allowed per connection.
+        cache_dir: Directory for persisting explore caches. Disabled if None.
+    """
+
     def __init__(self, max_concurrency: int = 1, cache_dir: pathlib.Path | None = None) -> None:
         self._connections: dict[str, BaseDriver] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
@@ -25,6 +32,20 @@ class Dispatcher:
     async def dispatch(
         self, method: str, params: dict[str, Any], send_progress: ProgressCallback
     ) -> dict[str, Any]:
+        """Dispatch a method call to its handler, serialized per connection.
+
+        Args:
+            method: Method name (e.g. ``"execute"``, ``"explore.list"``).
+            params: Method parameters; most include a ``connection_id``.
+            send_progress: Callback for emitting progress notifications.
+
+        Returns:
+            Method-specific result dict.
+
+        Raises:
+            ValueError: If the method name is unknown.
+            KeyError: If the ``connection_id`` does not refer to an open connection.
+        """
         handler_name = "_handle_" + method.replace(".", "_")
         handler = getattr(self, handler_name, None)
         if handler is None:

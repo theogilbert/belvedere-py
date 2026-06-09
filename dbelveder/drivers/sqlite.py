@@ -10,12 +10,27 @@ T = TypeVar("T")
 
 
 class SQLiteDriver(BaseDriver):
+    """SQLite driver backed by the stdlib sqlite3 module.
+
+    Args:
+        params: Connect request fields; must include ``database`` (file path or ``":memory:"``).
+        conn: Open sqlite3 connection. Use :meth:`create` instead of constructing directly.
+    """
+
     def __init__(self, params: dict[str, Any], conn: sqlite3.Connection) -> None:
         super().__init__(params)
         self._conn = conn
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "SQLiteDriver":
+        """Open a SQLite connection and return a ready-to-use driver.
+
+        Args:
+            params: Must contain ``database`` — a file path or ``":memory:"``.
+
+        Returns:
+            A connected SQLiteDriver instance.
+        """
         loop = asyncio.get_running_loop()
         conn = await loop.run_in_executor(
             None, lambda: sqlite3.connect(params["database"], check_same_thread=False, isolation_level=None)
@@ -31,6 +46,15 @@ class SQLiteDriver(BaseDriver):
         await self._run(self._conn.close)
 
     async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+        """Run a SQL statement.
+
+        Args:
+            sql: SQL statement to execute.
+            binds: Positional bind parameters (``?`` placeholders).
+
+        Returns:
+            SelectResult for queries that return rows, DMLResult otherwise.
+        """
         return await self._run(self._execute_sync, sql, binds)
 
     def _execute_sync(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
@@ -43,6 +67,14 @@ class SQLiteDriver(BaseDriver):
         return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
+        """List child nodes at the given path in the SQLite object tree.
+
+        Args:
+            path: Path segments (e.g. ``[]`` for root, ``["users"]`` for a table's groups).
+
+        Returns:
+            Child nodes, or an empty list if the path is unrecognised.
+        """
         return await self._run(self._explore_list_sync, path)
 
     def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
@@ -81,6 +113,14 @@ class SQLiteDriver(BaseDriver):
                 return []
 
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
+        """Return column metadata for the table at the given path.
+
+        Args:
+            path: Single-element path with the table name (e.g. ``["users"]``).
+
+        Returns:
+            TableDescription if the path resolves to a table, None otherwise.
+        """
         return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:

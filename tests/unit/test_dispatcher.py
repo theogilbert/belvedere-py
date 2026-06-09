@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -87,3 +89,72 @@ class TestExploreDescribe:
         driver.explore_describe.return_value = {"table": "t", "columns": []}
         result = await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress)
         assert result == {"details": {"table": "t", "columns": []}}
+
+
+class TestConcurrency:
+    async def _connect(self, dispatcher: Dispatcher, driver: AsyncMock) -> str:
+        with patch("dbelveder.dispatcher.get_driver", return_value=lambda _: driver):
+            result = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+        return result["connection_id"]
+
+    async def test_should_serialise_concurrent_requests_on_same_connection(self) -> None:
+        dispatcher = Dispatcher(max_concurrency=1)
+        order: list[str] = []
+        gate = asyncio.Event()
+
+        driver = AsyncMock()
+
+        async def slow_execute(*_: object) -> tuple[list, list]:
+            order.append("start")
+            await gate.wait()
+            order.append("end")
+            return ([], [])
+
+        driver.execute.side_effect = slow_execute
+        conn_id = await self._connect(dispatcher, driver)
+
+        t1 = asyncio.create_task(
+            dispatcher.dispatch("execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress)
+        )
+        t2 = asyncio.create_task(
+            dispatcher.dispatch("execute", {"connection_id": conn_id, "sql": "SELECT 2"}, noop_progress)
+        )
+        await asyncio.sleep(0)  # let both tasks reach the semaphore
+        gate.set()
+        await asyncio.gather(t1, t2)
+
+        # second request must have started only after the first finished
+        assert order == ["start", "end", "start", "end"]
+
+    async def test_should_allow_concurrent_requests_on_different_connections(self) -> None:
+        dispatcher = Dispatcher(max_concurrency=1)
+        started: list[str] = []
+        gate = asyncio.Event()
+
+        async def slow_execute_a(*_: object) -> tuple[list, list]:
+            started.append("a")
+            await gate.wait()
+            return ([], [])
+
+        async def slow_execute_b(*_: object) -> tuple[list, list]:
+            started.append("b")
+            await gate.wait()
+            return ([], [])
+
+        driver_a, driver_b = AsyncMock(), AsyncMock()
+        driver_a.execute.side_effect = slow_execute_a
+        driver_b.execute.side_effect = slow_execute_b
+
+        conn_a = await self._connect(dispatcher, driver_a)
+        conn_b = await self._connect(dispatcher, driver_b)
+
+        t1 = asyncio.create_task(
+            dispatcher.dispatch("execute", {"connection_id": conn_a, "sql": "SELECT 1"}, noop_progress)
+        )
+        t2 = asyncio.create_task(
+            dispatcher.dispatch("execute", {"connection_id": conn_b, "sql": "SELECT 2"}, noop_progress)
+        )
+        await asyncio.sleep(0)  # let both tasks proceed
+        assert set(started) == {"a", "b"}  # both started concurrently
+        gate.set()
+        await asyncio.gather(t1, t2)

@@ -32,10 +32,9 @@ def _redact(params: dict[str, Any]) -> dict[str, Any]:
 
 class Server:
     def __init__(self, out: BinaryIO, max_concurrency: int = 1) -> None:
-        self._dispatcher = Dispatcher()
+        self._dispatcher = Dispatcher(max_concurrency=max_concurrency)
         self._out = out
         self._lock = asyncio.Lock()
-        self._semaphore = asyncio.Semaphore(max_concurrency)
 
     async def run(self) -> None:
         reader = asyncio.StreamReader()
@@ -62,25 +61,23 @@ class Server:
                 )
 
     async def _handle(self, msg: Request) -> None:
-        async with self._semaphore:
-
-            async def send_progress(status: str, message: str) -> None:
-                await self._send(
-                    Progress(
-                        id=msg.id,
-                        progress=ProgressDetail(status=status, message=message),
-                    )
+        async def send_progress(status: str, message: str) -> None:
+            await self._send(
+                Progress(
+                    id=msg.id,
+                    progress=ProgressDetail(status=status, message=message),
                 )
+            )
 
-            response: Result
-            try:
-                result = await self._dispatcher.dispatch(
-                    msg.method or "", msg.params or {}, send_progress
-                )
-                response = Result(id=msg.id, result=result, error=None)
-            except Exception as exc:
-                response = Result(id=msg.id, result=None, error=str(exc))
-            await self._send(response)
+        response: Result
+        try:
+            result = await self._dispatcher.dispatch(
+                msg.method or "", msg.params or {}, send_progress
+            )
+            response = Result(id=msg.id, result=result, error=None)
+        except Exception as exc:
+            response = Result(id=msg.id, result=None, error=str(exc))
+        await self._send(response)
 
     async def _send(self, msg: Response) -> None:
         data = encode(msg)

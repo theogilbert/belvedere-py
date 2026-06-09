@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from .drivers import get_driver
@@ -6,8 +7,10 @@ from .protocol import ProgressCallback
 
 
 class Dispatcher:
-    def __init__(self) -> None:
+    def __init__(self, max_concurrency: int = 1) -> None:
         self._connections: dict[str, BaseDriver] = {}
+        self._semaphores: dict[str, asyncio.Semaphore] = {}
+        self._max_concurrency = max_concurrency
         self._next_id: int = 0
 
     async def dispatch(
@@ -17,6 +20,22 @@ class Dispatcher:
         handler = getattr(self, handler_name, None)
         if handler is None:
             raise ValueError(f"Unknown method: {method!r}")
+
+        conn_id = params.get("connection_id")
+        semaphore = self._semaphores.get(conn_id) if conn_id else None
+
+        if semaphore:
+            async with semaphore:
+                return await self._call(method, handler, params, send_progress)
+        return await self._call(method, handler, params, send_progress)
+
+    async def _call(
+        self,
+        method: str,
+        handler: Any,
+        params: dict[str, Any],
+        send_progress: ProgressCallback,
+    ) -> dict[str, Any]:
         if method == "execute":
             return await handler(params, send_progress)
         return await handler(params)
@@ -29,11 +48,13 @@ class Dispatcher:
         conn_id = str(self._next_id)
         self._next_id += 1
         self._connections[conn_id] = driver
+        self._semaphores[conn_id] = asyncio.Semaphore(self._max_concurrency)
         return {"connection_id": conn_id}
 
     async def _handle_disconnect(self, params: dict[str, Any]) -> dict[str, Any]:
         conn_id: str = params["connection_id"]
         driver = self._connections.pop(conn_id, None)
+        self._semaphores.pop(conn_id, None)
         if driver:
             await driver.disconnect()
         return {"ok": True}

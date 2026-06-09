@@ -46,7 +46,7 @@ def parse_cli_args() -> CliArgs:
         "--max-concurrency",
         type=int,
         default=5,
-        help="Define the max number of requests that can be executed at the same time.",
+        help="Define the max number of requests that can be executed at the same time per connection.",
     )
     parser.add_argument(
         "--log",

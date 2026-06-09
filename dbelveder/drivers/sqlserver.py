@@ -1,7 +1,6 @@
 """SQL Server driver — requires: pip install mssql-python"""
 
 import asyncio
-from asyncio import AbstractEventLoop
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -19,10 +18,8 @@ class SQLServerDriver(BaseDriver):
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
         self._conn: mssql_python.Connection | None = None
-        self._loop: AbstractEventLoop | None = None
 
     async def connect(self) -> None:
-        self._loop = asyncio.get_event_loop()
         host = self.params.get("host", "localhost")
         port = self.params.get("port", 1433)
         intent = self.params.get("applicationIntent", "")
@@ -55,7 +52,7 @@ class SQLServerDriver(BaseDriver):
     def _execute_sync(
         self, sql: str, binds: list[Any]
     ) -> SelectResult | DMLResult:
-        assert self._conn
+
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
@@ -67,7 +64,7 @@ class SQLServerDriver(BaseDriver):
         return await self._run(self._explore_list_sync, path)
 
     def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
-        assert self._conn
+
         cur = self._conn.cursor()
         match path:
             case []:
@@ -152,7 +149,7 @@ class SQLServerDriver(BaseDriver):
         return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
-        assert self._conn
+
         match path:
             case [schema, table]:
                 cur = self._conn.cursor()
@@ -175,5 +172,4 @@ class SQLServerDriver(BaseDriver):
                 return None
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        assert self._loop
-        return await self._loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+        return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args, **kwargs))

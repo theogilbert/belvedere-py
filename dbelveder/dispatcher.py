@@ -95,7 +95,6 @@ class Dispatcher:
             result = await driver.execute(sql, binds)
         if isinstance(result, DMLResult):
             return {"rows_affected": result.rows_affected}
-        assert isinstance(result, SelectResult)
         return {"columns": result.columns, "rows": result.rows}
 
     # ── exploration ──────────────────────────────────────────────────────────

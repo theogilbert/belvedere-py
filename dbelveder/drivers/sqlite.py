@@ -1,6 +1,5 @@
 import asyncio
 import sqlite3
-from asyncio import AbstractEventLoop
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -14,10 +13,8 @@ class SQLiteDriver(BaseDriver):
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
         self._conn: sqlite3.Connection | None = None
-        self._loop: AbstractEventLoop | None = None
 
     async def connect(self) -> None:
-        self._loop = asyncio.get_event_loop()
         self._conn = await self._run(
             sqlite3.connect, self.params["database"], check_same_thread=False
         )
@@ -31,7 +28,7 @@ class SQLiteDriver(BaseDriver):
         return await self._run(self._execute_sync, sql, binds)
 
     def _execute_sync(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
-        assert self._conn
+
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
@@ -43,7 +40,7 @@ class SQLiteDriver(BaseDriver):
         return await self._run(self._explore_list_sync, path)
 
     def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
-        assert self._conn
+
         match path:
             case []:
                 rows = self._conn.execute(
@@ -81,7 +78,7 @@ class SQLiteDriver(BaseDriver):
         return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
-        assert self._conn
+
         match path:
             case [table]:
                 cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -96,5 +93,4 @@ class SQLiteDriver(BaseDriver):
                 return None
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        assert self._loop
-        return await self._loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+        return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args, **kwargs))

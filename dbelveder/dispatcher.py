@@ -6,7 +6,7 @@ from typing import Any
 from .drivers import get_driver
 from .drivers.base import BaseDriver, ConnectionLostError
 from .explore_cache import ExploreCache, cache_file, load_cache, save_cache
-from .protocol import ProgressCallback
+from .protocol import DMLResult, ProgressCallback, SelectResult
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +87,16 @@ class Dispatcher:
         sql: str = params["sql"]
         binds: list[Any] = params.get("params") or []
         try:
-            columns, rows = await driver.execute(sql, binds)
+            result = await driver.execute(sql, binds)
         except ConnectionLostError:
             await send_progress("reconnecting", "Connection lost — reconnecting…")
             await driver.connect()
             await send_progress("executing", "Retrying query…")
-            columns, rows = await driver.execute(sql, binds)
-        return {"columns": columns, "rows": rows}
+            result = await driver.execute(sql, binds)
+        if isinstance(result, DMLResult):
+            return {"rows_affected": result.rows_affected}
+        assert isinstance(result, SelectResult)
+        return {"columns": result.columns, "rows": result.rows}
 
     # ── exploration ──────────────────────────────────────────────────────────
 

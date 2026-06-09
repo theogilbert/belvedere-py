@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from dbelveder.drivers.sqlserver import SQLServerDriver
-from dbelveder.protocol import ExploreItem, TableDescription
+from dbelveder.protocol import DMLResult, ExploreItem, SelectResult, TableDescription
 
 
 def _params() -> dict:
@@ -68,18 +68,38 @@ async def tables(driver: SQLServerDriver) -> AsyncGenerator[tuple[str, str], Non
 
 class TestExecute:
     async def test_should_return_columns_and_rows(self, driver: SQLServerDriver) -> None:
-        cols, rows = await driver.execute("SELECT 1 AS n, 'hello' AS s", [])
-        assert cols == ["n", "s"]
-        assert rows == [[1, "hello"]]
+        result = await driver.execute("SELECT 1 AS n, 'hello' AS s", [])
+        assert isinstance(result, SelectResult)
+        assert result.columns == ["n", "s"]
+        assert result.rows == [[1, "hello"]]
+
+    async def test_should_return_rows_affected_for_insert(
+        self, driver: SQLServerDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
+        result = await driver.execute(f"INSERT INTO dbo.{table} VALUES (?, ?)", [1, "hello"])
+        assert isinstance(result, DMLResult)
+        assert result.rows_affected == 1
+
+    async def test_should_return_rows_affected_for_delete(
+        self, driver: SQLServerDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
+        await driver.execute(f"INSERT INTO dbo.{table} VALUES (?)", [1])
+        await driver.execute(f"INSERT INTO dbo.{table} VALUES (?)", [2])
+        result = await driver.execute(f"DELETE FROM dbo.{table}", [])
+        assert isinstance(result, DMLResult)
+        assert result.rows_affected == 2
 
     async def test_should_persist_inserts_within_connection(
         self, driver: SQLServerDriver, table: str
     ) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
         await driver.execute(f"INSERT INTO dbo.{table} VALUES (?, ?)", [1, "hello"])
-        cols, rows = await driver.execute(f"SELECT * FROM dbo.{table}", [])
-        assert cols == ["id", "val"]
-        assert rows == [[1, "hello"]]
+        result = await driver.execute(f"SELECT * FROM dbo.{table}", [])
+        assert isinstance(result, SelectResult)
+        assert result.columns == ["id", "val"]
+        assert result.rows == [[1, "hello"]]
 
 
 class TestExploreList:

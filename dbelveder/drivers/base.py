@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ..protocol import ExploreItem, TableDescription
+from ..protocol import DMLResult, ExploreItem, SelectResult, TableDescription
 
 
 class ConnectionLostError(Exception):
@@ -31,7 +31,7 @@ class BaseDriver(ABC):
     @abstractmethod
     async def execute(
         self, sql: str, binds: list[Any]
-    ) -> tuple[list[str], list[list[Any]]]: ...
+    ) -> SelectResult | DMLResult: ...
 
     @abstractmethod
     async def explore_list(self, path: list[str]) -> list[ExploreItem]: ...

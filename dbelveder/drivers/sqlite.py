@@ -4,7 +4,7 @@ from asyncio import AbstractEventLoop
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ..protocol import ColumnInfo, ExploreItem, TableDescription
+from ..protocol import ColumnInfo, DMLResult, ExploreItem, SelectResult, TableDescription
 from .base import BaseDriver
 
 T = TypeVar("T")
@@ -27,15 +27,17 @@ class SQLiteDriver(BaseDriver):
             await self._run(self._conn.close)
             self._conn = None
 
-    async def execute(self, sql: str, binds: list[Any]) -> tuple[list[str], list[list[Any]]]:
+    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
         return await self._run(self._execute_sync, sql, binds)
 
-    def _execute_sync(self, sql: str, binds: list[Any]) -> tuple[list[str], list[list[Any]]]:
+    def _execute_sync(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
         assert self._conn
         cur = self._conn.execute(sql, binds)
-        columns = [d[0] for d in cur.description] if cur.description else []
-        rows: list[list[Any]] = [list(r) for r in cur.fetchall()]
-        return columns, rows
+        if cur.description is not None:
+            columns = [d[0] for d in cur.description]
+            rows: list[list[Any]] = [list(r) for r in cur.fetchall()]
+            return SelectResult(columns=columns, rows=rows)
+        return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         return await self._run(self._explore_list_sync, path)

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from dbelveder.dispatcher import Dispatcher
 from dbelveder.drivers.base import ConnectionLostError
-from dbelveder.protocol import ColumnInfo, ExploreItem, TableDescription
+from dbelveder.protocol import ColumnInfo, DMLResult, ExploreItem, SelectResult, TableDescription
 
 
 async def noop_progress(status: str, message: str) -> None:
@@ -21,7 +21,7 @@ def dispatcher() -> Dispatcher:
 @pytest.fixture
 def mock_driver() -> AsyncMock:
     d = AsyncMock()
-    d.execute.return_value = ([], [])
+    d.execute.return_value = SelectResult(columns=[], rows=[])
     d.explore_list.return_value = []
     d.explore_describe.return_value = None
     return d
@@ -43,9 +43,15 @@ class TestDispatch:
 class TestExecute:
     async def test_should_return_columns_and_rows(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
         disp, conn_id, driver = connected
-        driver.execute.return_value = (["id"], [[1], [2]])
+        driver.execute.return_value = SelectResult(columns=["id"], rows=[[1], [2]])
         result = await disp.dispatch("execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress)
         assert result == {"columns": ["id"], "rows": [[1], [2]]}
+
+    async def test_should_return_rows_affected_for_dml(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        driver.execute.return_value = DMLResult(rows_affected=3)
+        result = await disp.dispatch("execute", {"connection_id": conn_id, "sql": "DELETE FROM t"}, noop_progress)
+        assert result == {"rows_affected": 3}
 
     async def test_should_raise_when_connection_id_is_unknown(self, dispatcher: Dispatcher) -> None:
         with pytest.raises(KeyError):
@@ -53,7 +59,7 @@ class TestExecute:
 
     async def test_should_reconnect_and_retry_when_connection_is_lost(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
         disp, conn_id, driver = connected
-        driver.execute.side_effect = [ConnectionLostError(), (["n"], [[42]])]
+        driver.execute.side_effect = [ConnectionLostError(), SelectResult(columns=["n"], rows=[[42]])]
         progress_calls: list[tuple[str, str]] = []
 
         async def capture(status: str, message: str) -> None:
@@ -165,11 +171,11 @@ class TestConcurrency:
 
         driver = AsyncMock()
 
-        async def slow_execute(*_: object) -> tuple[list, list]:
+        async def slow_execute(*_: object) -> SelectResult:
             order.append("start")
             await gate.wait()
             order.append("end")
-            return ([], [])
+            return SelectResult(columns=[], rows=[])
 
         driver.execute.side_effect = slow_execute
         conn_id = await self._connect(dispatcher, driver)
@@ -192,15 +198,15 @@ class TestConcurrency:
         started: list[str] = []
         gate = asyncio.Event()
 
-        async def slow_execute_a(*_: object) -> tuple[list, list]:
+        async def slow_execute_a(*_: object) -> SelectResult:
             started.append("a")
             await gate.wait()
-            return ([], [])
+            return SelectResult(columns=[], rows=[])
 
-        async def slow_execute_b(*_: object) -> tuple[list, list]:
+        async def slow_execute_b(*_: object) -> SelectResult:
             started.append("b")
             await gate.wait()
-            return ([], [])
+            return SelectResult(columns=[], rows=[])
 
         driver_a, driver_b = AsyncMock(), AsyncMock()
         driver_a.execute.side_effect = slow_execute_a

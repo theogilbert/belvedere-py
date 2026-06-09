@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from dbelveder.drivers.sqlite import SQLiteDriver
-from dbelveder.protocol import ExploreItem
+from dbelveder.protocol import DMLResult, ExploreItem, SelectResult
 
 
 @pytest.fixture
@@ -16,16 +16,40 @@ async def driver() -> AsyncGenerator[SQLiteDriver, None]:
 
 class TestExecute:
     async def test_should_return_columns_and_rows(self, driver: SQLiteDriver) -> None:
-        cols, rows = await driver.execute("SELECT 1 AS n, 'a' AS s", [])
-        assert cols == ["n", "s"]
-        assert rows == [[1, "a"]]
+        result = await driver.execute("SELECT 1 AS n, 'a' AS s", [])
+        assert isinstance(result, SelectResult)
+        assert result.columns == ["n", "s"]
+        assert result.rows == [[1, "a"]]
+
+    async def test_should_return_rows_affected_for_insert(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        result = await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
+        assert isinstance(result, DMLResult)
+        assert result.rows_affected == 1
+
+    async def test_should_return_rows_affected_for_update(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("INSERT INTO t VALUES (1, 'a')", [])
+        await driver.execute("INSERT INTO t VALUES (2, 'b')", [])
+        result = await driver.execute("UPDATE t SET val = 'x'", [])
+        assert isinstance(result, DMLResult)
+        assert result.rows_affected == 2
+
+    async def test_should_return_rows_affected_for_delete(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        await driver.execute("INSERT INTO t VALUES (1)", [])
+        await driver.execute("INSERT INTO t VALUES (2)", [])
+        result = await driver.execute("DELETE FROM t WHERE id = 1", [])
+        assert isinstance(result, DMLResult)
+        assert result.rows_affected == 1
 
     async def test_should_persist_inserts_within_connection(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
-        cols, rows = await driver.execute("SELECT * FROM t", [])
-        assert cols == ["id", "val"]
-        assert rows == [[1, "hello"]]
+        result = await driver.execute("SELECT * FROM t", [])
+        assert isinstance(result, SelectResult)
+        assert result.columns == ["id", "val"]
+        assert result.rows == [[1, "hello"]]
 
 
 class TestExploreList:

@@ -61,6 +61,18 @@ class TableDescription:
     schema: str | None = None
 
 
+@dataclass
+class SelectResult:
+    columns: list[str]
+    rows: list[list[Any]]
+
+
+@dataclass
+class DMLResult:
+    # DML = Data Manipulation Language (INSERT, UPDATE, DELETE)
+    rows_affected: int
+
+
 Response = Result | Progress | ExploreItem
 
 

@@ -18,13 +18,13 @@ class SQLiteDriver(BaseDriver):
     async def create(cls, params: dict[str, Any]) -> "SQLiteDriver":
         loop = asyncio.get_running_loop()
         conn = await loop.run_in_executor(
-            None, lambda: sqlite3.connect(params["database"], check_same_thread=False)
+            None, lambda: sqlite3.connect(params["database"], check_same_thread=False, isolation_level=None)
         )
         return cls(params, conn)
 
     async def reconnect(self) -> None:
         self._conn = await self._run(
-            sqlite3.connect, self.params["database"], check_same_thread=False
+            sqlite3.connect, self.params["database"], check_same_thread=False, isolation_level=None
         )
 
     async def disconnect(self) -> None:

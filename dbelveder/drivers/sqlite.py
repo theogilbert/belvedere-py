@@ -54,6 +54,7 @@ class SQLiteDriver(BaseDriver):
                 return [
                     ExploreItem(name="columns", type="group", expandable=True),
                     ExploreItem(name="indices", type="group", expandable=True),
+                    ExploreItem(name="foreign_keys", type="group", expandable=True),
                 ]
 
             case [table, "columns"]:
@@ -63,6 +64,13 @@ class SQLiteDriver(BaseDriver):
             case [table, "indices"]:
                 rows = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
                 return [ExploreItem(name=r[1], type="index", expandable=False) for r in rows]
+
+            case [table, "foreign_keys"]:
+                rows = self._conn.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+                return [
+                    ExploreItem(name=f"{r[3]} → {r[2]}.{r[4]}", type="foreign_key", expandable=False)
+                    for r in rows
+                ]
 
             case _:
                 return []

@@ -1,5 +1,8 @@
 import argparse
 import asyncio
+import logging
+import os
+import pathlib
 import sys
 from dataclasses import dataclass
 
@@ -9,20 +12,51 @@ from .server import Server
 def main() -> None:
     args = parse_cli_args()
 
+    if args.log:
+        log_path = _log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            filename=log_path,
+            level=logging.DEBUG,
+            format="%(asctime)s %(message)s",
+        )
+
     out = sys.stdout.buffer
     server = Server(out, max_concurrency=args.max_concurrency)
 
     asyncio.run(server.run())
 
 
+def _log_path() -> pathlib.Path:
+    state_home = os.environ.get(
+        "XDG_STATE_HOME", os.path.join(os.path.expanduser("~"), ".local", "state")
+    )
+    return pathlib.Path(state_home) / "dbelveder" / "server.log"
+
+
 @dataclass
 class CliArgs:
     max_concurrency: int
+    log: bool
 
 
 def parse_cli_args() -> CliArgs:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max-concurrency", type=int, default=5)
+    parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=5,
+        help="Define the max number of requests that can be executed at the same time.",
+    )
+    parser.add_argument(
+        "--log",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, all requests and responses will be logged to a file. "
+            "Logs will be saved under `~/.local/state`."
+        ),
+    )
     args = parser.parse_args()
 
-    return CliArgs(max_concurrency=args.max_concurrency)
+    return CliArgs(max_concurrency=args.max_concurrency, log=args.log)

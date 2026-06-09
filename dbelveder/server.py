@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sys
 from json import JSONDecodeError
 from typing import BinaryIO
@@ -13,6 +14,16 @@ from .protocol import (
     decode,
     encode,
 )
+
+
+_LOG_CAP = 512
+
+logger = logging.getLogger(__name__)
+
+
+def _truncate(data: bytes) -> str:
+    text = data.decode(errors="replace").rstrip()
+    return text[:_LOG_CAP] + "…" if len(text) > _LOG_CAP else text
 
 
 class Server:
@@ -33,6 +44,7 @@ class Server:
             line = await reader.readline()
             if not line:
                 break
+            logger.debug(f"Received {_truncate(line)}")
             try:
                 msg: Request = decode(line)
                 asyncio.create_task(self._handle(msg))
@@ -69,5 +81,6 @@ class Server:
     async def _send(self, msg: Response) -> None:
         data = encode(msg)
         async with self._lock:
+            logger.debug(f"Sent {_truncate(data)}")
             self._out.write(data)
             self._out.flush()

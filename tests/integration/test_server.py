@@ -28,7 +28,7 @@ def server(out: io.BytesIO) -> Server:
 
 @pytest.fixture
 def mock_get_driver(monkeypatch: MonkeyPatch) -> MagicMock:
-    import dbelveder.server as pkg
+    import dbelveder.dispatcher as pkg
 
     mock = MagicMock()
     monkeypatch.setattr(pkg, "get_driver", mock)
@@ -143,7 +143,7 @@ class TestHandle:
     ) -> None:
         mock_driver = AsyncMock()
         mock_driver.execute.side_effect = [ConnectionLostError(), (["n"], [[1]])]
-        mock_get_driver.return_value = mock_driver
+        mock_get_driver.return_value = lambda _: mock_driver
 
         r1 = await send(server, out, id=1, method="connect", params={"driver": "mock"})
         conn_id = r1["result"]["connection_id"]

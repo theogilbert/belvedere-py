@@ -3,13 +3,12 @@
 import asyncio
 from asyncio import AbstractEventLoop
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 from ..protocol import ColumnInfo, DMLResult, ExploreItem, SelectResult, TableDescription
-from .base import BaseDriver, ConnectionLostError
+import mssql_python
 
-if TYPE_CHECKING:
-    import mssql_python
+from .base import BaseDriver, ConnectionLostError
 
 T = TypeVar("T")
 
@@ -23,12 +22,6 @@ class SQLServerDriver(BaseDriver):
         self._loop: AbstractEventLoop | None = None
 
     async def connect(self) -> None:
-        try:
-            import mssql_python
-        except ImportError:
-            raise RuntimeError(
-                "mssql-python not installed — run: pip install mssql-python"
-            )
         self._loop = asyncio.get_event_loop()
         host = self.params.get("host", "localhost")
         port = self.params.get("port", 1433)
@@ -55,11 +48,7 @@ class SQLServerDriver(BaseDriver):
         try:
             return await self._run(self._execute_sync, sql, binds)
         except Exception as exc:
-            import mssql_python
-
-            if isinstance(
-                exc, (mssql_python.OperationalError, mssql_python.InterfaceError)
-            ):
+            if isinstance(exc, (mssql_python.OperationalError, mssql_python.InterfaceError)):
                 raise ConnectionLostError(str(exc)) from exc
             raise
 

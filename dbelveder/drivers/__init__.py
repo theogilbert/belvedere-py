@@ -8,6 +8,10 @@ def get_driver(name: str) -> type[BaseDriver]:
 
             return SQLiteDriver
         case "sqlserver":
+            try:
+                import mssql_python  # noqa: F401
+            except ImportError:
+                raise RuntimeError("mssql-python not installed — run: pip install mssql-python")
             from .sqlserver import SQLServerDriver
 
             return SQLServerDriver

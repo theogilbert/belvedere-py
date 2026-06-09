@@ -16,9 +16,9 @@ from .protocol import (
 
 
 class Server:
-    def __init__(self, stdout: BinaryIO | None = None, max_concurrency: int = 1) -> None:
+    def __init__(self, out: BinaryIO, max_concurrency: int = 1) -> None:
         self._dispatcher = Dispatcher()
-        self._stdout: BinaryIO = sys.stdout.buffer if stdout is None else stdout
+        self._out = out
         self._lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -37,16 +37,22 @@ class Server:
                 msg: Request = decode(line)
                 asyncio.create_task(self._handle(msg))
             except JSONDecodeError:
-                asyncio.create_task(self._send(Result(id=None, result=None, error="decode error")))
+                asyncio.create_task(
+                    self._send(Result(id=None, result=None, error="decode error"))
+                )
             except TypeError:
-                asyncio.create_task(self._send(Result(id=None, result=None, error="invalid request")))
+                asyncio.create_task(
+                    self._send(Result(id=None, result=None, error="invalid request"))
+                )
 
     async def _handle(self, msg: Request) -> None:
         async with self._semaphore:
+
             async def send_progress(status: str, message: str) -> None:
                 await self._send(
                     Progress(
-                        id=msg.id, progress=ProgressDetail(status=status, message=message)
+                        id=msg.id,
+                        progress=ProgressDetail(status=status, message=message),
                     )
                 )
 
@@ -63,5 +69,5 @@ class Server:
     async def _send(self, msg: Response) -> None:
         data = encode(msg)
         async with self._lock:
-            self._stdout.write(data)
-            self._stdout.flush()
+            self._out.write(data)
+            self._out.flush()

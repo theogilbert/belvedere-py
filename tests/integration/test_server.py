@@ -23,7 +23,7 @@ def out() -> io.BytesIO:
 
 @pytest.fixture
 def server(out: io.BytesIO) -> Server:
-    return Server(stdout=out)
+    return Server(out=out)
 
 
 @pytest.fixture
@@ -98,9 +98,7 @@ class TestHandle:
             params={"driver": "sqlite", "database": ":memory:"},
         )
         conn_id = r1["result"]["connection_id"]
-        await send(
-            server, out, id=2, method="disconnect", params={"connection_id": conn_id}
-        )
+        await send(server, out, id=2, method="disconnect", params={"connection_id": conn_id})
         r3 = await send(
             server,
             out,

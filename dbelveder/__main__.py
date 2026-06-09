@@ -1,13 +1,18 @@
-from dataclasses import dataclass
 import argparse
 import asyncio
+import sys
+from dataclasses import dataclass
 
 from .server import Server
 
 
 def main() -> None:
     args = parse_cli_args()
-    asyncio.run(Server(max_concurrency=args.max_concurrency).run())
+
+    out = sys.stdout.buffer
+    server = Server(out, max_concurrency=args.max_concurrency)
+
+    asyncio.run(server.run())
 
 
 @dataclass

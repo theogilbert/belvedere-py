@@ -21,10 +21,20 @@ def main() -> None:
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
 
+    cache_dir = _cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
     out = sys.stdout.buffer
-    server = Server(out, max_concurrency=args.max_concurrency)
+    server = Server(out, cache_dir=cache_dir, max_concurrency=args.max_concurrency)
 
     asyncio.run(server.run())
+
+
+def _cache_dir() -> pathlib.Path:
+    cache_home = os.environ.get(
+        "XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")
+    )
+    return pathlib.Path(cache_home) / "dbelveder"
 
 
 def _log_path() -> pathlib.Path:

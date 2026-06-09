@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import pathlib
 import sys
 from typing import Any, BinaryIO
 
@@ -31,8 +32,8 @@ def _redact(params: dict[str, Any]) -> dict[str, Any]:
 
 
 class Server:
-    def __init__(self, out: BinaryIO, max_concurrency: int = 1) -> None:
-        self._dispatcher = Dispatcher(max_concurrency=max_concurrency)
+    def __init__(self, out: BinaryIO, cache_dir: pathlib.Path | None = None, max_concurrency: int = 1) -> None:
+        self._dispatcher = Dispatcher(max_concurrency=max_concurrency, cache_dir=cache_dir)
         self._out = out
         self._lock = asyncio.Lock()
 

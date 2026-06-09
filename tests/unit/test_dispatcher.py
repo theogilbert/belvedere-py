@@ -1,4 +1,5 @@
 import asyncio
+import pathlib
 
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -82,6 +83,45 @@ class TestExploreList:
         result = await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
         assert result == {"items": [ExploreItem(name="t", type="table", expandable=True)]}
 
+    async def test_should_cache_result_on_repeated_calls(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        driver.explore_list.assert_awaited_once()
+
+    async def test_should_cache_separately_per_path(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": ["dbo"]}, noop_progress)
+        assert driver.explore_list.await_count == 2
+
+    async def test_should_refresh_cache_when_reset_cache_is_true(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": [], "reset_cache": True}, noop_progress)
+        assert driver.explore_list.await_count == 2
+
+    async def test_reset_cache_clears_all_paths(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": ["dbo"]}, noop_progress)
+        # reset on one path clears all; both paths re-fetched
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": [], "reset_cache": True}, noop_progress)
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": ["dbo"]}, noop_progress)
+        assert driver.explore_list.await_count == 4  # 2 initial + re-fetch [] + re-fetch ["dbo"]
+
+    async def test_should_keep_separate_caches_per_connection(self, dispatcher: Dispatcher, mock_driver: AsyncMock) -> None:
+        with patch("dbelveder.dispatcher.get_driver", return_value=lambda _: mock_driver):
+            r1 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+            r2 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+        conn_a, conn_b = r1["connection_id"], r2["connection_id"]
+        await dispatcher.dispatch("explore.list", {"connection_id": conn_a, "path": []}, noop_progress)
+        await dispatcher.dispatch("explore.list", {"connection_id": conn_b, "path": []}, noop_progress)
+        # resetting conn_a does not affect conn_b's cache
+        await dispatcher.dispatch("explore.list", {"connection_id": conn_a, "path": [], "reset_cache": True}, noop_progress)
+        await dispatcher.dispatch("explore.list", {"connection_id": conn_b, "path": []}, noop_progress)
+        assert mock_driver.explore_list.await_count == 3  # a, b, a-reset; b still cached
+
 
 class TestExploreDescribe:
     async def test_should_return_details_from_driver(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
@@ -89,6 +129,26 @@ class TestExploreDescribe:
         driver.explore_describe.return_value = {"table": "t", "columns": []}
         result = await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress)
         assert result == {"details": {"table": "t", "columns": []}}
+
+    async def test_should_cache_result_on_repeated_calls(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress)
+        await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress)
+        driver.explore_describe.assert_awaited_once()
+
+    async def test_should_refresh_cache_when_reset_cache_is_true(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress)
+        await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"], "reset_cache": True}, noop_progress)
+        assert driver.explore_describe.await_count == 2
+
+    async def test_reset_cache_is_shared_with_explore_list(self, connected: tuple[Dispatcher, str, AsyncMock]) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        # resetting via explore.describe also clears explore.list cache
+        await disp.dispatch("explore.describe", {"connection_id": conn_id, "path": ["t"], "reset_cache": True}, noop_progress)
+        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        assert driver.explore_list.await_count == 2
 
 
 class TestConcurrency:

@@ -10,6 +10,8 @@ from .protocol import DMLResult, ProgressCallback
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_IDLE_TIMEOUT = 600.0
+
 
 class Dispatcher:
     """Routes method calls to handlers and manages per-connection state.
@@ -25,6 +27,8 @@ class Dispatcher:
         self._connections: dict[str, BaseDriver] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._caches: dict[str, ConnectionCache] = {}
+        self._idle_timeouts: dict[str, float] = {}
+        self._idle_tasks: dict[str, asyncio.Task] = {}
         self._cache_dir = cache_dir
         self._max_concurrency = max_concurrency
         self._next_id: int = 0
@@ -54,6 +58,9 @@ class Dispatcher:
         conn_id = params.get("connection_id")
         semaphore = self._semaphores.get(conn_id) if conn_id else None
 
+        if conn_id:
+            self._reset_idle_timer(conn_id)
+
         if semaphore:
             async with semaphore:
                 return await self._call(method, handler, params, send_progress)
@@ -77,6 +84,11 @@ class Dispatcher:
         self._connections[conn_id] = driver
         self._semaphores[conn_id] = asyncio.Semaphore(self._max_concurrency)
         self._caches[conn_id] = ConnectionCache(params, cache_file(params, self._cache_dir))
+        timeout = float(params.get("idle_timeout", _DEFAULT_IDLE_TIMEOUT))
+        self._idle_timeouts[conn_id] = timeout
+        self._idle_tasks[conn_id] = asyncio.create_task(
+            self._idle_watchdog(conn_id, timeout)
+        )
         return {"connection_id": conn_id}
 
     async def _handle_disconnect(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -84,6 +96,10 @@ class Dispatcher:
         driver = self._connections.pop(conn_id, None)
         self._semaphores.pop(conn_id, None)
         self._caches.pop(conn_id, None)
+        self._idle_timeouts.pop(conn_id, None)
+        task = self._idle_tasks.pop(conn_id, None)
+        if task:
+            task.cancel()
         if driver:
             await driver.disconnect()
         return {"ok": True}
@@ -137,3 +153,24 @@ class Dispatcher:
         if driver is None:
             raise KeyError(f"Unknown connection_id: {conn_id!r}")
         return driver
+
+    def _reset_idle_timer(self, conn_id: str) -> None:
+        task = self._idle_tasks.pop(conn_id, None)
+        if task:
+            task.cancel()
+        timeout = self._idle_timeouts.get(conn_id)
+        if timeout is not None:
+            self._idle_tasks[conn_id] = asyncio.create_task(
+                self._idle_watchdog(conn_id, timeout)
+            )
+
+    async def _idle_watchdog(self, conn_id: str, timeout: float) -> None:
+        await asyncio.sleep(timeout)
+        logger.info(f"Connection {conn_id!r} idle for {timeout}s — closing")
+        driver = self._connections.pop(conn_id, None)
+        self._semaphores.pop(conn_id, None)
+        self._caches.pop(conn_id, None)
+        self._idle_timeouts.pop(conn_id, None)
+        self._idle_tasks.pop(conn_id, None)
+        if driver:
+            await driver.disconnect()

@@ -231,3 +231,41 @@ class TestConcurrency:
         assert set(started) == {"a", "b"}  # both started concurrently
         gate.set()
         await asyncio.gather(t1, t2)
+
+
+class TestIdleTimeout:
+    async def test_connection_closed_after_idle_timeout(self, dispatcher: Dispatcher, mock_driver: AsyncMock) -> None:
+        with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)):
+            r = await dispatcher.dispatch("connect", {"driver": "mock", "idle_timeout": 0.05}, noop_progress)
+        conn_id = r["connection_id"]
+        await asyncio.sleep(0.15)
+        mock_driver.disconnect.assert_awaited_once()
+        with pytest.raises(KeyError):
+            await dispatcher.dispatch("execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress)
+
+    async def test_timer_resets_on_request(self, dispatcher: Dispatcher, mock_driver: AsyncMock) -> None:
+        with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)):
+            r = await dispatcher.dispatch("connect", {"driver": "mock", "idle_timeout": 0.1}, noop_progress)
+        conn_id = r["connection_id"]
+        await asyncio.sleep(0.07)
+        await dispatcher.dispatch("execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress)
+        await asyncio.sleep(0.07)
+        mock_driver.disconnect.assert_not_awaited()
+        await asyncio.sleep(0.1)
+        mock_driver.disconnect.assert_awaited_once()
+
+    async def test_default_timeout_does_not_fire_immediately(self, dispatcher: Dispatcher, mock_driver: AsyncMock) -> None:
+        with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)):
+            await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+        await asyncio.sleep(0.1)
+        mock_driver.disconnect.assert_not_awaited()
+
+    async def test_explicit_disconnect_cancels_timer(self, dispatcher: Dispatcher, mock_driver: AsyncMock) -> None:
+        with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)):
+            r = await dispatcher.dispatch("connect", {"driver": "mock", "idle_timeout": 0.1}, noop_progress)
+        conn_id = r["connection_id"]
+        await dispatcher.dispatch("disconnect", {"connection_id": conn_id}, noop_progress)
+        mock_driver.disconnect.assert_awaited_once()
+        await asyncio.sleep(0.15)
+        # disconnect should not be called a second time by the watchdog
+        assert mock_driver.disconnect.await_count == 1

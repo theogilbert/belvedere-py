@@ -5,7 +5,7 @@ from typing import Any
 
 from .drivers import get_driver
 from .drivers.base import BaseDriver, ConnectionLostError
-from .explore_cache import ConnectionCache
+from .explore_cache import ConnectionCache, cache_file
 from .protocol import DMLResult, ProgressCallback
 
 logger = logging.getLogger(__name__)
@@ -15,12 +15,12 @@ class Dispatcher:
     """Routes method calls to handlers and manages per-connection state.
 
     Args:
+        cache_dir: Directory for persisting explore caches.
         max_concurrency: Maximum concurrent requests allowed per connection.
-        cache_dir: Directory for persisting explore caches. Disabled if None.
     """
 
     def __init__(
-        self, max_concurrency: int = 1, cache_dir: pathlib.Path | None = None
+        self, cache_dir: pathlib.Path, max_concurrency: int = 1
     ) -> None:
         self._connections: dict[str, BaseDriver] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
@@ -76,7 +76,7 @@ class Dispatcher:
         self._next_id += 1
         self._connections[conn_id] = driver
         self._semaphores[conn_id] = asyncio.Semaphore(self._max_concurrency)
-        self._caches[conn_id] = ConnectionCache(params, self._cache_dir)
+        self._caches[conn_id] = ConnectionCache(params, cache_file(params, self._cache_dir))
         return {"connection_id": conn_id}
 
     async def _handle_disconnect(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -116,9 +116,7 @@ class Dispatcher:
             items = await self._require_connection(conn_id).explore_list(path)
             cache.set_list(path, items)
         else:
-            logger.debug(
-                f"explore.list cache hit for connection {conn_id!r}, path {path}"
-            )
+            logger.debug(f"explore.list cache hit for connection {conn_id!r}, path {path}")
         return {"items": items}
 
     async def _handle_explore_describe(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -128,14 +126,11 @@ class Dispatcher:
         if params.get("reset_cache"):
             cache.reset()
         if cache.has_describe(path):
-            logger.debug(
-                f"explore.describe cache hit for connection {conn_id!r}, path {path}"
-            )
-        else:
-            cache.set_describe(
-                path, await self._require_connection(conn_id).explore_describe(path)
-            )
-        return {"details": cache.get_describe(path)}
+            logger.debug(f"explore.describe cache hit for connection {conn_id!r}, path {path}")
+            return {"details": cache.get_describe(path)}
+        desc = await self._require_connection(conn_id).explore_describe(path)
+        cache.set_describe(path, desc)
+        return {"details": desc}
 
     def _require_connection(self, conn_id: str) -> BaseDriver:
         driver = self._connections.get(conn_id)

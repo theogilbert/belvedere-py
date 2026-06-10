@@ -5,6 +5,7 @@ written to the server's stdout buffer.
 
 import io
 import json
+import pathlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,7 +13,7 @@ import pytest
 from pytest import MonkeyPatch
 
 from dbelveder.drivers.base import ConnectionLostError
-from dbelveder.protocol import Request
+from dbelveder.protocol import Request, SelectResult
 from dbelveder.server import Server
 
 
@@ -22,8 +23,8 @@ def out() -> io.BytesIO:
 
 
 @pytest.fixture
-def server(out: io.BytesIO) -> Server:
-    return Server(out=out)
+def server(out: io.BytesIO, tmp_path: pathlib.Path) -> Server:
+    return Server(out=out, cache_dir=tmp_path)
 
 
 @pytest.fixture
@@ -140,8 +141,10 @@ class TestHandle:
         self, server: Server, out: io.BytesIO, mock_get_driver: MagicMock
     ) -> None:
         mock_driver = AsyncMock()
-        mock_driver.execute.side_effect = [ConnectionLostError(), (["n"], [[1]])]
-        mock_get_driver.return_value = lambda _: mock_driver
+        mock_driver.execute.side_effect = [ConnectionLostError(), SelectResult(columns=["n"], rows=[[1]])]
+        driver_cls = AsyncMock()
+        driver_cls.create = AsyncMock(return_value=mock_driver)
+        mock_get_driver.return_value = driver_cls
 
         r1 = await send(server, out, id=1, method="connect", params={"driver": "mock"})
         conn_id = r1["result"]["connection_id"]

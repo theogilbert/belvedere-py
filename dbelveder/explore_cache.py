@@ -29,37 +29,29 @@ def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:
 
 
 class ConnectionCache:
-    """Explore result cache for a single database connection.
+    """Explore result cache for a single database connection, backed by a JSON file.
 
-    Loads from and persists to a JSON file on disk when a cache directory is
-    provided. All cache-miss fetching and disk I/O is handled here so callers
-    only interact with ``get_*`` / ``set_*`` / ``reset``.
+    Loads from disk on construction and persists atomically after every write.
+    Callers interact only through ``get_*`` / ``set_*`` / ``reset``.
 
     Args:
-        params: Raw connection params used to derive the cache file name and
-            the ``_connection`` metadata block written to disk.
-        cache_dir: Directory for the cache file. Pass ``None`` to disable
-            disk persistence.
+        params: Raw connection params used to populate the ``_connection``
+            metadata block written to disk.
+        path: Path to the JSON cache file.
     """
 
-    def __init__(
-        self, params: dict[str, Any], cache_dir: pathlib.Path | None = None
-    ) -> None:
+    def __init__(self, params: dict[str, Any], path: pathlib.Path) -> None:
         self._params = params
-        self._path: pathlib.Path | None = (
-            cache_file(params, cache_dir) if cache_dir else None
-        )
+        self._path = path
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
         self._describe: dict[tuple[str, ...], TableDescription | None] = {}
-        if self._path:
-            self._load()
+        self._load()
 
     def reset(self) -> None:
-        """Clear all cached results and delete the disk file if present."""
+        """Clear all cached results and delete the disk file."""
         self._list.clear()
         self._describe.clear()
-        if self._path:
-            self._path.unlink(missing_ok=True)
+        self._path.unlink(missing_ok=True)
 
     def get_list(self, path: list[str]) -> list[ExploreItem] | None:
         """Return cached explore.list results for path, or None on a miss.
@@ -115,7 +107,7 @@ class ConnectionCache:
         self._persist()
 
     def _load(self) -> None:
-        if not self._path or not self._path.exists():
+        if not self._path.exists():
             return
         try:
             data = json.loads(self._path.read_text())
@@ -139,8 +131,6 @@ class ConnectionCache:
             self._describe.clear()
 
     def _persist(self) -> None:
-        if not self._path:
-            return
         try:
             data: dict[str, Any] = {
                 "_connection": {

@@ -36,11 +36,11 @@ class Server:
 
     Args:
         out: Binary stream to write responses to (typically ``sys.stdout.buffer``).
-        cache_dir: Directory for persisting explore caches between sessions. Disabled if None.
+        cache_dir: Directory for persisting explore caches between sessions.
         max_concurrency: Maximum concurrent requests allowed per connection.
     """
 
-    def __init__(self, out: BinaryIO, cache_dir: pathlib.Path | None = None, max_concurrency: int = 1) -> None:
+    def __init__(self, out: BinaryIO, cache_dir: pathlib.Path, max_concurrency: int = 1) -> None:
         self._dispatcher = Dispatcher(max_concurrency=max_concurrency, cache_dir=cache_dir)
         self._out = out
         self._lock = asyncio.Lock()

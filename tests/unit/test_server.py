@@ -1,5 +1,6 @@
 import io
 import logging
+import pathlib
 
 import pytest
 
@@ -45,9 +46,9 @@ class TestRedact:
 
 class TestServerLogging:
     async def test_should_log_sent_message(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, tmp_path: pathlib.Path
     ) -> None:
-        server = Server(out=io.BytesIO())
+        server = Server(out=io.BytesIO(), cache_dir=tmp_path)
         with caplog.at_level(logging.DEBUG, logger="dbelveder.server"):
             await server._send(Result(id=1, result={"ok": True}, error=None))
         assert any("Sent" in r.message for r in caplog.records)

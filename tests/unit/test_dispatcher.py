@@ -14,8 +14,8 @@ async def noop_progress(status: str, message: str) -> None:
 
 
 @pytest.fixture
-def dispatcher() -> Dispatcher:
-    return Dispatcher()
+def dispatcher(tmp_path: pathlib.Path) -> Dispatcher:
+    return Dispatcher(cache_dir=tmp_path)
 
 
 @pytest.fixture
@@ -170,8 +170,8 @@ class TestConcurrency:
             result = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
         return result["connection_id"]
 
-    async def test_should_serialise_concurrent_requests_on_same_connection(self) -> None:
-        dispatcher = Dispatcher(max_concurrency=1)
+    async def test_should_serialise_concurrent_requests_on_same_connection(self, tmp_path: pathlib.Path) -> None:
+        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
         order: list[str] = []
         gate = asyncio.Event()
 
@@ -199,8 +199,8 @@ class TestConcurrency:
         # second request must have started only after the first finished
         assert order == ["start", "end", "start", "end"]
 
-    async def test_should_allow_concurrent_requests_on_different_connections(self) -> None:
-        dispatcher = Dispatcher(max_concurrency=1)
+    async def test_should_allow_concurrent_requests_on_different_connections(self, tmp_path: pathlib.Path) -> None:
+        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
         started: list[str] = []
         gate = asyncio.Event()
 

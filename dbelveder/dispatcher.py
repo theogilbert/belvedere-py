@@ -3,7 +3,7 @@ import logging
 import pathlib
 from typing import Any
 
-from .drivers import get_driver
+from .drivers import get_driver, list_databases
 from .drivers.base import BaseDriver, ConnectionLostError
 from .explore_cache import ConnectionCache, cache_file
 from .protocol import DMLResult, ProgressCallback
@@ -21,9 +21,7 @@ class Dispatcher:
         max_concurrency: Maximum concurrent requests allowed per connection.
     """
 
-    def __init__(
-        self, cache_dir: pathlib.Path, max_concurrency: int = 1
-    ) -> None:
+    def __init__(self, cache_dir: pathlib.Path, max_concurrency: int = 1) -> None:
         self._connections: dict[str, BaseDriver] = {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._caches: dict[str, ConnectionCache] = {}
@@ -77,13 +75,18 @@ class Dispatcher:
             return await handler(params, send_progress)
         return await handler(params)
 
+    async def _handle_capabilities(self, params: dict[str, Any]) -> dict[str, Any]:
+        return {"server": "dbelveder", "databases": list_databases()}
+
     async def _handle_connect(self, params: dict[str, Any]) -> dict[str, Any]:
         driver = await get_driver(params["driver"]).create(params)
         conn_id = str(self._next_id)
         self._next_id += 1
         self._connections[conn_id] = driver
         self._semaphores[conn_id] = asyncio.Semaphore(self._max_concurrency)
-        self._caches[conn_id] = ConnectionCache(params, cache_file(params, self._cache_dir))
+        self._caches[conn_id] = ConnectionCache(
+            params, cache_file(params, self._cache_dir)
+        )
         timeout = float(params.get("idle_timeout", _DEFAULT_IDLE_TIMEOUT))
         self._idle_timeouts[conn_id] = timeout
         self._idle_tasks[conn_id] = asyncio.create_task(
@@ -132,7 +135,9 @@ class Dispatcher:
             items = await self._require_connection(conn_id).explore_list(path)
             cache.set_list(path, items)
         else:
-            logger.debug(f"explore.list cache hit for connection {conn_id!r}, path {path}")
+            logger.debug(
+                f"explore.list cache hit for connection {conn_id!r}, path {path}"
+            )
         return {"items": items}
 
     async def _handle_explore_describe(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -142,7 +147,9 @@ class Dispatcher:
         if params.get("reset_cache"):
             cache.reset()
         if cache.has_describe(path):
-            logger.debug(f"explore.describe cache hit for connection {conn_id!r}, path {path}")
+            logger.debug(
+                f"explore.describe cache hit for connection {conn_id!r}, path {path}"
+            )
             return {"details": cache.get_describe(path)}
         desc = await self._require_connection(conn_id).explore_describe(path)
         cache.set_describe(path, desc)

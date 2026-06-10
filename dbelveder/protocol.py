@@ -141,6 +141,42 @@ class DMLResult:
     rows_affected: int
 
 
+@dataclass
+class DatabaseParam:
+    """A single connection parameter announced by a driver.
+
+    Attributes:
+        key: Parameter key sent in ``connect.params``.
+        type: Value type — ``"string"``, ``"integer"``, or ``"enum"``.
+        label: Human-readable label for UI display.
+        required: Whether a non-empty value is required.
+        default: Default value pre-filled in the UI.
+        choices: Allowed values for ``"enum"`` params.
+        secret: Mask input in the UI; value is never persisted to disk.
+    """
+
+    key: str
+    type: str
+    label: str
+    required: bool = False
+    default: str | int | None = None
+    choices: list[str] | None = None
+    secret: bool = False
+
+
+@dataclass
+class Database:
+    """A driver and its connection parameters, as announced by ``capabilities``.
+
+    Attributes:
+        driver: Driver identifier passed as ``driver`` in ``connect.params``.
+        params: Connection parameters in display order.
+    """
+
+    driver: str
+    params: list[DatabaseParam]
+
+
 Response = Result | Progress | ExploreItem
 
 

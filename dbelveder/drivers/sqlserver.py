@@ -4,7 +4,14 @@ import asyncio
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ..protocol import ColumnInfo, DMLResult, ExploreItem, SelectResult, TableDescription
+from ..protocol import (
+    ColumnInfo,
+    DMLResult,
+    ExploreItem,
+    SelectResult,
+    TableDescription,
+    DatabaseParam,
+)
 import mssql_python
 
 from .base import BaseDriver, ConnectionLostError
@@ -22,6 +29,20 @@ class SQLServerDriver(BaseDriver):
             ``database``, ``applicationIntent``).
         conn: Open mssql_python connection. Use :meth:`create` instead of constructing directly.
     """
+
+    PARAMS: list[DatabaseParam] = [
+        DatabaseParam(key="host", type="string", label="Host", default="localhost"),
+        DatabaseParam(key="port", type="integer", label="Port", default=1433),
+        DatabaseParam(key="database", type="string", label="Database"),
+        DatabaseParam(key="user", type="string", label="User"),
+        DatabaseParam(
+            key="applicationIntent",
+            type="enum",
+            label="Application Intent",
+            choices=["READ_WRITE", "READ_ONLY"],
+        ),
+        DatabaseParam(key="password", type="string", label="Password", secret=True),
+    ]
 
     def __init__(self, params: dict[str, Any], conn: mssql_python.Connection) -> None:
         super().__init__(params)
@@ -62,9 +83,7 @@ class SQLServerDriver(BaseDriver):
             ),
         )
 
-    async def execute(
-        self, sql: str, binds: list[Any]
-    ) -> SelectResult | DMLResult:
+    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
         """Run a SQL statement.
 
         Args:
@@ -80,13 +99,13 @@ class SQLServerDriver(BaseDriver):
         try:
             return await self._run(self._execute_sync, sql, binds)
         except Exception as exc:
-            if isinstance(exc, (mssql_python.OperationalError, mssql_python.InterfaceError)):
+            if isinstance(
+                exc, (mssql_python.OperationalError, mssql_python.InterfaceError)
+            ):
                 raise ConnectionLostError(str(exc)) from exc
             raise
 
-    def _execute_sync(
-        self, sql: str, binds: list[Any]
-    ) -> SelectResult | DMLResult:
+    def _execute_sync(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
 
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
@@ -216,7 +235,9 @@ class SQLServerDriver(BaseDriver):
                     table=table,
                     schema=schema,
                     columns=[
-                        ColumnInfo(name=r[0], type=r[1], nullable=r[2] == "YES", default=r[3])
+                        ColumnInfo(
+                            name=r[0], type=r[1], nullable=r[2] == "YES", default=r[3]
+                        )
                         for r in cur.fetchall()
                     ],
                 )
@@ -224,4 +245,6 @@ class SQLServerDriver(BaseDriver):
                 return None
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args, **kwargs))
+        return await asyncio.get_running_loop().run_in_executor(
+            None, lambda: fn(*args, **kwargs)
+        )

@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from dbelveder.drivers.sqlserver import SQLServerDriver
-from dbelveder.protocol import DMLResult, ExploreItem, SelectResult, TableDescription
+from dbelveder.protocol import DMLResult, SelectResult, TableDescription
 
 
 def _params() -> dict:
@@ -67,7 +67,9 @@ async def tables(driver: SQLServerDriver) -> AsyncGenerator[tuple[str, str], Non
 
 
 class TestExecute:
-    async def test_should_return_columns_and_rows(self, driver: SQLServerDriver) -> None:
+    async def test_should_return_columns_and_rows(
+        self, driver: SQLServerDriver
+    ) -> None:
         result = await driver.execute("SELECT 1 AS n, 'hello' AS s", [])
         assert isinstance(result, SelectResult)
         assert result.columns == ["n", "s"]
@@ -77,7 +79,9 @@ class TestExecute:
         self, driver: SQLServerDriver, table: str
     ) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
-        result = await driver.execute(f"INSERT INTO dbo.{table} VALUES (?, ?)", [1, "hello"])
+        result = await driver.execute(
+            f"INSERT INTO dbo.{table} VALUES (?, ?)", [1, "hello"]
+        )
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 1
 
@@ -107,7 +111,9 @@ class TestExploreList:
         items = await driver.explore_list([])
         assert any(i.name == "dbo" and i.type == "schema" for i in items)
 
-    async def test_should_not_list_system_schemas(self, driver: SQLServerDriver) -> None:
+    async def test_should_not_list_system_schemas(
+        self, driver: SQLServerDriver
+    ) -> None:
         items = await driver.explore_list([])
         names = {i.name for i in items}
         assert "sys" not in names
@@ -141,9 +147,7 @@ class TestExploreList:
     async def test_should_list_explicit_index(
         self, driver: SQLServerDriver, table: str
     ) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", []
-        )
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
         await driver.execute(f"CREATE INDEX ix_val ON dbo.{table}(val)", [])
         items = await driver.explore_list(["dbo", table, "indices"])
         assert any(i.name == "ix_val" for i in items)
@@ -152,12 +156,8 @@ class TestExploreList:
     async def test_should_list_unique_index(
         self, driver: SQLServerDriver, table: str
     ) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", []
-        )
-        await driver.execute(
-            f"CREATE UNIQUE INDEX uix_val ON dbo.{table}(val)", []
-        )
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
+        await driver.execute(f"CREATE UNIQUE INDEX uix_val ON dbo.{table}(val)", [])
         items = await driver.explore_list(["dbo", table, "indices"])
         assert any(i.name == "uix_val" for i in items)
 
@@ -223,7 +223,10 @@ class TestExploreList:
     async def test_should_return_empty_for_unknown_path(
         self, driver: SQLServerDriver
     ) -> None:
-        assert await driver.explore_list(["dbo", "no_such_table", "columns", "extra"]) == []
+        assert (
+            await driver.explore_list(["dbo", "no_such_table", "columns", "extra"])
+            == []
+        )
 
 
 class TestExploreDescribe:

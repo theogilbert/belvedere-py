@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from .server import Server
 
 
+logger = logging.getLogger()
+
+
 def main() -> None:
     args = parse_cli_args()
 
@@ -27,7 +30,10 @@ def main() -> None:
     out = sys.stdout.buffer
     server = Server(out, cache_dir=cache_dir, max_concurrency=args.max_concurrency)
 
-    asyncio.run(server.run())
+    try:
+        asyncio.run(server.run())
+    except Exception as e:
+        logger.exception(e)
 
 
 def _cache_dir() -> pathlib.Path:

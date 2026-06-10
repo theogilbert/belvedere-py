@@ -3,7 +3,7 @@ import logging
 import pathlib
 from typing import Any
 
-from .drivers import get_driver, list_databases
+from .drivers import get_driver, list_drivers
 from .drivers.base import BaseDriver, ConnectionLostError
 from .explore_cache import ConnectionCache, cache_file
 from .protocol import DMLResult, ProgressCallback
@@ -76,7 +76,7 @@ class Dispatcher:
         return await handler(params)
 
     async def _handle_capabilities(self, params: dict[str, Any]) -> dict[str, Any]:
-        return {"server": "dbelveder", "databases": list_databases()}
+        return {"server": "dbelveder", "drivers": list_drivers()}
 
     async def _handle_connect(self, params: dict[str, Any]) -> dict[str, Any]:
         driver = await get_driver(params["driver"]).create(params)

@@ -9,7 +9,7 @@ from ..protocol import (
     ExploreItem,
     SelectResult,
     TableDescription,
-    DatabaseParam,
+    DriverParam,
 )
 from .base import BaseDriver
 
@@ -24,8 +24,8 @@ class SQLiteDriver(BaseDriver):
         conn: Open sqlite3 connection. Use :meth:`create` instead of constructing directly.
     """
 
-    PARAMS: list[DatabaseParam] = [
-        DatabaseParam(
+    PARAMS: list[DriverParam] = [
+        DriverParam(
             key="database", type="string", label="Database file path", required=True
         ),
     ]

@@ -142,7 +142,7 @@ class DMLResult:
 
 
 @dataclass
-class DatabaseParam:
+class DriverParam:
     """A single connection parameter announced by a driver.
 
     Attributes:
@@ -165,7 +165,7 @@ class DatabaseParam:
 
 
 @dataclass
-class Database:
+class Driver:
     """A driver and its connection parameters, as announced by ``capabilities``.
 
     Attributes:
@@ -174,7 +174,7 @@ class Database:
     """
 
     driver: str
-    params: list[DatabaseParam]
+    params: list[DriverParam]
 
 
 Response = Result | Progress | ExploreItem

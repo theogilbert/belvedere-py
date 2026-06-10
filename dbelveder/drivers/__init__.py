@@ -1,5 +1,5 @@
 from .base import BaseDriver
-from ..protocol import Database
+from ..protocol import Driver
 
 
 def get_driver(name: str) -> type[BaseDriver]:
@@ -22,16 +22,16 @@ def get_driver(name: str) -> type[BaseDriver]:
             raise ValueError(f"Unknown driver: {name!r}")
 
 
-def list_databases() -> list[Database]:  # Find a better name
+def list_drivers() -> list[Driver]:
     """Return capabilities for every driver available in the current environment."""
     from .sqlite import SQLiteDriver
 
-    techs = [Database(driver="sqlite", params=SQLiteDriver.PARAMS)]
+    techs = [Driver(driver="sqlite", params=SQLiteDriver.PARAMS)]
     try:
         import mssql_python  # noqa: F401
         from .sqlserver import SQLServerDriver
 
-        techs.append(Database(driver="sqlserver", params=SQLServerDriver.PARAMS))
+        techs.append(Driver(driver="sqlserver", params=SQLServerDriver.PARAMS))
     except ImportError:
         pass
     return techs

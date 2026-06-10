@@ -10,7 +10,7 @@ from ..protocol import (
     ExploreItem,
     SelectResult,
     TableDescription,
-    DatabaseParam,
+    DriverParam,
 )
 import mssql_python
 
@@ -30,18 +30,18 @@ class SQLServerDriver(BaseDriver):
         conn: Open mssql_python connection. Use :meth:`create` instead of constructing directly.
     """
 
-    PARAMS: list[DatabaseParam] = [
-        DatabaseParam(key="host", type="string", label="Host", default="localhost"),
-        DatabaseParam(key="port", type="integer", label="Port", default=1433),
-        DatabaseParam(key="database", type="string", label="Database"),
-        DatabaseParam(key="user", type="string", label="User"),
-        DatabaseParam(
+    PARAMS: list[DriverParam] = [
+        DriverParam(key="host", type="string", label="Host", default="localhost"),
+        DriverParam(key="port", type="integer", label="Port", default=1433),
+        DriverParam(key="database", type="string", label="Database"),
+        DriverParam(key="user", type="string", label="User"),
+        DriverParam(
             key="applicationIntent",
             type="enum",
             label="Application Intent",
             choices=["READ_WRITE", "READ_ONLY"],
         ),
-        DatabaseParam(key="password", type="string", label="Password", secret=True),
+        DriverParam(key="password", type="string", label="Password", secret=True),
     ]
 
     def __init__(self, params: dict[str, Any], conn: mssql_python.Connection) -> None:

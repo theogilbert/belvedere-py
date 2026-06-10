@@ -57,12 +57,12 @@ class TestCapabilities:
 
     async def test_should_always_include_sqlite(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch("capabilities", {}, noop_progress)
-        drivers = [t.driver for t in result["databases"]]
+        drivers = [t.driver for t in result["drivers"]]
         assert "sqlite" in drivers
 
     async def test_params_have_required_fields(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch("capabilities", {}, noop_progress)
-        for tech in result["databases"]:
+        for tech in result["drivers"]:
             assert len(tech.params) > 0
             for p in tech.params:
                 assert p.key

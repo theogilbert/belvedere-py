@@ -20,7 +20,7 @@ def main() -> None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(
             filename=log_path,
-            level=logging.DEBUG,
+            level=logging.DEBUG if args.verbose else logging.INFO,
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
 
@@ -56,6 +56,7 @@ def _log_path() -> pathlib.Path:
 class CliArgs:
     max_concurrency: int
     log: bool
+    verbose: bool
 
 
 def parse_cli_args() -> CliArgs:
@@ -75,6 +76,13 @@ def parse_cli_args() -> CliArgs:
             "Logs will be saved under `~/.local/state`."
         ),
     )
+    parser.add_argument(
+        "-v",
+        action="store_true",
+        dest="verbose",
+        default=False,
+        help="Log at DEBUG level. Without this flag, only INFO and above are logged.",
+    )
     args = parser.parse_args()
 
-    return CliArgs(max_concurrency=args.max_concurrency, log=args.log)
+    return CliArgs(max_concurrency=args.max_concurrency, log=args.log, verbose=args.verbose)

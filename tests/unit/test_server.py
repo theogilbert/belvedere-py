@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import os
 import pathlib
 
 import pytest
@@ -44,15 +45,16 @@ class TestRedact:
         assert _redact({}) == {}
 
 
-async def _run_server(
-    tmp_path: pathlib.Path, mock_stdin: io.RawIOBase, *lines: str
-) -> io.BytesIO:
-    """Write lines to mock_stdin, run the server to EOF, return the output buffer."""
+async def _run_server(tmp_path: pathlib.Path, *lines: str) -> io.BytesIO:
+    """Write lines to a pipe, run the server to EOF, return the output buffer."""
+    r, w = os.pipe()
+    stdin_r = os.fdopen(r, "rb", buffering=0)
+    stdin_w = os.fdopen(w, "wb", buffering=0)
     for line in lines:
-        mock_stdin.write(line.encode())
-    mock_stdin.close()
+        stdin_w.write(line.encode())
+    stdin_w.close()
     out = io.BytesIO()
-    await Server(out=out, cache_dir=tmp_path).run()
+    await Server(stdin=stdin_r, stdout=out, cache_dir=tmp_path).run()
     return out
 
 
@@ -64,22 +66,20 @@ class TestRunLoop:
     async def test_non_dict_params_produces_no_response_and_logs_warning(
         self,
         tmp_path: pathlib.Path,
-        mock_stdin: io.RawIOBase,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         with caplog.at_level(logging.WARNING, logger="dbelveder.server"):
             out = await _run_server(
-                tmp_path, mock_stdin, _req(id=1, method="capabilities", params=[])
+                tmp_path, _req(id=1, method="capabilities", params=[])
             )
         assert out.getvalue() == b""
         assert any("params must be an object" in r.message for r in caplog.records)
 
     async def test_loop_continues_after_non_dict_params(
-        self, tmp_path: pathlib.Path, mock_stdin: io.RawIOBase
+        self, tmp_path: pathlib.Path
     ) -> None:
         out = await _run_server(
             tmp_path,
-            mock_stdin,
             _req(id=1, method="capabilities", params=42),
             _req(id=2, method="capabilities", params={}),
         )
@@ -92,30 +92,25 @@ class TestServerLogging:
         self,
         caplog: pytest.LogCaptureFixture,
         tmp_path: pathlib.Path,
-        mock_stdin: io.RawIOBase,
     ) -> None:
         with caplog.at_level(logging.DEBUG, logger="dbelveder.server"):
-            await _run_server(
-                tmp_path, mock_stdin, _req(id=1, method="capabilities", params={})
-            )
+            await _run_server(tmp_path, _req(id=1, method="capabilities", params={}))
         assert any("Sent" in r.message for r in caplog.records)
 
     async def test_should_log_ready_on_start(
         self,
         caplog: pytest.LogCaptureFixture,
         tmp_path: pathlib.Path,
-        mock_stdin: io.RawIOBase,
     ) -> None:
         with caplog.at_level(logging.INFO, logger="dbelveder.server"):
-            await _run_server(tmp_path, mock_stdin)
+            await _run_server(tmp_path)
         assert any("ready" in r.message.lower() for r in caplog.records)
 
     async def test_should_log_exit_on_eof(
         self,
         caplog: pytest.LogCaptureFixture,
         tmp_path: pathlib.Path,
-        mock_stdin: io.RawIOBase,
     ) -> None:
         with caplog.at_level(logging.INFO, logger="dbelveder.server"):
-            await _run_server(tmp_path, mock_stdin)
+            await _run_server(tmp_path)
         assert any("exit" in r.message.lower() for r in caplog.records)

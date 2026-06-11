@@ -24,7 +24,7 @@ def out() -> io.BytesIO:
 
 @pytest.fixture
 def server(out: io.BytesIO, tmp_path: pathlib.Path) -> Server:
-    return Server(out=out, cache_dir=tmp_path)
+    return Server(stdout=out, cache_dir=tmp_path)
 
 
 @pytest.fixture
@@ -99,7 +99,9 @@ class TestHandle:
             params={"driver": "sqlite", "database": ":memory:"},
         )
         conn_id = r1["result"]["connection_id"]
-        await send(server, out, id=2, method="disconnect", params={"connection_id": conn_id})
+        await send(
+            server, out, id=2, method="disconnect", params={"connection_id": conn_id}
+        )
         r3 = await send(
             server,
             out,
@@ -141,7 +143,10 @@ class TestHandle:
         self, server: Server, out: io.BytesIO, mock_get_driver: MagicMock
     ) -> None:
         mock_driver = AsyncMock()
-        mock_driver.execute.side_effect = [ConnectionLostError(), SelectResult(columns=["n"], rows=[[1]])]
+        mock_driver.execute.side_effect = [
+            ConnectionLostError(),
+            SelectResult(columns=["n"], rows=[[1]]),
+        ]
         driver_cls = AsyncMock()
         driver_cls.create = AsyncMock(return_value=mock_driver)
         mock_get_driver.return_value = driver_cls

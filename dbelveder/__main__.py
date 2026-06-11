@@ -3,7 +3,6 @@ import asyncio
 import logging
 import os
 import pathlib
-import sys
 from dataclasses import dataclass
 
 from .server import Server
@@ -27,8 +26,7 @@ def main() -> None:
     cache_dir = _cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    out = sys.stdout.buffer
-    server = Server(out, cache_dir=cache_dir, max_concurrency=args.max_concurrency)
+    server = Server(cache_dir=cache_dir, max_concurrency=args.max_concurrency)
 
     try:
         asyncio.run(server.run())

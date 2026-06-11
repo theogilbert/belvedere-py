@@ -40,9 +40,18 @@ class Server:
         max_concurrency: Maximum concurrent requests allowed per connection.
     """
 
-    def __init__(self, out: BinaryIO, cache_dir: pathlib.Path, max_concurrency: int = 1) -> None:
-        self._dispatcher = Dispatcher(max_concurrency=max_concurrency, cache_dir=cache_dir)
-        self._out = out
+    def __init__(
+        self,
+        cache_dir: pathlib.Path,
+        max_concurrency: int = 1,
+        stdin: BinaryIO = sys.stdin.buffer,
+        stdout: BinaryIO = sys.stdout.buffer,
+    ) -> None:
+        self._dispatcher = Dispatcher(
+            max_concurrency=max_concurrency, cache_dir=cache_dir
+        )
+        self._out = stdout
+        self._stdin = stdin
         self._lock = asyncio.Lock()
 
     async def run(self) -> None:
@@ -55,7 +64,7 @@ class Server:
         loop = asyncio.get_event_loop()
         await loop.connect_read_pipe(
             lambda: asyncio.StreamReaderProtocol(reader),
-            sys.stdin.buffer,
+            self._stdin,
         )
         logger.info("Server ready")
         while True:
@@ -66,9 +75,13 @@ class Server:
             try:
                 msg: Request = decode(line)
                 if not isinstance(msg.params, dict):
-                    logger.warning(f"Ignoring request {msg.id!r}: params must be an object, got {type(msg.params).__name__}")
+                    logger.warning(
+                        f"Ignoring request {msg.id!r}: params must be an object, got {type(msg.params).__name__}"
+                    )
                     continue
-                logger.debug(f"Received {_truncate(json.dumps({'id': msg.id, 'method': msg.method, 'params': _redact(msg.params)}))}")
+                logger.debug(
+                    f"Received {_truncate(json.dumps({'id': msg.id, 'method': msg.method, 'params': _redact(msg.params)}))}"
+                )
                 asyncio.create_task(self._handle(msg))
             except json.JSONDecodeError:
                 asyncio.create_task(

@@ -95,7 +95,7 @@ class Dispatcher:
         return {"connection_id": conn_id}
 
     async def _handle_disconnect(self, params: dict[str, Any]) -> dict[str, Any]:
-        conn_id: str = params["connection_id"]
+        conn_id: str = self._require_param(params, "connection_id")
         driver = self._connections.pop(conn_id, None)
         self._semaphores.pop(conn_id, None)
         self._caches.pop(conn_id, None)
@@ -110,8 +110,8 @@ class Dispatcher:
     async def _handle_execute(
         self, params: dict[str, Any], send_progress: ProgressCallback
     ) -> dict[str, Any]:
-        driver = self._require_connection(params["connection_id"])
-        sql: str = params["sql"]
+        driver = self._require_connection(self._require_param(params, "connection_id"))
+        sql: str = self._require_param(params, "sql")
         binds: list[Any] = params.get("params") or []
         try:
             result = await driver.execute(sql, binds)
@@ -125,7 +125,7 @@ class Dispatcher:
         return {"columns": result.columns, "rows": result.rows}
 
     async def _handle_explore_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        conn_id: str = params["connection_id"]
+        conn_id: str = self._require_param(params, "connection_id")
         path: list[str] = params.get("path") or []
         cache = self._caches[conn_id]
         if params.get("reset_cache"):
@@ -141,7 +141,7 @@ class Dispatcher:
         return {"items": items}
 
     async def _handle_explore_describe(self, params: dict[str, Any]) -> dict[str, Any]:
-        conn_id: str = params["connection_id"]
+        conn_id: str = self._require_param(params, "connection_id")
         path: list[str] = params.get("path") or []
         cache = self._caches[conn_id]
         if params.get("reset_cache"):
@@ -154,6 +154,11 @@ class Dispatcher:
         desc = await self._require_connection(conn_id).explore_describe(path)
         cache.set_describe(path, desc)
         return {"details": desc}
+
+    def _require_param(self, params: dict[str, Any], key: str) -> Any:
+        if key not in params:
+            raise ValueError(f"Missing required param: {key!r}")
+        return params[key]
 
     def _require_connection(self, conn_id: str) -> BaseDriver:
         driver = self._connections.get(conn_id)

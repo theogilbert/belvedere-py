@@ -57,9 +57,11 @@ class Server:
             lambda: asyncio.StreamReaderProtocol(reader),
             sys.stdin.buffer,
         )
+        logger.info("Server ready")
         while True:
             line = await reader.readline()
             if not line:
+                logger.info("Server exiting")
                 break
             try:
                 msg: Request = decode(line)

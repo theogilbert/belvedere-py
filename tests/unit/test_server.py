@@ -99,3 +99,23 @@ class TestServerLogging:
                 tmp_path, mock_stdin, _req(id=1, method="capabilities", params={})
             )
         assert any("Sent" in r.message for r in caplog.records)
+
+    async def test_should_log_ready_on_start(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: pathlib.Path,
+        mock_stdin: io.RawIOBase,
+    ) -> None:
+        with caplog.at_level(logging.INFO, logger="dbelveder.server"):
+            await _run_server(tmp_path, mock_stdin)
+        assert any("ready" in r.message.lower() for r in caplog.records)
+
+    async def test_should_log_exit_on_eof(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: pathlib.Path,
+        mock_stdin: io.RawIOBase,
+    ) -> None:
+        with caplog.at_level(logging.INFO, logger="dbelveder.server"):
+            await _run_server(tmp_path, mock_stdin)
+        assert any("exit" in r.message.lower() for r in caplog.records)

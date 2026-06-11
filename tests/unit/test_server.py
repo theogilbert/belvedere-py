@@ -1,10 +1,10 @@
 import io
+import json
 import logging
 import pathlib
 
 import pytest
 
-from dbelveder.protocol import Result
 from dbelveder.server import Server, _LOG_CAP, _redact, _truncate
 
 
@@ -44,11 +44,58 @@ class TestRedact:
         assert _redact({}) == {}
 
 
+async def _run_server(
+    tmp_path: pathlib.Path, mock_stdin: io.RawIOBase, *lines: str
+) -> io.BytesIO:
+    """Write lines to mock_stdin, run the server to EOF, return the output buffer."""
+    for line in lines:
+        mock_stdin.write(line.encode())
+    mock_stdin.close()
+    out = io.BytesIO()
+    await Server(out=out, cache_dir=tmp_path).run()
+    return out
+
+
+def _req(**kwargs: object) -> str:
+    return json.dumps(kwargs) + "\n"
+
+
+class TestRunLoop:
+    async def test_non_dict_params_produces_no_response_and_logs_warning(
+        self,
+        tmp_path: pathlib.Path,
+        mock_stdin: io.RawIOBase,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="dbelveder.server"):
+            out = await _run_server(
+                tmp_path, mock_stdin, _req(id=1, method="capabilities", params=[])
+            )
+        assert out.getvalue() == b""
+        assert any("params must be an object" in r.message for r in caplog.records)
+
+    async def test_loop_continues_after_non_dict_params(
+        self, tmp_path: pathlib.Path, mock_stdin: io.RawIOBase
+    ) -> None:
+        out = await _run_server(
+            tmp_path,
+            mock_stdin,
+            _req(id=1, method="capabilities", params=42),
+            _req(id=2, method="capabilities", params={}),
+        )
+        ids = [json.loads(line)["id"] for line in out.getvalue().splitlines()]
+        assert ids == [2]
+
+
 class TestServerLogging:
     async def test_should_log_sent_message(
-        self, caplog: pytest.LogCaptureFixture, tmp_path: pathlib.Path
+        self,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: pathlib.Path,
+        mock_stdin: io.RawIOBase,
     ) -> None:
-        server = Server(out=io.BytesIO(), cache_dir=tmp_path)
         with caplog.at_level(logging.DEBUG, logger="dbelveder.server"):
-            await server._send(Result(id=1, result={"ok": True}, error=None))
+            await _run_server(
+                tmp_path, mock_stdin, _req(id=1, method="capabilities", params={})
+            )
         assert any("Sent" in r.message for r in caplog.records)

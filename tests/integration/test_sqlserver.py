@@ -35,9 +35,8 @@ def _params() -> dict:
 @pytest.fixture
 async def driver() -> AsyncGenerator[SQLServerDriver, None]:
     pytest.importorskip("mssql_python")
-    d = SQLServerDriver(_params())
     try:
-        await d.connect()
+        d = await SQLServerDriver.create(_params())
     except Exception as exc:
         pytest.skip(f"SQL Server not available: {exc}")
     yield d

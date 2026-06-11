@@ -170,10 +170,12 @@ class Driver:
 
     Attributes:
         driver: Driver identifier passed as ``driver`` in ``connect.params``.
+        label: Human-readable display name (e.g. ``"SQLite"``).
         params: Connection parameters in display order.
     """
 
     driver: str
+    label: str
     params: list[DriverParam]
 
 

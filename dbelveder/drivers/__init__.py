@@ -26,12 +26,12 @@ def list_drivers() -> list[Driver]:
     """Return capabilities for every driver available in the current environment."""
     from .sqlite import SQLiteDriver
 
-    techs = [Driver(driver="sqlite", params=SQLiteDriver.PARAMS)]
+    techs = [Driver(driver="sqlite", label="SQLite", params=SQLiteDriver.PARAMS)]
     try:
         import mssql_python  # noqa: F401
         from .sqlserver import SQLServerDriver
 
-        techs.append(Driver(driver="sqlserver", params=SQLServerDriver.PARAMS))
+        techs.append(Driver(driver="sqlserver", label="SQL Server", params=SQLServerDriver.PARAMS))
     except ImportError:
         pass
     return techs

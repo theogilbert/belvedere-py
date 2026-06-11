@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import pathlib
+import sys
 from dataclasses import dataclass
 
 from .server import Server
@@ -30,6 +31,9 @@ def main() -> None:
 
     try:
         asyncio.run(server.run())
+    except KeyboardInterrupt:
+        logger.info("Server interrupted")
+        print("Server interrupted", file=sys.stderr)
     except Exception as e:
         logger.exception(e)
 

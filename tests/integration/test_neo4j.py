@@ -53,12 +53,12 @@ class TestExecute:
         result = await driver.execute("RETURN 1 AS n, 'hello' AS s", [])
         assert isinstance(result, SelectResult)
         assert result.columns == ["n", "s"]
-        assert result.rows == [[1, "hello"]]
+        assert result.rows == [["1", "hello"]]
 
     async def test_should_support_positional_params(self, driver: Neo4jDriver) -> None:
         result = await driver.execute("RETURN $0 AS val", [42])
         assert isinstance(result, SelectResult)
-        assert result.rows == [[42]]
+        assert result.rows == [["42"]]
 
     async def test_should_return_dml_result_for_create(self, driver: Neo4jDriver) -> None:
         result = await driver.execute("CREATE (n:User {name: 'Alice'})", [])
@@ -78,8 +78,8 @@ class TestExecute:
         assert len(result.rows) == 1
         row = dict(zip(result.columns, result.rows[0]))
         assert row["p.name"] == "Alice"
-        assert row["p.age"] == 30
-        assert "User" in row["p._labels"]
+        assert row["p.age"] == "30"
+        assert row["p._labels"] == "{User}"
 
     async def test_should_serialize_relationship_to_dict(self, driver: Neo4jDriver) -> None:
         await driver.execute(
@@ -89,7 +89,7 @@ class TestExecute:
         assert isinstance(result, SelectResult)
         row = dict(zip(result.columns, result.rows[0]))
         assert row["r._type"] == "BOUGHT"
-        assert row["r.price"] == 9.99
+        assert row["r.price"] == "9.99"
 
     async def test_should_persist_within_connection(self, driver: Neo4jDriver) -> None:
         await driver.execute("CREATE (n:User {name: 'Alice'})", [])

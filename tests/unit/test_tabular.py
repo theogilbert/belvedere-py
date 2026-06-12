@@ -1,5 +1,3 @@
-import pytest
-
 from dbelveder.protocol import SelectResult
 from dbelveder.tabular import flatten_docs
 
@@ -9,27 +7,27 @@ def test_empty_rows_preserves_columns() -> None:
     assert result == SelectResult(columns=["a", "b"], rows=[])
 
 
-def test_scalar_values_unchanged() -> None:
+def test_scalar_values_stringified() -> None:
     result = flatten_docs(["x", "y"], [[1, "hello"]])
-    assert result == SelectResult(columns=["x", "y"], rows=[[1, "hello"]])
+    assert result == SelectResult(columns=["x", "y"], rows=[["1", "hello"]])
 
 
 def test_top_level_dict_flattened() -> None:
     result = flatten_docs(["doc"], [[{"name": "Alice", "age": 30}]])
     assert result.columns == ["doc.name", "doc.age"]
-    assert result.rows == [["Alice", 30]]
+    assert result.rows == [["Alice", "30"]]
 
 
 def test_nested_dict_uses_dot_notation() -> None:
     result = flatten_docs(["doc"], [[{"foo": {"bar": 1}}]])
     assert result.columns == ["doc.foo.bar"]
-    assert result.rows == [[1]]
+    assert result.rows == [["1"]]
 
 
 def test_deeply_nested_dict() -> None:
     result = flatten_docs(["d"], [[{"a": {"b": {"c": 42}}}]])
     assert result.columns == ["d.a.b.c"]
-    assert result.rows == [[42]]
+    assert result.rows == [["42"]]
 
 
 def test_missing_key_filled_with_none() -> None:
@@ -39,7 +37,7 @@ def test_missing_key_filled_with_none() -> None:
     ]
     result = flatten_docs(["doc"], rows)
     assert result.columns == ["doc.name", "doc.age"]
-    assert result.rows == [["Alice", 30], ["Bob", None]]
+    assert result.rows == [["Alice", "30"], ["Bob", None]]
 
 
 def test_extra_key_in_later_row() -> None:
@@ -56,13 +54,23 @@ def test_mixed_scalar_and_dict_columns() -> None:
     rows = [[1, {"x": 10, "y": 20}]]
     result = flatten_docs(["id", "pos"], rows)
     assert result.columns == ["id", "pos.x", "pos.y"]
-    assert result.rows == [[1, 10, 20]]
+    assert result.rows == [["1", "10", "20"]]
 
 
-def test_list_value_not_flattened() -> None:
+def test_list_value_formatted_as_set_notation() -> None:
     result = flatten_docs(["doc"], [[{"tags": ["a", "b"]}]])
     assert result.columns == ["doc.tags"]
-    assert result.rows == [[["a", "b"]]]
+    assert result.rows == [["{a, b}"]]
+
+
+def test_list_with_single_item() -> None:
+    result = flatten_docs(["doc"], [[{"labels": ["Person"]}]])
+    assert result.rows == [["{Person}"]]
+
+
+def test_list_with_multiple_items() -> None:
+    result = flatten_docs(["doc"], [[{"labels": ["Person", "Employee"]}]])
+    assert result.rows == [["{Person, Employee}"]]
 
 
 def test_column_order_follows_first_appearance() -> None:
@@ -72,7 +80,7 @@ def test_column_order_follows_first_appearance() -> None:
     ]
     result = flatten_docs(["doc"], rows)
     assert result.columns == ["doc.b", "doc.a", "doc.c"]
-    assert result.rows == [[2, 1, None], [None, 4, 3]]
+    assert result.rows == [["2", "1", None], [None, "4", "3"]]
 
 
 def test_multiple_rows_multiple_columns() -> None:
@@ -82,4 +90,4 @@ def test_multiple_rows_multiple_columns() -> None:
     ]
     result = flatten_docs(["id", "loc"], rows)
     assert result.columns == ["id", "loc.city", "loc.country"]
-    assert result.rows == [[1, "Paris", "FR"], [2, "Berlin", "DE"]]
+    assert result.rows == [["1", "Paris", "FR"], ["2", "Berlin", "DE"]]

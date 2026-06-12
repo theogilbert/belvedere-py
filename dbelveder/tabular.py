@@ -3,6 +3,14 @@ from typing import Any
 from .protocol import SelectResult
 
 
+def _to_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return "{" + ", ".join(str(v) for v in value) + "}"
+    return str(value)
+
+
 def _flatten(prefix: str, value: Any) -> list[tuple[str, Any]]:
     if isinstance(value, dict):
         pairs: list[tuple[str, Any]] = []
@@ -37,5 +45,5 @@ def flatten_docs(columns: list[str], rows: list[list[Any]]) -> SelectResult:
                 all_cols.append(k)
                 seen.add(k)
 
-    result_rows = [[flat.get(col) for col in all_cols] for flat in flat_rows]
+    result_rows = [[_to_str(flat.get(col)) for col in all_cols] for flat in flat_rows]
     return SelectResult(columns=all_cols, rows=result_rows)

@@ -4,7 +4,7 @@ import pathlib
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from dbelveder.dispatcher import CacheStore, Dispatcher, IdleTimer
+from dbelveder.dispatcher import CacheStore, Connection, Dispatcher, IdleTimer
 from dbelveder.drivers.base import ConnectionLostError
 from dbelveder.protocol import (
     ColumnInfo,
@@ -17,6 +17,31 @@ from dbelveder.protocol import (
 
 async def noop_progress(status: str, message: str) -> None:
     pass
+
+
+class TestConnection:
+    async def test_context_manager_grants_access(self) -> None:
+        conn = Connection("1", AsyncMock(), max_concurrency=1)
+        async with conn as c:
+            assert c is conn
+
+    async def test_limits_concurrency(self) -> None:
+        conn = Connection("1", AsyncMock(), max_concurrency=1)
+        order: list[str] = []
+        gate = asyncio.Event()
+
+        async def task(label: str) -> None:
+            async with conn:
+                order.append(f"start:{label}")
+                await gate.wait()
+                order.append(f"end:{label}")
+
+        t1 = asyncio.create_task(task("a"))
+        t2 = asyncio.create_task(task("b"))
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(t1, t2)
+        assert order == ["start:a", "end:a", "start:b", "end:b"]
 
 
 class TestCacheStore:

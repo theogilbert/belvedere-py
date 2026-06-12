@@ -12,6 +12,7 @@ from .protocol import DMLResult, ProgressCallback
 logger = logging.getLogger(__name__)
 
 _DEFAULT_IDLE_TIMEOUT = 600.0
+_CONNECTION_REQUIRED = frozenset({"execute", "explore.list", "explore.describe"})
 
 
 class Dispatcher:
@@ -23,10 +24,8 @@ class Dispatcher:
     """
 
     def __init__(self, cache_dir: pathlib.Path, max_concurrency: int = 1) -> None:
-        self._connections: dict[str, BaseDriver] = {}
-        """Active drivers keyed by connection_id."""
-        self._semaphores: dict[str, asyncio.Semaphore] = {}
-        """Per-connection semaphores enforcing max_concurrency."""
+        self._connections: dict[str, Connection] = {}
+        """Active connections keyed by connection_id."""
         self._caches = CacheStore(cache_dir)
         """Explore caches for all connections."""
         self._idle_timer = IdleTimer(self._on_idle_expire)
@@ -51,7 +50,8 @@ class Dispatcher:
 
         Raises:
             ValueError: If the method name is unknown.
-            KeyError: If the ``connection_id`` does not refer to an open connection.
+            KeyError: If the ``connection_id`` does not refer to an open connection
+                and the method requires one.
         """
         handler_name = "_handle_" + method.replace(".", "_")
         handler = getattr(self, handler_name, None)
@@ -59,96 +59,87 @@ class Dispatcher:
             raise ValueError(f"Unknown method: {method!r}")
 
         conn_id = params.get("connection_id")
-        semaphore = self._semaphores.get(conn_id) if conn_id else None
+        conn = self._connections.get(conn_id) if conn_id else None
+        cache = self._caches[conn_id] if conn else None
+
+        if conn_id and conn is None and method in _CONNECTION_REQUIRED:
+            raise KeyError(f"Unknown connection_id: {conn_id!r}")
 
         if conn_id:
             self._idle_timer.reset(conn_id)
 
-        if semaphore:
-            async with semaphore:
-                return await self._call(method, handler, params, send_progress)
-        return await self._call(method, handler, params, send_progress)
+        if conn:
+            async with conn:
+                return await handler(conn, cache, params, send_progress)
+        return await handler(None, None, params, send_progress)
 
-    async def _call(
-        self,
-        method: str,
-        handler: Any,
-        params: dict[str, Any],
-        send_progress: ProgressCallback,
+    async def _handle_capabilities(
+        self, _conn: None, _cache: None, _params: dict[str, Any], _send_progress: ProgressCallback
     ) -> dict[str, Any]:
-        if method == "execute":
-            return await handler(params, send_progress)
-        return await handler(params)
-
-    async def _handle_capabilities(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {"server": "dbelveder", "drivers": list_drivers()}
 
-    async def _handle_connect(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_connect(
+        self, _conn: None, _cache: None, params: dict[str, Any], _send_progress: ProgressCallback
+    ) -> dict[str, Any]:
         driver = await get_driver(params["driver"]).create(params)
         conn_id = str(self._next_id)
         self._next_id += 1
-        self._connections[conn_id] = driver
-        self._semaphores[conn_id] = asyncio.Semaphore(self._max_concurrency)
+        self._connections[conn_id] = Connection(conn_id, driver, self._max_concurrency)
         self._caches.open(conn_id, params)
         timeout = float(params.get("idle_timeout", _DEFAULT_IDLE_TIMEOUT))
         self._idle_timer.start(conn_id, timeout)
         return {"connection_id": conn_id}
 
-    async def _handle_disconnect(self, params: dict[str, Any]) -> dict[str, Any]:
-        conn_id: str = self._require_param(params, "connection_id")
-        driver = self._connections.pop(conn_id, None)
-        self._semaphores.pop(conn_id, None)
-        self._caches.close(conn_id)
-        self._idle_timer.cancel(conn_id)
-        if driver:
-            await driver.disconnect()
+    async def _handle_disconnect(
+        self, conn: "Connection | None", _cache: ConnectionCache | None, _params: dict[str, Any], _send_progress: ProgressCallback
+    ) -> dict[str, Any]:
+        if conn:
+            self._connections.pop(conn.id, None)
+            self._caches.close(conn.id)
+            self._idle_timer.cancel(conn.id)
+            await conn.driver.disconnect()
         return {"ok": True}
 
     async def _handle_execute(
-        self, params: dict[str, Any], send_progress: ProgressCallback
+        self, conn: "Connection", _cache: ConnectionCache | None, params: dict[str, Any], send_progress: ProgressCallback
     ) -> dict[str, Any]:
-        driver = self._require_connection(self._require_param(params, "connection_id"))
         sql: str = self._require_param(params, "sql")
         binds: list[Any] = params.get("params") or []
         try:
-            result = await driver.execute(sql, binds)
+            result = await conn.driver.execute(sql, binds)
         except ConnectionLostError:
             await send_progress("reconnecting", "Connection lost — reconnecting…")
-            await driver.reconnect()
+            await conn.driver.reconnect()
             await send_progress("executing", "Retrying query…")
-            result = await driver.execute(sql, binds)
+            result = await conn.driver.execute(sql, binds)
         if isinstance(result, DMLResult):
             return {"rows_affected": result.rows_affected}
         return {"columns": result.columns, "rows": result.rows}
 
-    async def _handle_explore_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        conn_id: str = self._require_param(params, "connection_id")
+    async def _handle_explore_list(
+        self, conn: "Connection", cache: ConnectionCache, params: dict[str, Any], _send_progress: ProgressCallback
+    ) -> dict[str, Any]:
         path: list[str] = params.get("path") or []
-        cache = self._caches[conn_id]
         if params.get("reset_cache"):
             cache.reset()
         items = cache.get_list(path)
         if items is None:
-            items = await self._require_connection(conn_id).explore_list(path)
+            items = await conn.driver.explore_list(path)
             cache.set_list(path, items)
         else:
-            logger.debug(
-                f"explore.list cache hit for connection {conn_id!r}, path {path}"
-            )
+            logger.debug(f"explore.list cache hit for connection {conn.id!r}, path {path}")
         return {"items": items}
 
-    async def _handle_explore_describe(self, params: dict[str, Any]) -> dict[str, Any]:
-        conn_id: str = self._require_param(params, "connection_id")
+    async def _handle_explore_describe(
+        self, conn: "Connection", cache: ConnectionCache, params: dict[str, Any], _send_progress: ProgressCallback
+    ) -> dict[str, Any]:
         path: list[str] = params.get("path") or []
-        cache = self._caches[conn_id]
         if params.get("reset_cache"):
             cache.reset()
         if cache.has_describe(path):
-            logger.debug(
-                f"explore.describe cache hit for connection {conn_id!r}, path {path}"
-            )
+            logger.debug(f"explore.describe cache hit for connection {conn.id!r}, path {path}")
             return {"details": cache.get_describe(path)}
-        desc = await self._require_connection(conn_id).explore_describe(path)
+        desc = await conn.driver.explore_describe(path)
         cache.set_describe(path, desc)
         return {"details": desc}
 
@@ -157,19 +148,31 @@ class Dispatcher:
             raise ValueError(f"Missing required param: {key!r}")
         return params[key]
 
-    def _require_connection(self, conn_id: str) -> BaseDriver:
-        driver = self._connections.get(conn_id)
-        if driver is None:
-            raise KeyError(f"Unknown connection_id: {conn_id!r}")
-        return driver
-
     async def _on_idle_expire(self, conn_id: str, timeout: float) -> None:
         logger.info(f"Connection {conn_id!r} idle for {timeout}s — closing")
-        driver = self._connections.pop(conn_id, None)
-        self._semaphores.pop(conn_id, None)
+        conn = self._connections.pop(conn_id, None)
         self._caches.close(conn_id)
-        if driver:
-            await driver.disconnect()
+        if conn:
+            await conn.driver.disconnect()
+
+
+class Connection:
+    """Bundles a driver with its connection id and concurrency semaphore."""
+
+    def __init__(self, id: str, driver: BaseDriver, max_concurrency: int) -> None:
+        self.id = id
+        """The connection id assigned by the dispatcher."""
+        self.driver = driver
+        """The underlying database driver."""
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        """Limits the number of concurrent requests on this connection."""
+
+    async def __aenter__(self) -> "Connection":
+        await self._semaphore.acquire()
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        self._semaphore.release()
 
 
 class CacheStore:
@@ -183,9 +186,7 @@ class CacheStore:
 
     def open(self, conn_id: str, params: dict[str, Any]) -> None:
         """Create a cache for conn_id, loading any existing data from disk."""
-        self._caches[conn_id] = ConnectionCache(
-            params, cache_file(params, self._cache_dir)
-        )
+        self._caches[conn_id] = ConnectionCache(params, cache_file(params, self._cache_dir))
 
     def close(self, conn_id: str) -> None:
         """Remove the cache for conn_id (does not delete the disk file)."""

@@ -185,6 +185,9 @@ source = { editable = "." }
 mssql = [
     { name = "mssql-python" },
 ]
+neo4j = [
+    { name = "neo4j" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -195,8 +198,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.8.0" }]
-provides-extras = ["mssql"]
+requires-dist = [
+    { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.8.0" },
+    { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.0" },
+]
+provides-extras = ["mssql", "neo4j"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -265,6 +271,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ac/fc/d230882f3ea97caf9425cb70c305c114bb4c7d33e7aa0190f3ef33494e8b/mssql_python-1.8.0-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:96bcfea5d33f4e1c341600d58858dc80cde9f4bade8ce552d49a27669e87b640", size = 27857415, upload-time = "2026-05-29T15:11:20.409Z" },
     { url = "https://files.pythonhosted.org/packages/50/b1/09ae9859b7ab434cb9150fae086b351401edee9b640ec9306c623db5adae/mssql_python-1.8.0-cp314-cp314-win_amd64.whl", hash = "sha256:359d575b5d04e9abfe8c3f75cd2b3a6d3f53b18b868711b282d0579dbcb78c1b", size = 16052217, upload-time = "2026-05-29T15:11:23.061Z" },
     { url = "https://files.pythonhosted.org/packages/4c/90/a35fe4018f33c479a9a291e458a47a46b24842dfa520ab73970da38fb117/mssql_python-1.8.0-cp314-cp314-win_arm64.whl", hash = "sha256:d41a364bb646776bc3e9d464b2bcff4c06f89f7edd91a8f132a2aab748913f91", size = 19368613, upload-time = "2026-05-29T15:11:26.228Z" },
+]
+
+[[package]]
+name = "neo4j"
+version = "6.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/f4/aaa4ac19adae4b01bc742b63afd2672a77e7351566f02721e713e4b863ee/neo4j-6.2.0.tar.gz", hash = "sha256:e1e246b65b572bd8ea97f9e0e721b7d40a5ce53e53d0007c29aef63e4f9124d9", size = 241459, upload-time = "2026-05-04T07:35:41.428Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e6/cf/1c3795866cefaac6e648d4e98c373cafd97810f6e317c307371007ab4abb/neo4j-6.2.0-py3-none-any.whl", hash = "sha256:b87abdd13a5cc2e3bd51026926c2f20ac38fa3febe98c340520dce19e97388d0", size = 327824, upload-time = "2026-05-04T07:35:39.604Z" },
 ]
 
 [[package]]
@@ -343,6 +361,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/7c/d36d04db312ecf4298932ef77e6e4a9e8ad017906e24e34f0b0c361a2473/pytest_asyncio-1.4.0.tar.gz", hash = "sha256:c6c0d2259945122819f171a32ecea2c349ead889ee28176caaf492143424be42", size = 58514, upload-time = "2026-05-26T09:56:04.083Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/e2/08a497ef684b88559c9cc5f4ad53a37e7b99e727094a86d6ea32536d5d3c/pytest_asyncio-1.4.0-py3-none-any.whl", hash = "sha256:933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1", size = 16930, upload-time = "2026-05-26T09:56:02.576Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2026.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/46/dd499ec9038423421951e4fad73051febaa13d2df82b4064f87af8b8c0c3/pytz-2026.2.tar.gz", hash = "sha256:0e60b47b29f21574376f218fe21abc009894a2321ea16c6754f3cad6eb7cdd6a", size = 320861, upload-time = "2026-05-04T01:35:29.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/dd/96da98f892250475bdf2328112d7468abdd4acc7b902b6af23f4ed958ea0/pytz-2026.2-py2.py3-none-any.whl", hash = "sha256:04156e608bee23d3792fd45c94ae47fae1036688e75032eea2e3bf0323d1f126", size = 510141, upload-time = "2026-05-04T01:35:27.408Z" },
 ]
 
 [[package]]

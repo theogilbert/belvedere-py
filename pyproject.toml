@@ -12,6 +12,7 @@ dependencies = []
 
 [project.optional-dependencies]
 mssql = ["mssql-python>=1.8.0"]
+neo4j = ["neo4j>=5.0"]
 
 [project.scripts]
 dbelveder = "dbelveder.__main__:main"
@@ -22,7 +23,7 @@ packages = ["dbelveder"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--ignore=tests/integration/test_sqlserver.py"
+addopts = "--ignore=tests/integration/test_sqlserver.py --ignore=tests/integration/test_neo4j.py"
 
 [dependency-groups]
 dev = [

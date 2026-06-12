@@ -80,7 +80,7 @@ class Dispatcher:
             return await handler(params, send_progress)
         return await handler(params)
 
-    async def _handle_capabilities(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_capabilities(self, _params: dict[str, Any]) -> dict[str, Any]:
         return {"server": "dbelveder", "drivers": list_drivers()}
 
     async def _handle_connect(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -183,7 +183,9 @@ class CacheStore:
 
     def open(self, conn_id: str, params: dict[str, Any]) -> None:
         """Create a cache for conn_id, loading any existing data from disk."""
-        self._caches[conn_id] = ConnectionCache(params, cache_file(params, self._cache_dir))
+        self._caches[conn_id] = ConnectionCache(
+            params, cache_file(params, self._cache_dir)
+        )
 
     def close(self, conn_id: str) -> None:
         """Remove the cache for conn_id (does not delete the disk file)."""

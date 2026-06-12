@@ -27,12 +27,10 @@ class Dispatcher:
         """Active drivers keyed by connection_id."""
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         """Per-connection semaphores enforcing max_concurrency."""
-        self._caches: dict[str, ConnectionCache] = {}
-        """Per-connection explore caches."""
+        self._caches = CacheStore(cache_dir)
+        """Explore caches for all connections."""
         self._idle_timer = IdleTimer(self._on_idle_expire)
         """Manages idle timeout watchdogs for all connections."""
-        self._cache_dir = cache_dir
-        """Directory where explore cache files are persisted."""
         self._max_concurrency = max_concurrency
         """Maximum concurrent requests allowed per connection."""
         self._next_id: int = 0
@@ -91,9 +89,7 @@ class Dispatcher:
         self._next_id += 1
         self._connections[conn_id] = driver
         self._semaphores[conn_id] = asyncio.Semaphore(self._max_concurrency)
-        self._caches[conn_id] = ConnectionCache(
-            params, cache_file(params, self._cache_dir)
-        )
+        self._caches.open(conn_id, params)
         timeout = float(params.get("idle_timeout", _DEFAULT_IDLE_TIMEOUT))
         self._idle_timer.start(conn_id, timeout)
         return {"connection_id": conn_id}
@@ -102,7 +98,7 @@ class Dispatcher:
         conn_id: str = self._require_param(params, "connection_id")
         driver = self._connections.pop(conn_id, None)
         self._semaphores.pop(conn_id, None)
-        self._caches.pop(conn_id, None)
+        self._caches.close(conn_id)
         self._idle_timer.cancel(conn_id)
         if driver:
             await driver.disconnect()
@@ -171,9 +167,30 @@ class Dispatcher:
         logger.info(f"Connection {conn_id!r} idle for {timeout}s — closing")
         driver = self._connections.pop(conn_id, None)
         self._semaphores.pop(conn_id, None)
-        self._caches.pop(conn_id, None)
+        self._caches.close(conn_id)
         if driver:
             await driver.disconnect()
+
+
+class CacheStore:
+    """Creates and tracks per-connection explore caches backed by a shared directory."""
+
+    def __init__(self, cache_dir: pathlib.Path) -> None:
+        self._cache_dir = cache_dir
+        """Directory where cache files are persisted."""
+        self._caches: dict[str, ConnectionCache] = {}
+        """Active caches keyed by connection_id."""
+
+    def open(self, conn_id: str, params: dict[str, Any]) -> None:
+        """Create a cache for conn_id, loading any existing data from disk."""
+        self._caches[conn_id] = ConnectionCache(params, cache_file(params, self._cache_dir))
+
+    def close(self, conn_id: str) -> None:
+        """Remove the cache for conn_id (does not delete the disk file)."""
+        self._caches.pop(conn_id, None)
+
+    def __getitem__(self, conn_id: str) -> ConnectionCache:
+        return self._caches[conn_id]
 
 
 class IdleTimer:

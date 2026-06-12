@@ -30,10 +30,15 @@ dbelveder [--log] [--max-concurrency N]
 
 ## Supported drivers
 
-| Driver name | Dependency | Notes |
-|-------------|------------|-------|
-| `sqlite` | stdlib | In-memory and file databases |
-| `sqlserver` | `mssql-python` | Requires `pip install "dbelveder-py[mssql]"` |
+| Driver | Dependency | Install |
+|--------|------------|---------|
+| `sqlite` | stdlib | — |
+| `sqlserver` | `mssql-python` | `pip install "dbelveder-py[mssql]"` |
+| `neo4j` | `neo4j` | `pip install neo4j` |
+| `oracle` | `oracledb` | `pip install oracledb` |
+| `mongodb` | `pymongo` | `pip install pymongo` |
+
+Only drivers whose package is installed are advertised via `capabilities`. See [docs/drivers.md](docs/drivers.md) for connection parameters, query syntax, and explore tree structure for each driver.
 
 ## Protocol
 
@@ -51,11 +56,11 @@ Communication uses newline-delimited JSON (one message per line). See [docs/prot
 
 Long-running operations emit progress notifications before the final response.
 
-## Caching
+## Server behaviour
 
-Explore results (`explore.list` and `explore.describe`) are cached per connection to avoid redundant queries. The cache is persisted to disk at `~/.cache/dbelveder/` and reloaded on reconnect. Pass `reset_cache: true` in an explore request to invalidate it.
+**Idle timeout:** a connection is auto-closed after `idle_timeout` seconds of inactivity. Pass `"idle_timeout": <seconds>` in `connect.params` (default: `600`).
 
-Passwords are never written to the cache file.
+**Explore cache:** `explore.list` and `explore.describe` results are cached per connection and persisted to `~/.cache/dbelveder/`. Pass `"reset_cache": true` in any explore request to invalidate the cache for that connection. Passwords are never written to the cache.
 
 ## Development
 

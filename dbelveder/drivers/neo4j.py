@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Any
 
 from ..protocol import DMLResult, ExploreItem, SelectResult, TableDescription, DriverParam
+from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError
 
 if TYPE_CHECKING:
@@ -95,7 +96,7 @@ class Neo4jDriver(BaseDriver):
                     rows = []
                     async for record in result:
                         rows.append([_serialize(record[k]) for k in keys])
-                    return SelectResult(columns=list(keys), rows=rows)
+                    return flatten_docs(list(keys), rows)
                 summary = await result.consume()
                 c = summary.counters
                 affected = (

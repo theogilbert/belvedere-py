@@ -76,11 +76,10 @@ class TestExecute:
         result = await driver.execute("MATCH (p:User) RETURN p", [])
         assert isinstance(result, SelectResult)
         assert len(result.rows) == 1
-        node = result.rows[0][0]
-        assert isinstance(node, dict)
-        assert node["name"] == "Alice"
-        assert node["age"] == 30
-        assert "User" in node["_labels"]
+        row = dict(zip(result.columns, result.rows[0]))
+        assert row["p.name"] == "Alice"
+        assert row["p.age"] == 30
+        assert "User" in row["p._labels"]
 
     async def test_should_serialize_relationship_to_dict(self, driver: Neo4jDriver) -> None:
         await driver.execute(
@@ -88,10 +87,9 @@ class TestExecute:
         )
         result = await driver.execute("MATCH ()-[r:BOUGHT]->() RETURN r", [])
         assert isinstance(result, SelectResult)
-        rel = result.rows[0][0]
-        assert isinstance(rel, dict)
-        assert rel["_type"] == "BOUGHT"
-        assert rel["price"] == 9.99
+        row = dict(zip(result.columns, result.rows[0]))
+        assert row["r._type"] == "BOUGHT"
+        assert row["r.price"] == 9.99
 
     async def test_should_persist_within_connection(self, driver: Neo4jDriver) -> None:
         await driver.execute("CREATE (n:User {name: 'Alice'})", [])

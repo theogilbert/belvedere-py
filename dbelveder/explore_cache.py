@@ -42,9 +42,14 @@ class ConnectionCache:
 
     def __init__(self, params: dict[str, Any], path: pathlib.Path) -> None:
         self._params = params
+        """Raw connection params; sensitive fields are stripped before writing to disk."""
         self._path = path
+        """Path to the backing JSON cache file."""
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
+        """In-memory cache mapping path tuples to their explore.list results."""
         self._describe: dict[tuple[str, ...], TableDescription | None] = {}
+        """In-memory cache mapping path tuples to their explore.describe results;
+        None means the path was fetched but does not resolve to a table."""
         self._load()
 
     def reset(self) -> None:

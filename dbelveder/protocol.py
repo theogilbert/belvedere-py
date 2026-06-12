@@ -221,7 +221,7 @@ def decode(line: bytes) -> Request:
     """
     req = Request(**json.loads(line))
     if not isinstance(req.params, dict):
-        logger.warning(
+        raise TypeError(
             f"Request {req.id!r}: params must be an object, got {type(req.params).__name__}"
         )
     return req

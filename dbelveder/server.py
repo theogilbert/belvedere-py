@@ -78,11 +78,13 @@ class Server:
                     f"Received {_truncate(json.dumps({'id': msg.id, 'method': msg.method, 'params': _redact(msg.params)}))}"
                 )
                 asyncio.create_task(self._handle(msg))
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.exception(f"Failed to decode JSON payload: {e}", e)
                 asyncio.create_task(
                     self._send(Result(id=None, result=None, error="decode error"))
                 )
-            except TypeError:
+            except TypeError as e:
+                logger.exception(f"Received invalid request: {e}", e)
                 asyncio.create_task(
                     self._send(Result(id=None, result=None, error="invalid request"))
                 )

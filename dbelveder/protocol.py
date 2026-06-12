@@ -7,9 +7,12 @@ Progress (python → nvim): {id: int, progress: {status: str, message: str}}
 """
 
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -216,4 +219,9 @@ def decode(line: bytes) -> Request:
         json.JSONDecodeError: If the line is not valid JSON.
         TypeError: If the JSON object is missing required fields.
     """
-    return Request(**json.loads(line))
+    req = Request(**json.loads(line))
+    if not isinstance(req.params, dict):
+        logger.warning(
+            f"Request {req.id!r}: params must be an object, got {type(req.params).__name__}"
+        )
+    return req

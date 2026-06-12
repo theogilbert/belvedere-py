@@ -1,4 +1,5 @@
 import json
+import logging
 from json import JSONDecodeError
 
 import pytest
@@ -26,6 +27,11 @@ class TestDecode:
     def test_should_raise_when_required_fields_are_missing(self) -> None:
         with pytest.raises(TypeError):
             decode(b'{"id":1}\n')
+
+    def test_should_warn_when_params_is_not_an_object(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING, logger="dbelveder.protocol"):
+            decode(b'{"id":1,"method":"connect","params":[1,2,3]}\n')
+        assert "params must be an object" in caplog.text
 
 
 class TestEncode:

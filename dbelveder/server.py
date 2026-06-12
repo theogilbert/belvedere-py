@@ -74,11 +74,6 @@ class Server:
                 break
             try:
                 msg: Request = decode(line)
-                if not isinstance(msg.params, dict):
-                    logger.warning(
-                        f"Ignoring request {msg.id!r}: params must be an object, got {type(msg.params).__name__}"
-                    )
-                    continue
                 logger.debug(
                     f"Received {_truncate(json.dumps({'id': msg.id, 'method': msg.method, 'params': _redact(msg.params)}))}"
                 )

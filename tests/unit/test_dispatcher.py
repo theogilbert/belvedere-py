@@ -4,7 +4,7 @@ import pathlib
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from dbelveder.dispatcher import Dispatcher
+from dbelveder.dispatcher import Dispatcher, IdleTimer
 from dbelveder.drivers.base import ConnectionLostError
 from dbelveder.protocol import (
     ColumnInfo,
@@ -17,6 +17,54 @@ from dbelveder.protocol import (
 
 async def noop_progress(status: str, message: str) -> None:
     pass
+
+
+class TestIdleTimer:
+    async def test_calls_on_expire_after_timeout(self) -> None:
+        expired: list[tuple[str, float]] = []
+
+        async def on_expire(conn_id: str, timeout: float) -> None:
+            expired.append((conn_id, timeout))
+
+        timer = IdleTimer(on_expire)
+        timer.start("a", 0.05)
+        await asyncio.sleep(0.15)
+        assert expired == [("a", 0.05)]
+
+    async def test_reset_restarts_countdown(self) -> None:
+        expired: list[str] = []
+
+        async def on_expire(conn_id: str, timeout: float) -> None:
+            expired.append(conn_id)
+
+        timer = IdleTimer(on_expire)
+        timer.start("a", 0.1)
+        await asyncio.sleep(0.07)
+        timer.reset("a")
+        await asyncio.sleep(0.07)
+        assert expired == []
+        await asyncio.sleep(0.1)
+        assert expired == ["a"]
+
+    async def test_cancel_prevents_expiry(self) -> None:
+        expired: list[str] = []
+
+        async def on_expire(conn_id: str, timeout: float) -> None:
+            expired.append(conn_id)
+
+        timer = IdleTimer(on_expire)
+        timer.start("a", 0.05)
+        timer.cancel("a")
+        await asyncio.sleep(0.15)
+        assert expired == []
+
+    async def test_reset_is_noop_for_unknown_conn(self) -> None:
+        timer = IdleTimer(AsyncMock())
+        timer.reset("unknown")  # must not raise
+
+    async def test_cancel_is_noop_for_unknown_conn(self) -> None:
+        timer = IdleTimer(AsyncMock())
+        timer.cancel("unknown")  # must not raise
 
 
 @pytest.fixture

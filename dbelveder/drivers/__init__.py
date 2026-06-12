@@ -28,6 +28,26 @@ def get_driver(name: str) -> type[BaseDriver]:
             from .neo4j import Neo4jDriver
 
             return Neo4jDriver
+        case "oracle":
+            try:
+                import oracledb  # noqa: F401
+            except ImportError:
+                raise RuntimeError(
+                    "oracledb not installed — run: pip install oracledb"
+                )
+            from .oracle import OracleDriver
+
+            return OracleDriver
+        case "mongodb":
+            try:
+                import pymongo  # noqa: F401
+            except ImportError:
+                raise RuntimeError(
+                    "pymongo not installed — run: pip install pymongo"
+                )
+            from .mongodb import MongoDriver
+
+            return MongoDriver
         case _:
             raise ValueError(f"Unknown driver: {name!r}")
 
@@ -49,6 +69,20 @@ def list_drivers() -> list[Driver]:
         from .neo4j import Neo4jDriver
 
         techs.append(Driver(driver="neo4j", label="Neo4j", params=Neo4jDriver.PARAMS))
+    except ImportError:
+        pass
+    try:
+        import oracledb  # noqa: F401
+        from .oracle import OracleDriver
+
+        techs.append(Driver(driver="oracle", label="Oracle", params=OracleDriver.PARAMS))
+    except ImportError:
+        pass
+    try:
+        import pymongo  # noqa: F401
+        from .mongodb import MongoDriver
+
+        techs.append(Driver(driver="mongodb", label="MongoDB", params=MongoDriver.PARAMS))
     except ImportError:
         pass
     return techs

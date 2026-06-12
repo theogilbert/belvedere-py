@@ -153,30 +153,54 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 its value names the collection. Add `"db": "<name>"` to target a database other
 than the default.
 
+**Read:**
+
 ```json
-{"find": "orders", "filter": {"status": "open"}, "limit": 100}
+{"find": "orders", "filter": {"status": "open"}, "sort": {"createdAt": -1}, "limit": 100}
 ```
+
+`filter`, `sort`, `projection`, and `limit` are all optional. `find` defaults
+to a limit of 1000 rows when `"limit"` is omitted.
 
 ```json
 {"aggregate": "orders", "pipeline": [
-  {"$group": {"_id": "$status", "total": {"$sum": "$amount"}}}
+  {"$group": {"_id": "$status", "total": {"$sum": "$amount"}}},
+  {"$sort": {"total": -1}}
 ]}
 ```
 
+**Insert:**
+
 ```json
-{"insert": "users", "documents": [{"name": "Alice", "age": 30}]}
+{"insertOne": "users", "document": {"name": "Alice", "age": 30}}
 ```
 
 ```json
-{"update": "users", "updates": [{"q": {"name": "Alice"}, "u": {"$set": {"age": 31}}}]}
+{"insertMany": "users", "documents": [{"name": "Alice"}, {"name": "Bob"}]}
+```
+
+**Update:**
+
+```json
+{"updateOne": "users", "filter": {"name": "Alice"}, "update": {"$set": {"age": 31}}}
 ```
 
 ```json
-{"delete": "orders", "deletes": [{"q": {"status": "cancelled"}, "limit": 0}]}
+{"updateMany": "users", "filter": {"role": "guest"}, "update": {"$set": {"active": false}}}
 ```
 
-`find` defaults to a limit of 1000 rows if `"limit"` is not specified. Results
-are flattened with dot-notation column names (`address.city`, `address.zip`).
+**Delete:**
+
+```json
+{"deleteOne": "orders", "filter": {"status": "cancelled"}}
+```
+
+```json
+{"deleteMany": "orders", "filter": {"status": "cancelled"}}
+```
+
+Results are flattened with dot-notation column names (`address.city`,
+`address.zip`).
 
 **Explore tree:**
 

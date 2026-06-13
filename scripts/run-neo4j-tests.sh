@@ -11,7 +11,7 @@ TIMEOUT=60
 
 cleanup() {
     echo "Stopping container..."
-    # docker rm -f "$CONTAINER" &>/dev/null || true
+    docker rm -f "$CONTAINER" &>/dev/null || true
 }
 trap cleanup EXIT
 

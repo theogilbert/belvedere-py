@@ -19,6 +19,8 @@ import pytest
 from dbelveder.drivers.mongodb import MongoDriver
 from dbelveder.protocol import DMLResult, ExploreItem, SelectResult
 
+pytestmark = pytest.mark.external
+
 
 def _params() -> dict:
     return {

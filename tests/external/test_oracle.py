@@ -21,6 +21,8 @@ import pytest
 from dbelveder.drivers.oracle import OracleDriver
 from dbelveder.protocol import DMLResult, ExploreItem, SelectResult, TableDescription
 
+pytestmark = pytest.mark.external
+
 
 def _params() -> dict:
     return {

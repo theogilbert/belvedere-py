@@ -21,6 +21,8 @@ import pytest
 from dbelveder.drivers.sqlserver import SQLServerDriver
 from dbelveder.protocol import DMLResult, SelectResult, TableDescription
 
+pytestmark = pytest.mark.external
+
 
 def _params() -> dict:
     return {

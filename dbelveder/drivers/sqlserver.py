@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from ..protocol import (
     ColumnInfo,
@@ -12,9 +12,10 @@ from ..protocol import (
     TableDescription,
     DriverParam,
 )
-import mssql_python
-
 from .base import BaseDriver, ConnectionLostError
+
+if TYPE_CHECKING:
+    import mssql_python
 
 T = TypeVar("T")
 
@@ -44,7 +45,7 @@ class SQLServerDriver(BaseDriver):
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]
 
-    def __init__(self, params: dict[str, Any], conn: mssql_python.Connection) -> None:
+    def __init__(self, params: dict[str, Any], conn: "mssql_python.Connection") -> None:
         super().__init__(params)
         self._conn = conn
 
@@ -67,7 +68,8 @@ class SQLServerDriver(BaseDriver):
         await self._run(self._conn.close)
 
     @staticmethod
-    async def _open(params: dict[str, Any]) -> mssql_python.Connection:
+    async def _open(params: dict[str, Any]) -> "mssql_python.Connection":
+        import mssql_python
         intent = params.get("applicationIntent", "")
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -99,6 +101,7 @@ class SQLServerDriver(BaseDriver):
         try:
             return await self._run(self._execute_sync, sql, binds)
         except Exception as exc:
+            import mssql_python
             if isinstance(
                 exc, (mssql_python.OperationalError, mssql_python.InterfaceError)
             ):

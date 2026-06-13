@@ -24,8 +24,10 @@ packages = ["dbelveder"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
-addopts = "--ignore=tests/integration/test_sqlserver.py --ignore=tests/integration/test_neo4j.py --ignore=tests/integration/test_oracle.py --ignore=tests/integration/test_mongodb.py"
+testpaths = ["tests/unit", "tests/integration"]
+markers = [
+    "external: requires a live external service (run from tests/external/)",
+]
 
 [dependency-groups]
 dev = [

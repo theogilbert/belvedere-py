@@ -41,6 +41,17 @@ async def driver() -> AsyncGenerator[ElasticsearchDriver, None]:
     await d.disconnect()
 
 
+@pytest.fixture
+async def dsl_driver() -> AsyncGenerator[ElasticsearchDriver, None]:
+    pytest.importorskip("elasticsearch")
+    try:
+        d = await ElasticsearchDriver.create({**_params(), "query_mode": "dsl"})
+    except Exception as exc:
+        pytest.skip(f"Elasticsearch not available: {exc}")
+    yield d
+    await d.disconnect()
+
+
 @pytest.fixture(autouse=True)
 async def clean_index(driver: ElasticsearchDriver) -> AsyncGenerator[None, None]:
     driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
@@ -91,8 +102,38 @@ class TestExecute:
         assert names == ["Alice"]
 
     async def test_raises_for_missing_separator(self, driver: ElasticsearchDriver) -> None:
-        with pytest.raises(ValueError, match="index.*lucene"):
+        with pytest.raises(ValueError, match="index.*query"):
             await driver.execute("no separator here", [])
+
+
+class TestExecuteDSL:
+    async def test_match_all_returns_rows(self, dsl_driver: ElasticsearchDriver) -> None:
+        _index_docs(dsl_driver, [{"name": "Alice", "status": "active"}])
+        result = await dsl_driver.execute(
+            f"GET /{_INDEX}/_search\n" + '{"query": {"match_all": {}}}', []
+        )
+        assert isinstance(result, SelectResult)
+        assert "name" in result.columns
+
+    async def test_filters_by_field(self, dsl_driver: ElasticsearchDriver) -> None:
+        _index_docs(dsl_driver, [
+            {"name": "Alice", "status": "active"},
+            {"name": "Bob", "status": "inactive"},
+        ])
+        result = await dsl_driver.execute(
+            f"GET /{_INDEX}/_search\n" + '{"query": {"term": {"status": "active"}}}', []
+        )
+        names = [row[result.columns.index("name")] for row in result.rows]
+        assert names == ["Alice"]
+
+    async def test_non_search_endpoint_returns_flat_row(self, dsl_driver: ElasticsearchDriver) -> None:
+        result = await dsl_driver.execute(f"GET /{_INDEX}/_count", [])
+        assert isinstance(result, SelectResult)
+        assert "count" in result.columns
+
+    async def test_raises_for_missing_method_path(self, dsl_driver: ElasticsearchDriver) -> None:
+        with pytest.raises(ValueError, match="Kibana Dev Tools"):
+            await dsl_driver.execute("just a query with no method", [])
 
 
 class TestExploreList:

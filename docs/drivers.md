@@ -148,9 +148,11 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 | `port` | no | `9200` | HTTP port |
 | `username` | no | — | Username |
 | `password` | no | — | Password (masked) |
-| `query_mode` | no | `lucene` | Query language (`lucene`) |
+| `query_mode` | no | `lucene` | Query language: `lucene` or `dsl` |
 
-**Queries:** Lucene syntax. Prefix with the target index name and ` | `.
+**Queries:** Prefix with the target index name (pattern or alias) and ` | `.
+
+*Lucene mode:*
 
 ```
 orders | status:open AND total:>50
@@ -159,6 +161,22 @@ orders | status:open AND total:>50
 ```
 orders | *
 ```
+
+*DSL mode — Kibana Dev Tools syntax:*
+
+```
+GET /orders/_search
+{"query": {"match": {"status": "open"}}}
+```
+
+```
+GET /orders,products/_search
+{"query": {"match_all": {}}, "sort": [{"total": "desc"}]}
+```
+
+Any Elasticsearch REST endpoint is accepted — the response is returned as a
+flat table. Search responses unpack `hits.hits`; all other responses are
+flattened as a single row.
 
 **Explore tree:**
 

@@ -83,7 +83,7 @@ class TestHandle:
             out,
             id=2,
             method="execute",
-            params={"connection_id": conn_id, "sql": "SELECT 42 AS n"},
+            params={"connection_id": conn_id, "query": "SELECT 42 AS n"},
         )
         assert r2["error"] is None
         assert r2["result"] == {"columns": ["n"], "rows": [[42]]}
@@ -107,7 +107,7 @@ class TestHandle:
             out,
             id=3,
             method="execute",
-            params={"connection_id": conn_id, "sql": "SELECT 1"},
+            params={"connection_id": conn_id, "query": "SELECT 1"},
         )
         assert r3["error"] is not None
 
@@ -127,7 +127,7 @@ class TestHandle:
             out,
             id=2,
             method="execute",
-            params={"connection_id": conn_id, "sql": "CREATE TABLE t (id INTEGER)"},
+            params={"connection_id": conn_id, "query": "CREATE TABLE t (id INTEGER)"},
         )
         r3 = await send(
             server,
@@ -159,7 +159,7 @@ class TestHandle:
             out,
             id=2,
             method="execute",
-            params={"connection_id": conn_id, "sql": "SELECT 1"},
+            params={"connection_id": conn_id, "query": "SELECT 1"},
         )
         msgs = all_responses(out)
         assert any("progress" in m for m in msgs)

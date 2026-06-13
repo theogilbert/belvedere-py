@@ -103,15 +103,15 @@ class Dispatcher:
     async def _handle_execute(
         self, conn: "Connection", _cache: ConnectionCache | None, params: dict[str, Any], send_progress: ProgressCallback
     ) -> dict[str, Any]:
-        sql: str = self._require_param(params, "sql")
+        query: str = self._require_param(params, "query")
         binds: list[Any] = params.get("params") or []
         try:
-            result = await conn.driver.execute(sql, binds)
+            result = await conn.driver.execute(query, binds)
         except ConnectionLostError:
             await send_progress("reconnecting", "Connection lost — reconnecting…")
             await conn.driver.reconnect()
             await send_progress("executing", "Retrying query…")
-            result = await conn.driver.execute(sql, binds)
+            result = await conn.driver.execute(query, binds)
         if isinstance(result, DMLResult):
             return {"rows_affected": result.rows_affected}
         return {"columns": result.columns, "rows": result.rows}

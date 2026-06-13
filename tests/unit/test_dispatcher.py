@@ -182,7 +182,7 @@ class TestExecute:
         disp, conn_id, driver = connected
         driver.execute.return_value = SelectResult(columns=["id"], rows=[[1], [2]])
         result = await disp.dispatch(
-            "execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress
+            "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
         )
         assert result == {"columns": ["id"], "rows": [[1], [2]]}
 
@@ -192,7 +192,7 @@ class TestExecute:
         disp, conn_id, driver = connected
         driver.execute.return_value = DMLResult(rows_affected=3)
         result = await disp.dispatch(
-            "execute", {"connection_id": conn_id, "sql": "DELETE FROM t"}, noop_progress
+            "execute", {"connection_id": conn_id, "query": "DELETE FROM t"}, noop_progress
         )
         assert result == {"rows_affected": 3}
 
@@ -201,7 +201,7 @@ class TestExecute:
     ) -> None:
         with pytest.raises(KeyError):
             await dispatcher.dispatch(
-                "execute", {"connection_id": "x", "sql": "SELECT 1"}, noop_progress
+                "execute", {"connection_id": "x", "query": "SELECT 1"}, noop_progress
             )
 
     async def test_should_reconnect_and_retry_when_connection_is_lost(
@@ -218,7 +218,7 @@ class TestExecute:
             progress_calls.append((status, message))
 
         result = await disp.dispatch(
-            "execute", {"connection_id": conn_id, "sql": "SELECT 1"}, capture
+            "execute", {"connection_id": conn_id, "query": "SELECT 1"}, capture
         )
         assert result == {"columns": ["n"], "rows": [[42]]}
         assert driver.reconnect.await_count == 1
@@ -438,12 +438,12 @@ class TestConcurrency:
 
         t1 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress
+                "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
             )
         )
         t2 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_id, "sql": "SELECT 2"}, noop_progress
+                "execute", {"connection_id": conn_id, "query": "SELECT 2"}, noop_progress
             )
         )
         await asyncio.sleep(0)  # let both tasks reach the semaphore
@@ -479,12 +479,12 @@ class TestConcurrency:
 
         t1 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_a, "sql": "SELECT 1"}, noop_progress
+                "execute", {"connection_id": conn_a, "query": "SELECT 1"}, noop_progress
             )
         )
         t2 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_b, "sql": "SELECT 2"}, noop_progress
+                "execute", {"connection_id": conn_b, "query": "SELECT 2"}, noop_progress
             )
         )
         await asyncio.sleep(0)  # let both tasks proceed
@@ -508,7 +508,7 @@ class TestIdleTimeout:
         mock_driver.disconnect.assert_awaited_once()
         with pytest.raises(KeyError):
             await dispatcher.dispatch(
-                "execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress
+                "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
             )
 
     async def test_timer_resets_on_request(
@@ -523,7 +523,7 @@ class TestIdleTimeout:
         conn_id = r["connection_id"]
         await asyncio.sleep(0.07)
         await dispatcher.dispatch(
-            "execute", {"connection_id": conn_id, "sql": "SELECT 1"}, noop_progress
+            "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
         )
         await asyncio.sleep(0.07)
         mock_driver.disconnect.assert_not_awaited()

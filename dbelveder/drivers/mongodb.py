@@ -60,6 +60,65 @@ class MongoDriver(BaseDriver):
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]
 
+    HELP: str = """\
+## MongoDB
+
+**Install:** `pip install pymongo`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `uri` | no | `mongodb://localhost:27017` | Connection URI |
+| `database` | yes | — | Default database |
+| `username` | no | — | Username (can also be embedded in the URI) |
+| `password` | no | — | Password (masked; can also be embedded in the URI) |
+
+**Queries:** JSON command objects. The top-level key selects the operation and
+its value names the collection. Add `"db": "<name>"` to target a database other
+than the default.
+
+```json
+{"find": "users", "db": "auth"}
+```
+
+**Read:**
+
+```json
+{"find": "orders", "filter": {"status": "open"}, "sort": {"createdAt": -1}, "limit": 100}
+```
+
+`filter`, `sort`, `projection`, and `limit` are all optional. `find` defaults
+to a limit of 1000 rows when `"limit"` is omitted.
+
+```json
+{"aggregate": "orders", "pipeline": [
+  {"$group": {"_id": "$status", "total": {"$sum": "$amount"}}},
+  {"$sort": {"total": -1}}
+]}
+```
+
+**Write:**
+
+```json
+{"insertOne": "users", "document": {"name": "Alice", "age": 30}}
+{"updateOne": "users", "filter": {"name": "Alice"}, "update": {"$set": {"age": 31}}}
+{"deleteOne": "orders", "filter": {"status": "cancelled"}}
+```
+
+Results are flattened with dot-notation column names (`address.city`, `address.zip`).
+
+**Explore tree:**
+
+```
+(root)
+└── <database>
+    └── <collection>
+        ├── fields   → top-level field names (sampled from up to 10 documents)
+        └── indexes  → index names
+```
+
+`explore.describe` always returns `None` (no fixed schema).
+"""
+
     def __init__(self, params: dict[str, Any], client: "pymongo.MongoClient") -> None:
         super().__init__(params)
         self._client = client

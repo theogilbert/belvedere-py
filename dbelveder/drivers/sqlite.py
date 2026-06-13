@@ -30,6 +30,35 @@ class SQLiteDriver(BaseDriver):
         ),
     ]
 
+    HELP: str = """\
+## SQLite
+
+**Install:** none (stdlib)
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `database` | yes | — | File path or `:memory:` |
+
+**Queries:** Standard SQL. Positional bind parameters use `?` placeholders.
+
+```sql
+SELECT * FROM users WHERE age > ?
+```
+
+**Explore tree:**
+
+```
+(root)
+└── <table|view>
+    ├── columns       → name, type
+    ├── indices       → index name
+    └── foreign_keys  → "col → ref_table.ref_col"
+```
+
+`explore.describe` is supported on tables and views and returns full column
+metadata (name, type, nullability, primary key flag).
+"""
+
     def __init__(self, params: dict[str, Any], conn: sqlite3.Connection) -> None:
         super().__init__(params)
         self._conn = conn

@@ -49,6 +49,40 @@ class OracleDriver(BaseDriver):
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]
 
+    HELP: str = """\
+## Oracle
+
+**Install:** `pip install oracledb` — thin mode, no Oracle Instant Client required.
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `host` | no | `localhost` | Server hostname or IP |
+| `port` | no | `1521` | Listener port |
+| `service_name` | no | `FREEPDB1` | Database service name |
+| `user` | no | — | Username |
+| `password` | no | — | Password (masked) |
+
+**Queries:** Standard SQL. Positional bind parameters use `:1`, `:2`, … placeholders.
+
+```sql
+SELECT * FROM employees WHERE department_id = :1 AND hire_date > :2
+```
+
+**Explore tree:**
+
+```
+(root)  ← non-system schemas (ALL_USERS where ORACLE_MAINTAINED = 'N')
+└── <schema>
+    └── <table|view>
+        ├── columns      → name, data type
+        ├── indexes      → name, index type
+        └── constraints  → name, type (primary_key, unique, check, foreign_key)
+```
+
+`explore.describe` is supported on `[schema, table]` paths and returns full
+column metadata (name, type, nullability, primary key flag, default).
+"""
+
     def __init__(self, params: dict[str, Any], conn: Any, has_oracle_maintained: bool) -> None:
         super().__init__(params)
         self._conn = conn

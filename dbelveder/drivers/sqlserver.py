@@ -45,6 +45,43 @@ class SQLServerDriver(BaseDriver):
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]
 
+    HELP: str = """\
+## SQL Server
+
+**Install:** `pip install mssql-python`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `host` | no | `localhost` | Server hostname or IP |
+| `port` | no | `1433` | TCP port |
+| `database` | no | — | Database name |
+| `user` | no | — | Login name |
+| `password` | no | — | Password (masked) |
+| `applicationIntent` | no | — | `READ_WRITE` or `READ_ONLY` |
+
+**Queries:** Standard T-SQL. Positional bind parameters use `?` placeholders.
+
+```sql
+SELECT * FROM dbo.orders WHERE status = ?
+```
+
+**Explore tree:**
+
+```
+(root)
+└── <schema>
+    └── <table|view>
+        ├── columns      → name, data type
+        ├── indices      → name, type (e.g. CLUSTERED)
+        └── constraints  → name, type (e.g. primary_key, foreign_key)
+```
+
+System schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*`) are hidden.
+
+`explore.describe` is supported on `[schema, table]` paths and returns full
+column metadata (name, type, nullability, default).
+"""
+
     def __init__(self, params: dict[str, Any], conn: "mssql_python.Connection") -> None:
         super().__init__(params)
         self._conn = conn

@@ -167,6 +167,21 @@ class TestCapabilities:
                 assert p.label
 
 
+class TestDriverHelp:
+    async def test_should_return_markdown_content(self, dispatcher: Dispatcher) -> None:
+        result = await dispatcher.dispatch("driver.help", {"driver": "sqlite"}, noop_progress)
+        assert "content" in result
+        assert "SQLite" in result["content"]
+
+    async def test_should_raise_for_unknown_driver(self, dispatcher: Dispatcher) -> None:
+        with pytest.raises(ValueError, match="Unknown driver"):
+            await dispatcher.dispatch("driver.help", {"driver": "no_such"}, noop_progress)
+
+    async def test_should_raise_when_driver_param_missing(self, dispatcher: Dispatcher) -> None:
+        with pytest.raises(ValueError, match="Missing required param"):
+            await dispatcher.dispatch("driver.help", {}, noop_progress)
+
+
 class TestDispatch:
     async def test_should_raise_when_method_is_unknown(
         self, dispatcher: Dispatcher

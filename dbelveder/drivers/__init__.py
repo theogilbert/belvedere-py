@@ -2,6 +2,28 @@ from .base import BaseDriver
 from ..protocol import Driver
 
 
+def get_driver_help(name: str) -> str:
+    """Return the HELP string for a named driver without importing its optional package."""
+    match name.lower():
+        case "sqlite":
+            from .sqlite import SQLiteDriver
+            return SQLiteDriver.HELP
+        case "sqlserver":
+            from .sqlserver import SQLServerDriver
+            return SQLServerDriver.HELP
+        case "neo4j":
+            from .neo4j import Neo4jDriver
+            return Neo4jDriver.HELP
+        case "oracle":
+            from .oracle import OracleDriver
+            return OracleDriver.HELP
+        case "mongodb":
+            from .mongodb import MongoDriver
+            return MongoDriver.HELP
+        case _:
+            raise ValueError(f"Unknown driver: {name!r}")
+
+
 def get_driver(name: str) -> type[BaseDriver]:
     match name.lower():
         case "sqlite":

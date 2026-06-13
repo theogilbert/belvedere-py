@@ -44,6 +44,39 @@ class Neo4jDriver(BaseDriver):
         DriverParam(key="database", type="string", label="Database", default="neo4j"),
     ]
 
+    HELP: str = """\
+## Neo4j
+
+**Install:** `pip install neo4j`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `uri` | no | `bolt://localhost:7687` | Bolt URI |
+| `user` | no | `neo4j` | Username |
+| `password` | no | — | Password (masked) |
+| `database` | no | `neo4j` | Database name |
+
+**Queries:** Cypher. Positional bind parameters are referenced as `$0`, `$1`, …
+
+```cypher
+MATCH (u:User {name: $0})-[:BOUGHT]->(p:Product) RETURN u, p
+```
+
+Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
+…; relationships expand to `col._type`, `col.prop`, …
+
+**Explore tree:**
+
+```
+(root)
+├── entities       → <label>  → property names (sampled from existing nodes)
+├── relationships  → <type>   → property names (sampled from existing relationships)
+└── indexes        → index name
+```
+
+`explore.describe` always returns `None` (no fixed schema).
+"""
+
     def __init__(self, params: dict[str, Any], driver: "neo4j.AsyncDriver") -> None:
         super().__init__(params)
         self._driver = driver

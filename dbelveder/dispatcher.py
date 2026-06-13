@@ -4,7 +4,7 @@ import pathlib
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from .drivers import get_driver, list_drivers
+from .drivers import get_driver, get_driver_help, list_drivers
 from .drivers.base import BaseDriver, ConnectionLostError
 from .explore_cache import ConnectionCache, cache_file
 from .protocol import DMLResult, ProgressCallback
@@ -77,6 +77,12 @@ class Dispatcher:
         self, _conn: None, _cache: None, _params: dict[str, Any], _send_progress: ProgressCallback
     ) -> dict[str, Any]:
         return {"server": "dbelveder", "drivers": list_drivers()}
+
+    async def _handle_driver_help(
+        self, _conn: None, _cache: None, params: dict[str, Any], _send_progress: ProgressCallback
+    ) -> dict[str, Any]:
+        driver_name = self._require_param(params, "driver")
+        return {"content": get_driver_help(driver_name)}
 
     async def _handle_connect(
         self, _conn: None, _cache: None, params: dict[str, Any], _send_progress: ProgressCallback

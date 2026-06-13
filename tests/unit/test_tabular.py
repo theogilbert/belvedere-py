@@ -73,6 +73,23 @@ def test_list_with_multiple_items() -> None:
     assert result.rows == [["{Person, Employee}"]]
 
 
+def test_list_of_dicts_flattened_with_index() -> None:
+    rows = [[{"items": [{"productId": "abc", "qty": 2}, {"productId": "def", "qty": 1}]}]]
+    result = flatten_docs(["doc"], rows)
+    assert result.columns == ["doc.items[0].productId", "doc.items[0].qty", "doc.items[1].productId", "doc.items[1].qty"]
+    assert result.rows == [["abc", "2", "def", "1"]]
+
+
+def test_list_of_dicts_variable_length_filled_with_none() -> None:
+    rows = [
+        [[{"qty": 2}]],
+        [[{"qty": 1}, {"qty": 3}]],
+    ]
+    result = flatten_docs(["items"], rows)
+    assert result.columns == ["items[0].qty", "items[1].qty"]
+    assert result.rows == [["2", None], ["1", "3"]]
+
+
 def test_column_order_follows_first_appearance() -> None:
     rows = [
         [{"b": 2, "a": 1}],

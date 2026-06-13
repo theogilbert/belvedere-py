@@ -17,6 +17,11 @@ def _flatten(prefix: str, value: Any) -> list[tuple[str, Any]]:
         for k, v in value.items():
             pairs.extend(_flatten(f"{prefix}.{k}", v))
         return pairs
+    if isinstance(value, list) and any(isinstance(v, dict) for v in value):
+        pairs = []
+        for i, v in enumerate(value):
+            pairs.extend(_flatten(f"{prefix}[{i}]", v))
+        return pairs
     return [(prefix, value)]
 
 

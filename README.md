@@ -37,20 +37,44 @@ dbelveder [--log] [--max-concurrency N]
 | `neo4j` | `neo4j` | `pip install neo4j` |
 | `oracle` | `oracledb` | `pip install oracledb` |
 | `mongodb` | `pymongo` | `pip install pymongo` |
+| `elasticsearch` | `elasticsearch` | `pip install elasticsearch` |
 
 Only drivers whose package is installed are advertised via `capabilities`. See [docs/drivers.md](docs/drivers.md) for connection parameters, query syntax, and explore tree structure for each driver.
 
 ## Protocol
 
-Communication uses newline-delimited JSON (one message per line). See [docs/protocol.md](../dbelveder.nvim/docs/protocol.md) for the full specification.
+Communication uses newline-delimited JSON (one message per line). See [docs/protocol.md](https://github.com/theogilbert/dbelveder.nvim/blob/main/docs/protocol.md) for the full specification.
 
 ### Methods
 
 - **`connect`** — open a database connection, returns a `connection_id`
 - **`disconnect`** — close a connection
-- **`execute`** — run a SQL statement
-  - SELECT → `{"columns": [...], "rows": [...]}`
-  - INSERT/UPDATE/DELETE → `{"rows_affected": N}`
+- **`execute`** — run a query against the connected database
+  - Query with results → `{"columns": [...], "rows": [...]}`
+  - Write operation → `{"rows_affected": N}`
+
+  Query syntax depends on the driver. Examples:
+
+  ```sql
+  -- SQLite / SQL Server / Oracle
+  SELECT name, age FROM users WHERE active = 1
+  ```
+
+  ```cypher
+  // Neo4j (Cypher)
+  MATCH (u:User)-[:BOUGHT]->(p:Product) RETURN u.name, p.title
+  ```
+
+  ```
+  // Elasticsearch (Lucene)
+  orders | status:open AND total:>50
+  ```
+
+  ```json
+  // MongoDB
+  {"find": "orders", "filter": {"status": "open"}, "limit": 100}
+  ```
+
 - **`explore.list`** — list child nodes in the database object tree (schemas, tables, columns, …)
 - **`explore.describe`** — return column metadata for a table
 

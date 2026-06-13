@@ -20,6 +20,9 @@ def get_driver_help(name: str) -> str:
         case "mongodb":
             from .mongodb import MongoDriver
             return MongoDriver.HELP
+        case "elasticsearch":
+            from .elasticsearch import ElasticsearchDriver
+            return ElasticsearchDriver.HELP
         case _:
             raise ValueError(f"Unknown driver: {name!r}")
 
@@ -70,6 +73,16 @@ def get_driver(name: str) -> type[BaseDriver]:
             from .mongodb import MongoDriver
 
             return MongoDriver
+        case "elasticsearch":
+            try:
+                import elasticsearch  # noqa: F401
+            except ImportError:
+                raise RuntimeError(
+                    "elasticsearch not installed — run: pip install elasticsearch"
+                )
+            from .elasticsearch import ElasticsearchDriver
+
+            return ElasticsearchDriver
         case _:
             raise ValueError(f"Unknown driver: {name!r}")
 
@@ -105,6 +118,13 @@ def list_drivers() -> list[Driver]:
         from .mongodb import MongoDriver
 
         techs.append(Driver(driver="mongodb", label="MongoDB", params=MongoDriver.PARAMS))
+    except ImportError:
+        pass
+    try:
+        import elasticsearch  # noqa: F401
+        from .elasticsearch import ElasticsearchDriver
+
+        techs.append(Driver(driver="elasticsearch", label="Elasticsearch", params=ElasticsearchDriver.PARAMS))
     except ImportError:
         pass
     return techs

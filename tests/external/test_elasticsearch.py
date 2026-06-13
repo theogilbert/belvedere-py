@@ -1,0 +1,138 @@
+"""
+Integration tests for the Elasticsearch driver.
+
+Requires a running Elasticsearch instance. Configure via environment variables:
+  ELASTICSEARCH_HOST  (default: localhost)
+  ELASTICSEARCH_PORT  (default: 9200)
+
+Tests are skipped automatically when elasticsearch is not installed or the
+server is unreachable.
+"""
+
+import os
+import time
+from collections.abc import AsyncGenerator
+
+import pytest
+
+from dbelveder.drivers.elasticsearch import ElasticsearchDriver
+from dbelveder.protocol import ExploreItem, SelectResult, TableDescription
+
+pytestmark = pytest.mark.external
+
+_INDEX = "dbelveder_test"
+
+
+def _params() -> dict:
+    return {
+        "host": os.environ.get("ELASTICSEARCH_HOST", "localhost"),
+        "port": int(os.environ.get("ELASTICSEARCH_PORT", "9200")),
+    }
+
+
+@pytest.fixture
+async def driver() -> AsyncGenerator[ElasticsearchDriver, None]:
+    pytest.importorskip("elasticsearch")
+    try:
+        d = await ElasticsearchDriver.create(_params())
+    except Exception as exc:
+        pytest.skip(f"Elasticsearch not available: {exc}")
+    yield d
+    await d.disconnect()
+
+
+@pytest.fixture(autouse=True)
+async def clean_index(driver: ElasticsearchDriver) -> AsyncGenerator[None, None]:
+    driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
+    driver._client.indices.create(
+        index=_INDEX,
+        body={
+            "mappings": {
+                "properties": {
+                    "name": {"type": "keyword"},
+                    "status": {"type": "keyword"},
+                    "total": {"type": "float"},
+                }
+            }
+        },
+    )
+    yield
+    driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
+
+
+def _index_docs(driver: ElasticsearchDriver, docs: list[dict]) -> None:
+    for doc in docs:
+        driver._client.index(index=_INDEX, document=doc)
+    driver._client.indices.refresh(index=_INDEX)
+
+
+class TestExecute:
+    async def test_returns_columns_and_rows(self, driver: ElasticsearchDriver) -> None:
+        _index_docs(driver, [{"name": "Alice", "status": "active", "total": 10.0}])
+        result = await driver.execute(f"{_INDEX} | *", [])
+        assert isinstance(result, SelectResult)
+        assert "name" in result.columns
+        assert any("Alice" in row for row in result.rows)
+
+    async def test_returns_empty_for_no_matches(self, driver: ElasticsearchDriver) -> None:
+        result = await driver.execute(f"{_INDEX} | status:nonexistent", [])
+        assert isinstance(result, SelectResult)
+        assert result.columns == []
+        assert result.rows == []
+
+    async def test_filters_by_field(self, driver: ElasticsearchDriver) -> None:
+        _index_docs(driver, [
+            {"name": "Alice", "status": "active"},
+            {"name": "Bob", "status": "inactive"},
+        ])
+        result = await driver.execute(f"{_INDEX} | status:active", [])
+        assert isinstance(result, SelectResult)
+        names = [row[result.columns.index("name")] for row in result.rows]
+        assert names == ["Alice"]
+
+    async def test_raises_for_missing_separator(self, driver: ElasticsearchDriver) -> None:
+        with pytest.raises(ValueError, match="index.*lucene"):
+            await driver.execute("no separator here", [])
+
+
+class TestExploreList:
+    async def test_root_lists_indices(self, driver: ElasticsearchDriver) -> None:
+        items = await driver.explore_list([])
+        names = [i.name for i in items]
+        assert _INDEX in names
+
+    async def test_root_hides_system_indices(self, driver: ElasticsearchDriver) -> None:
+        items = await driver.explore_list([])
+        assert all(not i.name.startswith(".") for i in items)
+
+    async def test_index_lists_groups(self, driver: ElasticsearchDriver) -> None:
+        items = await driver.explore_list([_INDEX])
+        names = [i.name for i in items]
+        assert "mappings" in names
+        assert "aliases" in names
+
+    async def test_mappings_lists_fields(self, driver: ElasticsearchDriver) -> None:
+        items = await driver.explore_list([_INDEX, "mappings"])
+        names = [i.name for i in items]
+        assert "name" in names
+        assert "status" in names
+        assert "total" in names
+
+    async def test_unknown_path_returns_empty(self, driver: ElasticsearchDriver) -> None:
+        items = await driver.explore_list([_INDEX, "mappings", "extra"])
+        assert items == []
+
+
+class TestExploreDescribe:
+    async def test_returns_table_description_for_index(self, driver: ElasticsearchDriver) -> None:
+        result = await driver.explore_describe([_INDEX])
+        assert isinstance(result, TableDescription)
+        assert result.table == _INDEX
+        assert result.schema is None
+        field_names = [c.name for c in result.columns]
+        assert "name" in field_names
+        assert "status" in field_names
+
+    async def test_returns_none_for_unknown_path(self, driver: ElasticsearchDriver) -> None:
+        result = await driver.explore_describe([_INDEX, "mappings"])
+        assert result is None

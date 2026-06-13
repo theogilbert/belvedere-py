@@ -138,6 +138,44 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 
 ---
 
+## Elasticsearch
+
+**Install:** `pip install elasticsearch`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `host` | no | `localhost` | Server hostname or IP |
+| `port` | no | `9200` | HTTP port |
+| `username` | no | — | Username |
+| `password` | no | — | Password (masked) |
+| `query_mode` | no | `lucene` | Query language (`lucene`) |
+
+**Queries:** Lucene syntax. Prefix with the target index name and ` | `.
+
+```
+orders | status:open AND total:>50
+```
+
+```
+orders | *
+```
+
+**Explore tree:**
+
+```
+(root)
+└── <index>
+    ├── mappings  → field name and type
+    └── aliases   → alias names
+```
+
+System indices (names starting with `.`) are hidden.
+
+`explore.describe` is supported on `[index]` paths and returns field metadata
+from the index mapping (name, type).
+
+---
+
 ## MongoDB
 
 **Install:** `pip install pymongo`

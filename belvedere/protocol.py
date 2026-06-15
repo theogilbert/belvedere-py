@@ -10,6 +10,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,15 @@ class Driver:
     params: list[DriverParam]
     """Connection parameters in display order."""
 
+
+class Method(StrEnum):
+    CAPABILITIES    = "capabilities"
+    DRIVER_HELP     = "driver.help"
+    CONNECT         = "connect"
+    DISCONNECT      = "disconnect"
+    EXECUTE         = "execute"
+    EXPLORE_LIST    = "explore.list"
+    EXPLORE_DESCRIBE = "explore.describe"
 
 Response = Result | Progress | ExploreItem
 

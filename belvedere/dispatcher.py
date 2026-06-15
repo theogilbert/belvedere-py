@@ -7,7 +7,7 @@ from typing import Any
 from .drivers import get_driver, get_driver_help, list_drivers
 from .drivers.base import BaseDriver, ConnectionLostError
 from .explore_cache import ConnectionCache, cache_file
-from .protocol import DMLResult, ProgressCallback
+from .protocol import DMLResult, Method, ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class Connection:
 _Handler = Callable[[Connection | None, ConnectionCache | None, dict[str, Any], ProgressCallback], Awaitable[dict[str, Any]]]
 
 _DEFAULT_IDLE_TIMEOUT = 600.0
-_CONNECTION_REQUIRED = frozenset({"execute", "explore.list", "explore.describe"})
+_CONNECTION_REQUIRED = frozenset({Method.EXECUTE, Method.EXPLORE_LIST, Method.EXPLORE_DESCRIBE})
 
 
 class Dispatcher:
@@ -170,13 +170,13 @@ class Dispatcher:
 
     def _route(self, method: str) -> _Handler:
         match method:
-            case "capabilities":     return self._handle_capabilities
-            case "driver.help":      return self._handle_driver_help
-            case "connect":          return self._handle_connect
-            case "disconnect":       return self._handle_disconnect
-            case "execute":          return self._handle_execute
-            case "explore.list":     return self._handle_explore_list
-            case "explore.describe": return self._handle_explore_describe
+            case Method.CAPABILITIES:     return self._handle_capabilities
+            case Method.DRIVER_HELP:      return self._handle_driver_help
+            case Method.CONNECT:          return self._handle_connect
+            case Method.DISCONNECT:       return self._handle_disconnect
+            case Method.EXECUTE:          return self._handle_execute
+            case Method.EXPLORE_LIST:     return self._handle_explore_list
+            case Method.EXPLORE_DESCRIBE: return self._handle_explore_describe
             case _:
                 raise ValueError(f"Unknown method: {method!r}")
 

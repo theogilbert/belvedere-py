@@ -31,10 +31,15 @@ class Connection:
         self._semaphore.release()
 
 
-_Handler = Callable[[Connection | None, ConnectionCache | None, dict[str, Any], ProgressCallback], Awaitable[dict[str, Any]]]
+_Handler = Callable[
+    [Connection | None, ConnectionCache | None, dict[str, Any], ProgressCallback],
+    Awaitable[dict[str, Any]],
+]
 
 _DEFAULT_IDLE_TIMEOUT = 600.0
-_CONNECTION_REQUIRED = frozenset({Method.EXECUTE, Method.EXPLORE_LIST, Method.EXPLORE_DESCRIBE})
+_CONNECTION_REQUIRED = frozenset(
+    {Method.EXECUTE, Method.EXPLORE_LIST, Method.EXPLORE_DESCRIBE}
+)
 
 
 class Dispatcher:
@@ -93,18 +98,30 @@ class Dispatcher:
         return await handler(None, None, params, send_progress)
 
     async def _handle_capabilities(
-        self, _conn: None, _cache: None, _params: dict[str, Any], _send_progress: ProgressCallback
+        self,
+        _conn: None,
+        _cache: None,
+        _params: dict[str, Any],
+        _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         return {"server": "belvedere", "drivers": list_drivers()}
 
     async def _handle_driver_help(
-        self, _conn: None, _cache: None, params: dict[str, Any], _send_progress: ProgressCallback
+        self,
+        _conn: None,
+        _cache: None,
+        params: dict[str, Any],
+        _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         driver_name = self._require_param(params, "driver")
         return {"content": get_driver_help(driver_name)}
 
     async def _handle_connect(
-        self, _conn: None, _cache: None, params: dict[str, Any], _send_progress: ProgressCallback
+        self,
+        _conn: None,
+        _cache: None,
+        params: dict[str, Any],
+        _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         driver = await get_driver(params["driver"]).create(params)
         conn_id = str(self._next_id)
@@ -116,7 +133,11 @@ class Dispatcher:
         return {"connection_id": conn_id}
 
     async def _handle_disconnect(
-        self, conn: "Connection | None", _cache: ConnectionCache | None, _params: dict[str, Any], _send_progress: ProgressCallback
+        self,
+        conn: "Connection | None",
+        _cache: ConnectionCache | None,
+        _params: dict[str, Any],
+        _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         if conn:
             self._connections.pop(conn.id, None)
@@ -126,7 +147,11 @@ class Dispatcher:
         return {"ok": True}
 
     async def _handle_execute(
-        self, conn: "Connection", _cache: ConnectionCache | None, params: dict[str, Any], send_progress: ProgressCallback
+        self,
+        conn: "Connection",
+        _cache: ConnectionCache | None,
+        params: dict[str, Any],
+        send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         query: str = self._require_param(params, "query")
         binds: list[Any] = params.get("params") or []
@@ -139,10 +164,14 @@ class Dispatcher:
             result = await conn.driver.execute(query, binds)
         if isinstance(result, DMLResult):
             return {"rows_affected": result.rows_affected}
-        return {"columns": result.columns, "rows": result.rows}
+        return {"columns": result.columns, "rows": result.rows, "rows_total": result.rows_total}
 
     async def _handle_explore_list(
-        self, conn: "Connection", cache: ConnectionCache, params: dict[str, Any], _send_progress: ProgressCallback
+        self,
+        conn: "Connection",
+        cache: ConnectionCache,
+        params: dict[str, Any],
+        _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         path: list[str] = params.get("path") or []
         if params.get("reset_cache"):
@@ -152,17 +181,25 @@ class Dispatcher:
             items = await conn.driver.explore_list(path)
             cache.set_list(path, items)
         else:
-            logger.debug(f"explore.list cache hit for connection {conn.id!r}, path {path}")
+            logger.debug(
+                f"explore.list cache hit for connection {conn.id!r}, path {path}"
+            )
         return {"items": items}
 
     async def _handle_explore_describe(
-        self, conn: "Connection", cache: ConnectionCache, params: dict[str, Any], _send_progress: ProgressCallback
+        self,
+        conn: "Connection",
+        cache: ConnectionCache,
+        params: dict[str, Any],
+        _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         path: list[str] = params.get("path") or []
         if params.get("reset_cache"):
             cache.reset()
         if cache.has_describe(path):
-            logger.debug(f"explore.describe cache hit for connection {conn.id!r}, path {path}")
+            logger.debug(
+                f"explore.describe cache hit for connection {conn.id!r}, path {path}"
+            )
             return {"details": cache.get_describe(path)}
         desc = await conn.driver.explore_describe(path)
         cache.set_describe(path, desc)
@@ -170,13 +207,20 @@ class Dispatcher:
 
     def _route(self, method: str) -> _Handler:
         match method:
-            case Method.CAPABILITIES:     return self._handle_capabilities
-            case Method.DRIVER_HELP:      return self._handle_driver_help
-            case Method.CONNECT:          return self._handle_connect
-            case Method.DISCONNECT:       return self._handle_disconnect
-            case Method.EXECUTE:          return self._handle_execute
-            case Method.EXPLORE_LIST:     return self._handle_explore_list
-            case Method.EXPLORE_DESCRIBE: return self._handle_explore_describe
+            case Method.CAPABILITIES:
+                return self._handle_capabilities
+            case Method.DRIVER_HELP:
+                return self._handle_driver_help
+            case Method.CONNECT:
+                return self._handle_connect
+            case Method.DISCONNECT:
+                return self._handle_disconnect
+            case Method.EXECUTE:
+                return self._handle_execute
+            case Method.EXPLORE_LIST:
+                return self._handle_explore_list
+            case Method.EXPLORE_DESCRIBE:
+                return self._handle_explore_describe
             case _:
                 raise ValueError(f"Unknown method: {method!r}")
 
@@ -204,7 +248,9 @@ class CacheStore:
 
     def open(self, conn_id: str, params: dict[str, Any]) -> None:
         """Create a cache for conn_id, loading any existing data from disk."""
-        self._caches[conn_id] = ConnectionCache(params, cache_file(params, self._cache_dir))
+        self._caches[conn_id] = ConnectionCache(
+            params, cache_file(params, self._cache_dir)
+        )
 
     def close(self, conn_id: str) -> None:
         """Remove the cache for conn_id (does not delete the disk file)."""

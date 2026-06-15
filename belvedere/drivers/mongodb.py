@@ -34,11 +34,11 @@ def _serialize(value: Any) -> Any:
 
 def _docs_to_result(docs: list[dict[str, Any]]) -> SelectResult:
     if not docs:
-        return SelectResult(columns=[], rows=[])
+        return SelectResult(columns=[], rows=[], rows_total=0)
     serialized = [{k: _serialize(v) for k, v in doc.items()} for doc in docs]
     columns: list[str] = list(dict.fromkeys(k for doc in serialized for k in doc))
     rows = [[doc.get(col) for col in columns] for doc in serialized]
-    return flatten_docs(columns, rows)
+    return flatten_docs(columns, rows, rows_total=len(docs))
 
 
 class MongoDriver(BaseDriver):

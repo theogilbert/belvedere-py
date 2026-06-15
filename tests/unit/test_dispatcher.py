@@ -124,7 +124,7 @@ def dispatcher(tmp_path: pathlib.Path) -> Dispatcher:
 @pytest.fixture
 def mock_driver() -> AsyncMock:
     d = AsyncMock()
-    d.execute.return_value = SelectResult(columns=[], rows=[])
+    d.execute.return_value = SelectResult(columns=[], rows=[], rows_total=0)
     d.explore_list.return_value = []
     d.explore_describe.return_value = None
     return d
@@ -195,11 +195,11 @@ class TestExecute:
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
-        driver.execute.return_value = SelectResult(columns=["id"], rows=[[1], [2]])
+        driver.execute.return_value = SelectResult(columns=["id"], rows=[[1], [2]], rows_total=2)
         result = await disp.dispatch(
             "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
         )
-        assert result == {"columns": ["id"], "rows": [[1], [2]]}
+        assert result == {"columns": ["id"], "rows": [[1], [2]], "rows_total": 2}
 
     async def test_should_return_rows_affected_for_dml(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -225,7 +225,7 @@ class TestExecute:
         disp, conn_id, driver = connected
         driver.execute.side_effect = [
             ConnectionLostError(),
-            SelectResult(columns=["n"], rows=[[42]]),
+            SelectResult(columns=["n"], rows=[[42]], rows_total=1),
         ]
         progress_calls: list[tuple[str, str]] = []
 
@@ -235,7 +235,7 @@ class TestExecute:
         result = await disp.dispatch(
             "execute", {"connection_id": conn_id, "query": "SELECT 1"}, capture
         )
-        assert result == {"columns": ["n"], "rows": [[42]]}
+        assert result == {"columns": ["n"], "rows": [[42]], "rows_total": 1}
         assert driver.reconnect.await_count == 1
         assert any("reconnect" in s for s, _ in progress_calls)
 
@@ -446,7 +446,7 @@ class TestConcurrency:
             order.append("start")
             await gate.wait()
             order.append("end")
-            return SelectResult(columns=[], rows=[])
+            return SelectResult(columns=[], rows=[], rows_total=0)
 
         driver.execute.side_effect = slow_execute
         conn_id = await self._connect(dispatcher, driver)
@@ -478,12 +478,12 @@ class TestConcurrency:
         async def slow_execute_a(*_: object) -> SelectResult:
             started.append("a")
             await gate.wait()
-            return SelectResult(columns=[], rows=[])
+            return SelectResult(columns=[], rows=[], rows_total=0)
 
         async def slow_execute_b(*_: object) -> SelectResult:
             started.append("b")
             await gate.wait()
-            return SelectResult(columns=[], rows=[])
+            return SelectResult(columns=[], rows=[], rows_total=0)
 
         driver_a, driver_b = AsyncMock(), AsyncMock()
         driver_a.execute.side_effect = slow_execute_a

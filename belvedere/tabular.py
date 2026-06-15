@@ -25,14 +25,16 @@ def _flatten(prefix: str, value: Any) -> list[tuple[str, Any]]:
     return [(prefix, value)]
 
 
-def flatten_docs(columns: list[str], rows: list[list[Any]]) -> SelectResult:
+def flatten_docs(columns: list[str], rows: list[list[Any]], rows_total: int | None = None) -> SelectResult:
     """Flatten rows where values may be nested dicts into a flat SelectResult.
 
     Dict values are recursively expanded with dot-notation column names.
     Columns absent in some rows are filled with None.
+    rows_total defaults to len(rows) when omitted; pass it explicitly when the
+    driver knows the full result set exceeds what was returned (e.g. ES hits).
     """
     if not rows:
-        return SelectResult(columns=columns, rows=[])
+        return SelectResult(columns=columns, rows=[], rows_total=rows_total if rows_total is not None else 0)
 
     flat_rows: list[dict[str, Any]] = []
     for row in rows:
@@ -51,4 +53,4 @@ def flatten_docs(columns: list[str], rows: list[list[Any]]) -> SelectResult:
                 seen.add(k)
 
     result_rows = [[_to_str(flat.get(col)) for col in all_cols] for flat in flat_rows]
-    return SelectResult(columns=all_cols, rows=result_rows)
+    return SelectResult(columns=all_cols, rows=result_rows, rows_total=rows_total if rows_total is not None else len(result_rows))

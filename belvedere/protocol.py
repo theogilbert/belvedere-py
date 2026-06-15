@@ -108,6 +108,8 @@ class SelectResult:
     """Column names in order."""
     rows: list[list[Any]]
     """Each row as a list of values."""
+    rows_total: int
+    """Total number of rows matching the query (may exceed len(rows) when the driver applies a default limit)."""
 
 
 @dataclass

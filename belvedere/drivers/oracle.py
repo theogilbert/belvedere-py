@@ -135,7 +135,7 @@ column metadata (name, type, nullability, primary key flag, default).
             if cur.description is not None:
                 columns = [d[0] for d in cur.description]
                 rows: list[list[Any]] = [list(r) for r in await cur.fetchall()]
-                return SelectResult(columns=columns, rows=rows)
+                return SelectResult(columns=columns, rows=rows, rows_total=len(rows))
             return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
             try:

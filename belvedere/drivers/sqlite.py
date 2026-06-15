@@ -111,7 +111,7 @@ metadata (name, type, nullability, primary key flag).
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
             rows: list[list[Any]] = [list(r) for r in cur.fetchall()]
-            return SelectResult(columns=columns, rows=rows)
+            return SelectResult(columns=columns, rows=rows, rows_total=len(rows))
         return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:

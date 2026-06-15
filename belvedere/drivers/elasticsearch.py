@@ -192,16 +192,18 @@ from the index mapping (name, type).
             return self._hits_to_result(resp)
         if isinstance(resp, dict):
             return flatten_docs(list(resp.keys()), [[resp[k] for k in resp]])
-        return SelectResult(columns=["response"], rows=[[str(resp)]])
+        return SelectResult(columns=["response"], rows=[[str(resp)]], rows_total=1)
 
     def _hits_to_result(self, resp: Any) -> SelectResult:
         hits = resp["hits"]["hits"]
+        total = resp["hits"]["total"]
+        rows_total = total["value"] if isinstance(total, dict) else int(total)
         if not hits:
-            return SelectResult(columns=[], rows=[])
+            return SelectResult(columns=[], rows=[], rows_total=rows_total)
         docs = [{"_id": hit["_id"], **hit.get("_source", {})} for hit in hits]
         columns = list(dict.fromkeys(k for doc in docs for k in doc))
         rows = [[doc.get(col) for col in columns] for doc in docs]
-        return flatten_docs(columns, rows)
+        return flatten_docs(columns, rows, rows_total=rows_total)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         return await self._run(self._explore_list_sync, path)

@@ -119,6 +119,7 @@ column metadata (name, type, nullability, primary key flag, default).
         super().__init__(params)
         self._conn = conn
         self._has_oracle_maintained = has_oracle_maintained
+        """True when connected to Oracle 12c+; enables ORACLE_MAINTAINED column filter."""
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "OracleDriver":

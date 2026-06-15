@@ -55,6 +55,7 @@ class Server:
         self._out = stdout
         self._stdin = stdin
         self._lock = asyncio.Lock()
+        """Serializes concurrent response writes to stdout."""
 
     async def run(self) -> None:
         """Start the read loop.

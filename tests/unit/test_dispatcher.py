@@ -4,7 +4,13 @@ import pathlib
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from belvedere.dispatcher import CacheStore, Connection, Dispatcher, IdleTimer
+from belvedere.dispatcher import (
+    CacheStore,
+    Connection,
+    DispatchError,
+    Dispatcher,
+    IdleTimer,
+)
 from belvedere.drivers.base import ConnectionLostError
 from belvedere.protocol import (
     ColumnInfo,
@@ -180,7 +186,7 @@ class TestDriverHelp:
     async def test_should_raise_for_unknown_driver(
         self, dispatcher: Dispatcher
     ) -> None:
-        with pytest.raises(ValueError, match="Unknown driver"):
+        with pytest.raises(DispatchError, match="Unknown driver"):
             await dispatcher.dispatch(
                 "driver.help", {"driver": "no_such"}, noop_progress
             )
@@ -188,7 +194,7 @@ class TestDriverHelp:
     async def test_should_raise_when_driver_param_missing(
         self, dispatcher: Dispatcher
     ) -> None:
-        with pytest.raises(ValueError, match="Missing required param"):
+        with pytest.raises(DispatchError, match="Missing required param"):
             await dispatcher.dispatch("driver.help", {}, noop_progress)
 
 
@@ -196,7 +202,7 @@ class TestDispatch:
     async def test_should_raise_when_method_is_unknown(
         self, dispatcher: Dispatcher
     ) -> None:
-        with pytest.raises(ValueError, match="Unknown method"):
+        with pytest.raises(DispatchError, match="Unknown method"):
             await dispatcher.dispatch("no_such", {}, noop_progress)
 
 
@@ -228,7 +234,7 @@ class TestExecute:
     async def test_should_raise_when_connection_id_is_unknown(
         self, dispatcher: Dispatcher
     ) -> None:
-        with pytest.raises(KeyError):
+        with pytest.raises(DispatchError):
             await dispatcher.dispatch(
                 "execute", {"connection_id": "x", "query": "SELECT 1"}, noop_progress
             )
@@ -539,7 +545,7 @@ class TestIdleTimeout:
         conn_id = r["connection_id"]
         await asyncio.sleep(0.15)
         mock_driver.disconnect.assert_awaited_once()
-        with pytest.raises(KeyError):
+        with pytest.raises(DispatchError):
             await dispatcher.dispatch(
                 "execute",
                 {"connection_id": conn_id, "query": "SELECT 1"},

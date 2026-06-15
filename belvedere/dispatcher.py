@@ -31,6 +31,10 @@ class Connection:
         self._semaphore.release()
 
 
+class DispatchError(Exception):
+    """Raised for client-visible errors: unknown method/driver, bad connection id, missing param."""
+
+
 _Handler = Callable[
     [Connection | None, ConnectionCache | None, dict[str, Any], ProgressCallback],
     Awaitable[dict[str, Any]],
@@ -86,7 +90,7 @@ class Dispatcher:
         conn = self._connections.get(conn_id) if conn_id else None
 
         if conn_id and conn is None and method in _CONNECTION_REQUIRED:
-            raise KeyError(f"Unknown connection_id: {conn_id!r}")
+            raise DispatchError(f"Unknown connection_id: {conn_id!r}")
 
         if conn:
             cache = self._caches[conn.id]
@@ -113,7 +117,10 @@ class Dispatcher:
         _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         driver_name = self._require_param(params, "driver")
-        return {"content": get_driver_help(driver_name)}
+        try:
+            return {"content": get_driver_help(driver_name)}
+        except ValueError as exc:
+            raise DispatchError(str(exc)) from exc
 
     async def _handle_connect(
         self,
@@ -122,7 +129,12 @@ class Dispatcher:
         params: dict[str, Any],
         _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
-        driver = await get_driver(params["driver"]).create(params)
+        driver_name = self._require_param(params, "driver")
+        try:
+            driver_cls = get_driver(driver_name)
+        except ValueError as exc:
+            raise DispatchError(str(exc)) from exc
+        driver = await driver_cls.create(params)
         conn_id = str(self._next_id)
         self._next_id += 1
         self._connections[conn_id] = Connection(conn_id, driver, self._max_concurrency)
@@ -225,11 +237,11 @@ class Dispatcher:
             case Method.EXPLORE_DESCRIBE:
                 return self._handle_explore_describe
             case _:
-                raise ValueError(f"Unknown method: {method!r}")
+                raise DispatchError(f"Unknown method: {method!r}")
 
     def _require_param(self, params: dict[str, Any], key: str) -> Any:
         if key not in params:
-            raise ValueError(f"Missing required param: {key!r}")
+            raise DispatchError(f"Missing required param: {key!r}")
         return params[key]
 
     async def _on_idle_expire(self, conn_id: str, timeout: float) -> None:

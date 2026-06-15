@@ -4,6 +4,10 @@ from typing import Any, Self
 from ..protocol import DMLResult, ExploreItem, ReadResult, TableDescription
 
 
+class DriverError(Exception):
+    """Raised by drivers for errors that should be surfaced verbatim to the client."""
+
+
 class ConnectionLostError(Exception):
     """Raised when the database connection is lost and a reconnect should be attempted."""
 

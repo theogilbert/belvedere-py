@@ -12,7 +12,7 @@ from ..protocol import (
     TableDescription,
     DriverParam,
 )
-from .base import BaseDriver, ConnectionLostError
+from .base import BaseDriver, ConnectionLostError, DriverError
 
 if TYPE_CHECKING:
     import mssql_python
@@ -110,18 +110,21 @@ column metadata (name, type, nullability, default).
 
         intent = params.get("applicationIntent", "")
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: mssql_python.connect(
-                server=f"{params.get('host', 'localhost')},{params.get('port', 1433)}",
-                uid=params.get("user", ""),
-                pwd=params.get("password", ""),
-                database=params.get("database", ""),
-                intent=intent,
-                autocommit=intent == _READ_ONLY_INTENT,
-                trustservercertificate="yes",
-            ),
-        )
+        try:
+            return await loop.run_in_executor(
+                None,
+                lambda: mssql_python.connect(
+                    server=f"{params.get('host', 'localhost')},{params.get('port', 1433)}",
+                    uid=params.get("user", ""),
+                    pwd=params.get("password", ""),
+                    database=params.get("database", ""),
+                    intent=intent,
+                    autocommit=intent == _READ_ONLY_INTENT,
+                    trustservercertificate="yes",
+                ),
+            )
+        except Exception as exc:
+            raise DriverError(str(exc)) from exc
 
     async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
         """Run a SQL statement.
@@ -145,7 +148,7 @@ column metadata (name, type, nullability, default).
                 exc, (mssql_python.OperationalError, mssql_python.InterfaceError)
             ):
                 raise ConnectionLostError(str(exc)) from exc
-            raise
+            raise DriverError(str(exc)) from exc
 
     def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | DMLResult:
 

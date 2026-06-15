@@ -5,7 +5,8 @@ import pathlib
 import sys
 from typing import Any, BinaryIO
 
-from .dispatcher import Dispatcher
+from .dispatcher import DispatchError, Dispatcher
+from .drivers.base import DriverError
 from .protocol import (
     DecodeError,
     Progress,
@@ -100,8 +101,11 @@ class Server:
                 msg.method or "", msg.params or {}, send_progress
             )
             response = Result(id=msg.id, result=result, error=None)
-        except Exception as exc:
+        except (DispatchError, DriverError) as exc:
             response = Result(id=msg.id, result=None, error=str(exc))
+        except Exception:
+            logger.exception(f"Unhandled error for request {msg.id}")
+            response = Result(id=msg.id, result=None, error="internal error")
         await self._send(response)
 
     async def _send(self, msg: Response) -> None:

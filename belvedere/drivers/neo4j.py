@@ -10,7 +10,7 @@ from ..protocol import (
     DriverParam,
 )
 from ..tabular import flatten_docs
-from .base import BaseDriver, ConnectionLostError
+from .base import BaseDriver, ConnectionLostError, DriverError
 
 if TYPE_CHECKING:
     import neo4j
@@ -100,7 +100,11 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
             params.get("uri", "bolt://localhost:7687"),
             auth=(params.get("user", "neo4j"), params.get("password", "")),
         )
-        await driver.verify_connectivity()
+        try:
+            await driver.verify_connectivity()
+        except Exception as exc:
+            await driver.close()
+            raise DriverError(str(exc)) from exc
         return cls(params, driver)
 
     async def reconnect(self) -> None:
@@ -111,7 +115,11 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
             self.params.get("uri", "bolt://localhost:7687"),
             auth=(self.params.get("user", "neo4j"), self.params.get("password", "")),
         )
-        await self._driver.verify_connectivity()
+        try:
+            await self._driver.verify_connectivity()
+        except Exception as exc:
+            await self._driver.close()
+            raise DriverError(str(exc)) from exc
 
     async def disconnect(self) -> None:
         await self._driver.close()
@@ -158,7 +166,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
                     raise ConnectionLostError(str(exc)) from exc
             except ImportError:
                 pass
-            raise
+            raise DriverError(str(exc)) from exc
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:

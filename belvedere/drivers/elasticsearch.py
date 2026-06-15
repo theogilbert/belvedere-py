@@ -14,7 +14,7 @@ from ..protocol import (
     DriverParam,
 )
 from ..tabular import flatten_docs
-from .base import BaseDriver, ConnectionLostError
+from .base import BaseDriver, ConnectionLostError, DriverError
 
 if TYPE_CHECKING:
     import elasticsearch
@@ -151,7 +151,7 @@ from the index mapping (name, type).
 
             if isinstance(exc, elasticsearch.ConnectionError):
                 raise ConnectionLostError(str(exc)) from exc
-            raise
+            raise DriverError(str(exc)) from exc
 
     def _execute_sync(self, query: str) -> ReadResult:
         mode = self.params.get("query_mode", "lucene")
@@ -160,11 +160,11 @@ from the index mapping (name, type).
         elif mode == "dsl":
             return self._execute_dsl_sync(query)
         else:
-            raise ValueError(f"Unknown query_mode: {mode!r}")
+            raise DriverError(f"Unknown query_mode: {mode!r}")
 
     def _execute_lucene_sync(self, query: str) -> ReadResult:
         if " | " not in query:
-            raise ValueError(
+            raise DriverError(
                 "Query must be in the format: <index> | <query>\n"
                 "Example: orders | status:open AND total:>50"
             )
@@ -179,7 +179,7 @@ from the index mapping (name, type).
         lines = query.strip().splitlines()
         tokens = lines[0].strip().split(None, 1)
         if len(tokens) != 2 or tokens[0].upper() not in _VALID_METHODS:
-            raise ValueError(
+            raise DriverError(
                 "DSL query must be in Kibana Dev Tools format:\n"
                 "  METHOD /path\n"
                 "  {optional body}\n"

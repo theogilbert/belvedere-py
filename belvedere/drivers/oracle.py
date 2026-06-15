@@ -10,7 +10,7 @@ from ..protocol import (
     ReadResult,
     TableDescription,
 )
-from .base import BaseDriver, ConnectionLostError
+from .base import BaseDriver, ConnectionLostError, DriverError
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
 
@@ -133,18 +133,21 @@ column metadata (name, type, nullability, primary key flag, default).
     async def _open(params: dict[str, Any]) -> tuple[Any, bool]:
         import oracledb
 
-        conn = await oracledb.connect_async(
-            user=params.get("user", ""),
-            password=params.get("password", ""),
-            dsn=(
-                f"{params.get('host', 'localhost')}"
-                f":{params.get('port', 1521)}"
-                f"/{params.get('service_name', 'FREEPDB1')}"
-            ),
-        )
-        conn.autocommit = True
-        major_version = int(conn.version.split(".")[0])
-        return conn, major_version >= 12
+        try:
+            conn = await oracledb.connect_async(
+                user=params.get("user", ""),
+                password=params.get("password", ""),
+                dsn=(
+                    f"{params.get('host', 'localhost')}"
+                    f":{params.get('port', 1521)}"
+                    f"/{params.get('service_name', 'FREEPDB1')}"
+                ),
+            )
+            conn.autocommit = True
+            major_version = int(conn.version.split(".")[0])
+            return conn, major_version >= 12
+        except oracledb.DatabaseError as exc:
+            raise DriverError(str(exc)) from exc
 
     async def reconnect(self) -> None:
         await self._conn.close()
@@ -176,6 +179,10 @@ column metadata (name, type, nullability, primary key flag, default).
             return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
+            import oracledb
+
+            if isinstance(exc, oracledb.DatabaseError):
+                raise DriverError(str(exc)) from exc
             raise
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:

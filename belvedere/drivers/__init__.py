@@ -43,7 +43,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import mssql_python  # noqa: F401
             except ImportError:
-                raise RuntimeError(
+                raise ValueError(
                     "mssql-python not installed — run: pip install mssql-python"
                 )
             from .sqlserver import SQLServerDriver
@@ -53,7 +53,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import neo4j  # noqa: F401
             except ImportError:
-                raise RuntimeError("neo4j not installed — run: pip install neo4j")
+                raise ValueError("neo4j not installed — run: pip install neo4j")
             from .neo4j import Neo4jDriver
 
             return Neo4jDriver
@@ -61,7 +61,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import oracledb  # noqa: F401
             except ImportError:
-                raise RuntimeError("oracledb not installed — run: pip install oracledb")
+                raise ValueError("oracledb not installed — run: pip install oracledb")
             from .oracle import OracleDriver
 
             return OracleDriver
@@ -69,7 +69,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import pymongo  # noqa: F401
             except ImportError:
-                raise RuntimeError("pymongo not installed — run: pip install pymongo")
+                raise ValueError("pymongo not installed — run: pip install pymongo")
             from .mongodb import MongoDriver
 
             return MongoDriver
@@ -77,7 +77,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import elasticsearch  # noqa: F401
             except ImportError:
-                raise RuntimeError(
+                raise ValueError(
                     "elasticsearch not installed — run: pip install elasticsearch"
                 )
             from .elasticsearch import ElasticsearchDriver

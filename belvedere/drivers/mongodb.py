@@ -11,7 +11,7 @@ from ..protocol import (
     TableDescription,
 )
 from ..tabular import flatten_docs
-from .base import BaseDriver, ConnectionLostError
+from .base import BaseDriver, ConnectionLostError, DriverError
 
 if TYPE_CHECKING:
     import pymongo
@@ -57,17 +57,12 @@ class MongoDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
+        DriverParam(key="uri", type="string", label="Connection URI", required=True),
+        DriverParam(key="database", type="string", label="Database", required=True),
+        DriverParam(key="username", type="string", label="Username", required=True),
         DriverParam(
-            key="uri",
-            type="string",
-            label="Connection URI",
-            default="mongodb://localhost:27017",
+            key="password", type="string", label="Password", required=True, secret=True
         ),
-        DriverParam(
-            key="database", type="string", label="Default database", required=True
-        ),
-        DriverParam(key="username", type="string", label="Username"),
-        DriverParam(key="password", type="string", label="Password", secret=True),
     ]
 
     HELP: str = """\
@@ -150,7 +145,12 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         client = AsyncMongoClient(
             params.get("uri", "mongodb://localhost:27017"), **kwargs
         )
-        await client.admin.command("ping")
+        try:
+            # pymongo is lazy - force a connection to the db
+            await client.admin.command("ping")
+        except Exception as exc:
+            await client.close()
+            raise DriverError(str(exc)) from exc
         return cls(params, client)
 
     async def reconnect(self) -> None:
@@ -165,7 +165,12 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         self._client = AsyncMongoClient(
             self.params.get("uri", "mongodb://localhost:27017"), **kwargs
         )
-        await self._client.admin.command("ping")
+        try:
+            # pymongo is lazy - force a connection to the db
+            await self._client.admin.command("ping")
+        except Exception as exc:
+            await self._client.close()
+            raise DriverError(str(exc)) from exc
 
     async def disconnect(self) -> None:
         await self._client.close()
@@ -194,7 +199,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         try:
             cmd: dict[str, Any] = json.loads(query)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"MongoDB command must be valid JSON: {exc}") from exc
+            raise DriverError(f"MongoDB command must be valid JSON: {exc}") from exc
 
         db = self._client[cmd.pop("db", self.params.get("database", "test"))]
         try:
@@ -214,10 +219,12 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
                 return await self._delete_one(db, cmd)
             if "deleteMany" in cmd:
                 return await self._delete_many(db, cmd)
-            raise ValueError(f"Unsupported command keys: {list(cmd.keys())}")
+            raise DriverError(f"Unsupported command keys: {list(cmd.keys())}")
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
-            raise
+            if isinstance(exc, DriverError):
+                raise
+            raise DriverError(str(exc)) from exc
 
     async def _find(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
         col = db[cmd.pop("find")]

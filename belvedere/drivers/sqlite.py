@@ -11,7 +11,7 @@ from ..protocol import (
     TableDescription,
     DriverParam,
 )
-from .base import BaseDriver
+from .base import BaseDriver, DriverError
 
 T = TypeVar("T")
 
@@ -74,12 +74,15 @@ metadata (name, type, nullability, primary key flag).
             A connected SQLiteDriver instance.
         """
         loop = asyncio.get_running_loop()
-        conn = await loop.run_in_executor(
-            None,
-            lambda: sqlite3.connect(
-                params["database"], check_same_thread=False, isolation_level=None
-            ),
-        )
+        try:
+            conn = await loop.run_in_executor(
+                None,
+                lambda: sqlite3.connect(
+                    params["database"], check_same_thread=False, isolation_level=None
+                ),
+            )
+        except sqlite3.OperationalError as exc:
+            raise DriverError(str(exc)) from exc
         return cls(params, conn)
 
     async def reconnect(self) -> None:
@@ -201,6 +204,9 @@ metadata (name, type, nullability, primary key flag).
                 return None
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        return await asyncio.get_running_loop().run_in_executor(
-            None, lambda: fn(*args, **kwargs)
-        )
+        try:
+            return await asyncio.get_running_loop().run_in_executor(
+                None, lambda: fn(*args, **kwargs)
+            )
+        except sqlite3.Error as exc:
+            raise DriverError(str(exc)) from exc

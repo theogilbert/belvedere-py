@@ -3,9 +3,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from dbelveder.dispatcher import Dispatcher
-from dbelveder.explore_cache import cache_file
-from dbelveder.protocol import ExploreItem, TableDescription
+from belvedere.dispatcher import Dispatcher
+from belvedere.explore_cache import cache_file
+from belvedere.protocol import ExploreItem, TableDescription
 
 
 async def noop_progress(status: str, message: str) -> None:
@@ -27,7 +27,7 @@ def _driver_class(driver: AsyncMock) -> AsyncMock:
 
 
 async def connect(dispatcher: Dispatcher, driver: AsyncMock, params: dict) -> str:
-    with patch("dbelveder.dispatcher.get_driver", return_value=_driver_class(driver)):
+    with patch("belvedere.dispatcher.get_driver", return_value=_driver_class(driver)):
         result = await dispatcher.dispatch("connect", params, noop_progress)
     return result["connection_id"]
 

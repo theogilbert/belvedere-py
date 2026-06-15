@@ -1,6 +1,6 @@
-# dbelveder-py
+# belvedere-py
 
-JSON-over-stdio server backend for [dbelveder.nvim](../dbelveder.nvim). The Neovim plugin spawns this process and communicates through its stdin/stdout pipes using newline-delimited JSON.
+JSON-over-stdio server backend for [belvedere.nvim](../belvedere.nvim). The Neovim plugin spawns this process and communicates through its stdin/stdout pipes using newline-delimited JSON.
 
 ## Requirements
 
@@ -10,9 +10,9 @@ JSON-over-stdio server backend for [dbelveder.nvim](../dbelveder.nvim). The Neov
 ## Installation
 
 ```bash
-pip install dbelveder-py
+pip install belvedere-py
 # or with SQL Server support:
-pip install "dbelveder-py[mssql]"
+pip install "belvedere-py[mssql]"
 ```
 
 ## Usage
@@ -20,12 +20,12 @@ pip install "dbelveder-py[mssql]"
 The server is started by the Neovim plugin automatically. To run it manually:
 
 ```bash
-dbelveder [--log] [--max-concurrency N]
+belvedere [--log] [--max-concurrency N]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--log` | off | Log all requests and responses to `~/.local/state/dbelveder/server.log` |
+| `--log` | off | Log all requests and responses to `~/.local/state/belvedere/server.log` |
 | `--max-concurrency N` | 5 | Max concurrent requests per connection |
 
 ## Supported drivers
@@ -33,7 +33,7 @@ dbelveder [--log] [--max-concurrency N]
 | Driver | Dependency | Install |
 |--------|------------|---------|
 | `sqlite` | stdlib | — |
-| `sqlserver` | `mssql-python` | `pip install "dbelveder-py[mssql]"` |
+| `sqlserver` | `mssql-python` | `pip install "belvedere-py[mssql]"` |
 | `neo4j` | `neo4j` | `pip install neo4j` |
 | `oracle` | `oracledb` | `pip install oracledb` |
 | `mongodb` | `pymongo` | `pip install pymongo` |
@@ -43,7 +43,7 @@ Only drivers whose package is installed are advertised via `capabilities`. See [
 
 ## Protocol
 
-Communication uses newline-delimited JSON (one message per line). See [docs/protocol.md](https://github.com/theogilbert/dbelveder.nvim/blob/main/docs/protocol.md) for the full specification.
+Communication uses newline-delimited JSON (one message per line). See [docs/protocol.md](https://github.com/theogilbert/belvedere.nvim/blob/main/docs/protocol.md) for the full specification.
 
 ### Methods
 
@@ -84,7 +84,7 @@ Long-running operations emit progress notifications before the final response.
 
 **Idle timeout:** a connection is auto-closed after `idle_timeout` seconds of inactivity. Pass `"idle_timeout": <seconds>` in `connect.params` (default: `600`).
 
-**Explore cache:** `explore.list` and `explore.describe` results are cached per connection and persisted to `~/.cache/dbelveder/`. Pass `"reset_cache": true` in any explore request to invalidate the cache for that connection. Passwords are never written to the cache.
+**Explore cache:** `explore.list` and `explore.describe` results are cached per connection and persisted to `~/.cache/belvedere/`. Pass `"reset_cache": true` in any explore request to invalidate the cache for that connection. Passwords are never written to the cache.
 
 ## Development
 

@@ -76,7 +76,7 @@ class Dispatcher:
     async def _handle_capabilities(
         self, _conn: None, _cache: None, _params: dict[str, Any], _send_progress: ProgressCallback
     ) -> dict[str, Any]:
-        return {"server": "dbelveder", "drivers": list_drivers()}
+        return {"server": "belvedere", "drivers": list_drivers()}
 
     async def _handle_driver_help(
         self, _conn: None, _cache: None, params: dict[str, Any], _send_progress: ProgressCallback

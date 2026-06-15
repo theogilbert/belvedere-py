@@ -3,7 +3,7 @@ Integration tests for the MongoDB driver.
 
 Requires a running MongoDB instance. Configure via environment variables:
   MONGODB_URI       (default: mongodb://localhost:27017)
-  MONGODB_DATABASE  (default: dbelveder_test)
+  MONGODB_DATABASE  (default: belvedere_test)
 
 Tests are skipped automatically when pymongo is not installed or the
 server is unreachable.
@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from dbelveder.drivers.mongodb import MongoDriver
-from dbelveder.protocol import DMLResult, ExploreItem, SelectResult
+from belvedere.drivers.mongodb import MongoDriver
+from belvedere.protocol import DMLResult, ExploreItem, SelectResult
 
 pytestmark = pytest.mark.external
 
@@ -25,7 +25,7 @@ pytestmark = pytest.mark.external
 def _params() -> dict:
     return {
         "uri": os.environ.get("MONGODB_URI", "mongodb://localhost:27017"),
-        "database": os.environ.get("MONGODB_DATABASE", "dbelveder_test"),
+        "database": os.environ.get("MONGODB_DATABASE", "belvedere_test"),
     }
 
 

@@ -4,7 +4,7 @@ from json import JSONDecodeError
 
 import pytest
 
-from dbelveder.protocol import (
+from belvedere.protocol import (
     ExploreItem,
     Progress,
     ProgressDetail,

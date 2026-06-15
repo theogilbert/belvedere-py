@@ -177,7 +177,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dbelveder-py"
+name = "belvedere-py"
 version = "0.1.0"
 source = { editable = "." }
 

@@ -2,8 +2,8 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from dbelveder.drivers.sqlite import SQLiteDriver
-from dbelveder.protocol import DMLResult, ExploreItem, SelectResult
+from belvedere.drivers.sqlite import SQLiteDriver
+from belvedere.protocol import DMLResult, ExploreItem, SelectResult
 
 
 @pytest.fixture

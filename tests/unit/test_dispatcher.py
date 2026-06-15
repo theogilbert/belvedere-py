@@ -4,9 +4,9 @@ import pathlib
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from dbelveder.dispatcher import CacheStore, Connection, Dispatcher, IdleTimer
-from dbelveder.drivers.base import ConnectionLostError
-from dbelveder.protocol import (
+from belvedere.dispatcher import CacheStore, Connection, Dispatcher, IdleTimer
+from belvedere.drivers.base import ConnectionLostError
+from belvedere.protocol import (
     ColumnInfo,
     DMLResult,
     ExploreItem,
@@ -141,7 +141,7 @@ async def connected(
     dispatcher: Dispatcher, mock_driver: AsyncMock
 ) -> tuple[Dispatcher, str, AsyncMock]:
     with patch(
-        "dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+        "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
     ):
         result = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
     return dispatcher, result["connection_id"], mock_driver
@@ -150,7 +150,7 @@ async def connected(
 class TestCapabilities:
     async def test_should_return_server_name(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch("capabilities", {}, noop_progress)
-        assert result["server"] == "dbelveder"
+        assert result["server"] == "belvedere"
 
     async def test_should_always_include_sqlite(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch("capabilities", {}, noop_progress)
@@ -339,7 +339,7 @@ class TestExploreList:
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
         with patch(
-            "dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             r1 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
             r2 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
@@ -426,7 +426,7 @@ class TestExploreDescribe:
 class TestConcurrency:
     async def _connect(self, dispatcher: Dispatcher, driver: AsyncMock) -> str:
         with patch(
-            "dbelveder.dispatcher.get_driver", return_value=_driver_class(driver)
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(driver)
         ):
             result = await dispatcher.dispatch(
                 "connect", {"driver": "mock"}, noop_progress
@@ -513,7 +513,7 @@ class TestIdleTimeout:
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
         with patch(
-            "dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             r = await dispatcher.dispatch(
                 "connect", {"driver": "mock", "idle_timeout": 0.05}, noop_progress
@@ -530,7 +530,7 @@ class TestIdleTimeout:
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
         with patch(
-            "dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             r = await dispatcher.dispatch(
                 "connect", {"driver": "mock", "idle_timeout": 0.1}, noop_progress
@@ -549,7 +549,7 @@ class TestIdleTimeout:
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
         with patch(
-            "dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
         await asyncio.sleep(0.1)
@@ -559,7 +559,7 @@ class TestIdleTimeout:
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
         with patch(
-            "dbelveder.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             r = await dispatcher.dispatch(
                 "connect", {"driver": "mock", "idle_timeout": 0.1}, noop_progress

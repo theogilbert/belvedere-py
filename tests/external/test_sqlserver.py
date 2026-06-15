@@ -18,8 +18,8 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from dbelveder.drivers.sqlserver import SQLServerDriver
-from dbelveder.protocol import DMLResult, SelectResult, TableDescription
+from belvedere.drivers.sqlserver import SQLServerDriver
+from belvedere.protocol import DMLResult, SelectResult, TableDescription
 
 pytestmark = pytest.mark.external
 

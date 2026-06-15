@@ -1,5 +1,5 @@
-from dbelveder.protocol import SelectResult
-from dbelveder.tabular import flatten_docs
+from belvedere.protocol import SelectResult
+from belvedere.tabular import flatten_docs
 
 
 def test_empty_rows_preserves_columns() -> None:

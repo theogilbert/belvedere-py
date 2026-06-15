@@ -16,8 +16,8 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from dbelveder.drivers.neo4j import Neo4jDriver
-from dbelveder.protocol import DMLResult, ExploreItem, SelectResult
+from belvedere.drivers.neo4j import Neo4jDriver
+from belvedere.protocol import DMLResult, ExploreItem, SelectResult
 
 pytestmark = pytest.mark.external
 

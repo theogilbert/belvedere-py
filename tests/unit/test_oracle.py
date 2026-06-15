@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dbelveder.drivers.oracle import OracleDriver, _PRE12_SYSTEM_SCHEMAS_SQL
-from dbelveder.protocol import ExploreItem
+from belvedere.drivers.oracle import OracleDriver, _PRE12_SYSTEM_SCHEMAS_SQL
+from belvedere.protocol import ExploreItem
 
 
 def _make_driver(rows: list, has_oracle_maintained: bool) -> OracleDriver:

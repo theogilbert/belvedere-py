@@ -18,8 +18,8 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from dbelveder.drivers.oracle import OracleDriver
-from dbelveder.protocol import DMLResult, ExploreItem, SelectResult, TableDescription
+from belvedere.drivers.oracle import OracleDriver
+from belvedere.protocol import DMLResult, ExploreItem, SelectResult, TableDescription
 
 pytestmark = pytest.mark.external
 

@@ -42,14 +42,14 @@ def _cache_dir() -> pathlib.Path:
     cache_home = os.environ.get(
         "XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")
     )
-    return pathlib.Path(cache_home) / "dbelveder"
+    return pathlib.Path(cache_home) / "belvedere"
 
 
 def _log_path() -> pathlib.Path:
     state_home = os.environ.get(
         "XDG_STATE_HOME", os.path.join(os.path.expanduser("~"), ".local", "state")
     )
-    return pathlib.Path(state_home) / "dbelveder" / "server.log"
+    return pathlib.Path(state_home) / "belvedere" / "server.log"
 
 
 @dataclass

@@ -15,12 +15,12 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from dbelveder.drivers.elasticsearch import ElasticsearchDriver
-from dbelveder.protocol import ExploreItem, SelectResult, TableDescription
+from belvedere.drivers.elasticsearch import ElasticsearchDriver
+from belvedere.protocol import ExploreItem, SelectResult, TableDescription
 
 pytestmark = pytest.mark.external
 
-_INDEX = "dbelveder_test"
+_INDEX = "belvedere_test"
 
 
 def _params() -> dict:

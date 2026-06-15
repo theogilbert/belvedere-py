@@ -6,7 +6,7 @@ set -euo pipefail
 CONTAINER="mongodb-dev"
 PORT=27017
 IMAGE="docker.io/library/mongo:8"
-DATABASE="dbelveder_test"
+DATABASE="belvedere_test"
 TIMEOUT=60
 
 cleanup() {

@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pytest import MonkeyPatch
 
-from dbelveder.drivers.base import ConnectionLostError
-from dbelveder.protocol import Request, SelectResult
-from dbelveder.server import Server
+from belvedere.drivers.base import ConnectionLostError
+from belvedere.protocol import Request, SelectResult
+from belvedere.server import Server
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def server(out: io.BytesIO, tmp_path: pathlib.Path) -> Server:
 
 @pytest.fixture
 def mock_get_driver(monkeypatch: MonkeyPatch) -> MagicMock:
-    import dbelveder.dispatcher as pkg
+    import belvedere.dispatcher as pkg
 
     mock = MagicMock()
     monkeypatch.setattr(pkg, "get_driver", mock)

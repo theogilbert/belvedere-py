@@ -13,7 +13,7 @@ import pytest
 from pytest import MonkeyPatch
 
 from belvedere.drivers.base import ConnectionLostError
-from belvedere.protocol import Request, SelectResult
+from belvedere.protocol import Request, ReadResult
 from belvedere.server import Server
 
 
@@ -145,7 +145,7 @@ class TestHandle:
         mock_driver = AsyncMock()
         mock_driver.execute.side_effect = [
             ConnectionLostError(),
-            SelectResult(columns=["n"], rows=[[1]], rows_total=1),
+            ReadResult(columns=["n"], rows=[[1]], rows_total=1),
         ]
         driver_cls = AsyncMock()
         driver_cls.create = AsyncMock(return_value=mock_driver)

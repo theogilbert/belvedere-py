@@ -9,7 +9,7 @@ from ..protocol import (
     ColumnInfo,
     DMLResult,
     ExploreItem,
-    SelectResult,
+    ReadResult,
     TableDescription,
     DriverParam,
 )
@@ -143,9 +143,9 @@ from the index mapping (name, type).
     async def disconnect(self) -> None:
         await asyncio.get_running_loop().run_in_executor(None, self._client.close)
 
-    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
         try:
-            return await self._run(self._execute_sync, sql)
+            return await self._run(self._execute_sync, query)
         except Exception as exc:
             import elasticsearch
 
@@ -153,7 +153,7 @@ from the index mapping (name, type).
                 raise ConnectionLostError(str(exc)) from exc
             raise
 
-    def _execute_sync(self, query: str) -> SelectResult:
+    def _execute_sync(self, query: str) -> ReadResult:
         mode = self.params.get("query_mode", "lucene")
         if mode == "lucene":
             return self._execute_lucene_sync(query)
@@ -162,7 +162,7 @@ from the index mapping (name, type).
         else:
             raise ValueError(f"Unknown query_mode: {mode!r}")
 
-    def _execute_lucene_sync(self, query: str) -> SelectResult:
+    def _execute_lucene_sync(self, query: str) -> ReadResult:
         if " | " not in query:
             raise ValueError(
                 "Query must be in the format: <index> | <query>\n"
@@ -174,7 +174,7 @@ from the index mapping (name, type).
         )
         return self._hits_to_result(resp)
 
-    def _execute_dsl_sync(self, query: str) -> SelectResult:
+    def _execute_dsl_sync(self, query: str) -> ReadResult:
         _VALID_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"}
         lines = query.strip().splitlines()
         tokens = lines[0].strip().split(None, 1)
@@ -203,14 +203,14 @@ from the index mapping (name, type).
             return self._hits_to_result(resp)
         if isinstance(resp, dict):
             return flatten_docs(list(resp.keys()), [[resp[k] for k in resp]])  # ty: ignore[invalid-argument-type]
-        return SelectResult(columns=["response"], rows=[[str(resp)]], rows_total=1)
+        return ReadResult(columns=["response"], rows=[[str(resp)]], rows_total=1)
 
-    def _hits_to_result(self, resp: Any) -> SelectResult:
+    def _hits_to_result(self, resp: Any) -> ReadResult:
         hits = resp["hits"]["hits"]
         total = resp["hits"]["total"]
         rows_total = total["value"] if isinstance(total, dict) else int(total)
         if not hits:
-            return SelectResult(columns=[], rows=[], rows_total=rows_total)
+            return ReadResult(columns=[], rows=[], rows_total=rows_total)
         docs = [{"_id": hit["_id"], **hit.get("_source", {})} for hit in hits]
         columns = list(dict.fromkeys(k for doc in docs for k in doc))
         rows = [[doc.get(col) for col in columns] for doc in docs]

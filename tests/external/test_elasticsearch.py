@@ -15,7 +15,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.elasticsearch import ElasticsearchDriver
-from belvedere.protocol import SelectResult, TableDescription
+from belvedere.protocol import ReadResult, TableDescription
 
 pytestmark = pytest.mark.external
 
@@ -80,7 +80,7 @@ class TestExecute:
     async def test_returns_columns_and_rows(self, driver: ElasticsearchDriver) -> None:
         _index_docs(driver, [{"name": "Alice", "status": "active", "total": 10.0}])
         result = await driver.execute(f"{_INDEX} | *", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert "name" in result.columns
         assert any("Alice" in row for row in result.rows)
 
@@ -88,7 +88,7 @@ class TestExecute:
         self, driver: ElasticsearchDriver
     ) -> None:
         result = await driver.execute(f"{_INDEX} | status:nonexistent", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == []
         assert result.rows == []
 
@@ -101,7 +101,7 @@ class TestExecute:
             ],
         )
         result = await driver.execute(f"{_INDEX} | status:active", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         names = [row[result.columns.index("name")] for row in result.rows]
         assert names == ["Alice"]
 
@@ -120,7 +120,7 @@ class TestExecuteDSL:
         result = await dsl_driver.execute(
             f"GET /{_INDEX}/_search\n" + '{"query": {"match_all": {}}}', []
         )
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert "name" in result.columns
 
     async def test_filters_by_field(self, dsl_driver: ElasticsearchDriver) -> None:
@@ -134,7 +134,7 @@ class TestExecuteDSL:
         result = await dsl_driver.execute(
             f"GET /{_INDEX}/_search\n" + '{"query": {"term": {"status": "active"}}}', []
         )
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         names = [row[result.columns.index("name")] for row in result.rows]
         assert names == ["Alice"]
 
@@ -142,7 +142,7 @@ class TestExecuteDSL:
         self, dsl_driver: ElasticsearchDriver
     ) -> None:
         result = await dsl_driver.execute(f"GET /{_INDEX}/_count", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert "count" in result.columns
 
     async def test_raises_for_missing_method_path(

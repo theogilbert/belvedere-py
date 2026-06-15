@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.sqlserver import SQLServerDriver
-from belvedere.protocol import DMLResult, SelectResult, TableDescription
+from belvedere.protocol import DMLResult, ReadResult, TableDescription
 
 pytestmark = pytest.mark.external
 
@@ -72,7 +72,7 @@ class TestExecute:
         self, driver: SQLServerDriver
     ) -> None:
         result = await driver.execute("SELECT 1 AS n, 'hello' AS s", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == ["n", "s"]
         assert result.rows == [[1, "hello"]]
 
@@ -102,7 +102,7 @@ class TestExecute:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
         await driver.execute(f"INSERT INTO dbo.{table} VALUES (?, ?)", [1, "hello"])
         result = await driver.execute(f"SELECT * FROM dbo.{table}", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == ["id", "val"]
         assert result.rows == [[1, "hello"]]
 

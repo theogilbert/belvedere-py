@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.sqlite import SQLiteDriver
-from belvedere.protocol import DMLResult, ExploreItem, SelectResult
+from belvedere.protocol import DMLResult, ExploreItem, ReadResult
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ async def driver() -> AsyncGenerator[SQLiteDriver, None]:
 class TestExecute:
     async def test_should_return_columns_and_rows(self, driver: SQLiteDriver) -> None:
         result = await driver.execute("SELECT 1 AS n, 'a' AS s", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == ["n", "s"]
         assert result.rows == [[1, "a"]]
 
@@ -54,7 +54,7 @@ class TestExecute:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
         result = await driver.execute("SELECT * FROM t", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == ["id", "val"]
         assert result.rows == [[1, "hello"]]
 

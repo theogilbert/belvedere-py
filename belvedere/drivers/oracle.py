@@ -5,10 +5,10 @@ from typing import Any
 from ..protocol import (
     ColumnInfo,
     DMLResult,
-    ExploreItem,
-    SelectResult,
-    TableDescription,
     DriverParam,
+    ExploreItem,
+    ReadResult,
+    TableDescription,
 )
 from .base import BaseDriver, ConnectionLostError
 
@@ -153,37 +153,29 @@ column metadata (name, type, nullability, primary key flag, default).
     async def disconnect(self) -> None:
         await self._conn.close()
 
-    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
         """Run a SQL statement. Positional bind values map to ``:1``, ``:2``, … in the query.
 
         Args:
-            sql: SQL statement to execute.
+            query: SQL statement to execute.
             binds: Positional bind parameters (referenced as ``:1``, ``:2``, … in the query).
 
         Returns:
-            SelectResult for queries that return rows, DMLResult otherwise.
+            ReadResult for queries that return rows, DMLResult otherwise.
 
         Raises:
             ConnectionLostError: If the connection was lost during execution.
         """
         try:
             cur = self._conn.cursor()
-            await cur.execute(sql, binds)
+            await cur.execute(query, binds)
             if cur.description is not None:
                 columns = [d[0] for d in cur.description]
                 rows: list[list[Any]] = [list(r) for r in await cur.fetchall()]
-                return SelectResult(columns=columns, rows=rows, rows_total=len(rows))
+                return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
             return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
-            try:
-                import oracledb
-
-                if isinstance(
-                    exc, (oracledb.OperationalError, oracledb.InterfaceError)
-                ):
-                    raise ConnectionLostError(str(exc)) from exc
-            except ImportError:
-                pass
+            _maybe_raise_connection_lost(exc)
             raise
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
@@ -312,3 +304,13 @@ column metadata (name, type, nullability, primary key flag, default).
                 )
             case _:
                 return None
+
+
+def _maybe_raise_connection_lost(exc: Exception) -> None:
+    try:
+        import oracledb
+
+        if isinstance(exc, (oracledb.OperationalError, oracledb.InterfaceError)):
+            raise ConnectionLostError(str(exc)) from exc
+    except ImportError:
+        pass

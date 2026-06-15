@@ -93,7 +93,8 @@ class Dispatcher:
             self._idle_timer.reset(conn.id)
             async with conn:
                 return await handler(conn, cache, params, send_progress)
-        return await handler(None, None, params, send_progress)
+        else:
+            return await handler(None, None, params, send_progress)
 
     async def _handle_capabilities(
         self,

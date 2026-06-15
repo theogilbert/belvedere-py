@@ -8,7 +8,7 @@ from ..protocol import (
     ColumnInfo,
     DMLResult,
     ExploreItem,
-    SelectResult,
+    ReadResult,
     TableDescription,
     DriverParam,
 )
@@ -123,21 +123,21 @@ column metadata (name, type, nullability, default).
             ),
         )
 
-    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
         """Run a SQL statement.
 
         Args:
-            sql: SQL statement to execute.
+            query: SQL statement to execute.
             binds: Positional bind parameters (``?`` placeholders).
 
         Returns:
-            SelectResult for queries that return rows, DMLResult otherwise.
+            ReadResult for queries that return rows, DMLResult otherwise.
 
         Raises:
             ConnectionLostError: If the connection was lost during execution.
         """
         try:
-            return await self._run(self._execute_sync, sql, binds)
+            return await self._run(self._execute_sync, query, binds)
         except Exception as exc:
             import mssql_python
 
@@ -147,13 +147,13 @@ column metadata (name, type, nullability, default).
                 raise ConnectionLostError(str(exc)) from exc
             raise
 
-    def _execute_sync(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+    def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | DMLResult:
 
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
             rows: list[list[Any]] = [list(r) for r in cur.fetchall()]  # ty: ignore[missing-argument]
-            return SelectResult(columns=columns, rows=rows, rows_total=len(rows))
+            return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
         return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:

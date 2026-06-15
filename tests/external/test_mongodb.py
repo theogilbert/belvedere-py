@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from belvedere.drivers.mongodb import MongoDriver
-from belvedere.protocol import DMLResult, ExploreItem, SelectResult
+from belvedere.protocol import DMLResult, ExploreItem, ReadResult
 
 pytestmark = pytest.mark.external
 
@@ -59,7 +59,7 @@ class TestExecuteFind:
         db = _params()["database"]
         await driver._client[db]["users"].insert_one({"name": "Alice", "age": 30})
         result = await driver.execute(_cmd(find="users", filter={"name": "Alice"}), [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         row = dict(zip(result.columns, result.rows[0]))
         assert row["name"] == "Alice"
         assert row["age"] == "30"
@@ -70,7 +70,7 @@ class TestExecuteFind:
             {"name": "Bob", "address": {"city": "NYC", "zip": "10001"}}
         )
         result = await driver.execute(_cmd(find="users", filter={"name": "Bob"}), [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         row = dict(zip(result.columns, result.rows[0]))
         assert row["address.city"] == "NYC"
         assert row["address.zip"] == "10001"
@@ -79,7 +79,7 @@ class TestExecuteFind:
         db = _params()["database"]
         await driver._client[db]["users"].insert_one({"name": "Carol"})
         result = await driver.execute(_cmd(find="users"), [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         row = dict(zip(result.columns, result.rows[0]))
         assert "_id" in row
         assert row["_id"] is not None
@@ -88,14 +88,14 @@ class TestExecuteFind:
         self, driver: MongoDriver
     ) -> None:
         result = await driver.execute(_cmd(find="users", filter={"name": "Ghost"}), [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.rows == []
 
     async def test_respects_limit(self, driver: MongoDriver) -> None:
         db = _params()["database"]
         await driver._client[db]["users"].insert_many([{"n": i} for i in range(20)])
         result = await driver.execute(_cmd(find="users", limit=5), [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert len(result.rows) == 5
 
 
@@ -119,7 +119,7 @@ class TestExecuteAggregate:
             ),
             [],
         )
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         rows = [dict(zip(result.columns, r)) for r in result.rows]
         by_status = {r["_id"]: r["total"] for r in rows}
         assert by_status["closed"] == "5"

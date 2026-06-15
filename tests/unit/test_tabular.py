@@ -1,17 +1,15 @@
-from belvedere.protocol import SelectResult
+from belvedere.protocol import ReadResult
 from belvedere.tabular import flatten_docs
 
 
 def test_empty_rows_preserves_columns() -> None:
     result = flatten_docs(["a", "b"], [])
-    assert result == SelectResult(columns=["a", "b"], rows=[], rows_total=0)
+    assert result == ReadResult(columns=["a", "b"], rows=[], rows_total=0)
 
 
 def test_scalar_values_stringified() -> None:
     result = flatten_docs(["x", "y"], [[1, "hello"]])
-    assert result == SelectResult(
-        columns=["x", "y"], rows=[["1", "hello"]], rows_total=1
-    )
+    assert result == ReadResult(columns=["x", "y"], rows=[["1", "hello"]], rows_total=1)
 
 
 def test_top_level_dict_flattened() -> None:

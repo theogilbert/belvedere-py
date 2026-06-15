@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Self
 
-from ..protocol import DMLResult, ExploreItem, SelectResult, TableDescription
+from ..protocol import DMLResult, ExploreItem, ReadResult, TableDescription
 
 
 class ConnectionLostError(Exception):
@@ -42,15 +42,15 @@ class BaseDriver(ABC):
         ...
 
     @abstractmethod
-    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
-        """Run a SQL statement and return the result.
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
+        """Run a database query and return the result.
 
         Args:
-            sql: SQL statement to execute.
+            query: Query to execute.
             binds: Positional bind parameters.
 
         Returns:
-            SelectResult for queries that return rows, DMLResult for INSERT/UPDATE/DELETE.
+            ReadResult for queries that return rows, DMLResult for write operations.
 
         Raises:
             ConnectionLostError: If the connection was lost during execution.

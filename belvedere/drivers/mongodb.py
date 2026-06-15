@@ -7,7 +7,7 @@ from ..protocol import (
     DMLResult,
     DriverParam,
     ExploreItem,
-    SelectResult,
+    ReadResult,
     TableDescription,
 )
 from ..tabular import flatten_docs
@@ -39,9 +39,9 @@ def _serialize(value: Any) -> Any:
     return value
 
 
-def _docs_to_result(docs: list[dict[str, Any]]) -> SelectResult:
+def _docs_to_result(docs: list[dict[str, Any]]) -> ReadResult:
     if not docs:
-        return SelectResult(columns=[], rows=[], rows_total=0)
+        return ReadResult(columns=[], rows=[], rows_total=0)
     serialized = [{k: _serialize(v) for k, v in doc.items()} for doc in docs]
     columns: list[str] = list(dict.fromkeys(k for doc in serialized for k in doc))
     rows = [[doc.get(col) for col in columns] for doc in serialized]
@@ -170,11 +170,11 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
     async def disconnect(self) -> None:
         await self._client.close()
 
-    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
         """Run a MongoDB command expressed as a JSON string.
 
         Args:
-            sql: JSON object following MongoDB command syntax. The top-level key
+            query: JSON object following MongoDB command syntax. The top-level key
                 selects the operation; its value is the collection name.
                 Supported operations:
 
@@ -192,7 +192,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             binds: Unused for MongoDB.
         """
         try:
-            cmd: dict[str, Any] = json.loads(sql)
+            cmd: dict[str, Any] = json.loads(query)
         except json.JSONDecodeError as exc:
             raise ValueError(f"MongoDB command must be valid JSON: {exc}") from exc
 
@@ -219,7 +219,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             _maybe_raise_connection_lost(exc)
             raise
 
-    async def _find(self, db: Any, cmd: dict[str, Any]) -> SelectResult:
+    async def _find(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
         col = db[cmd.pop("find")]
         filter_ = cmd.pop("filter", {})
         projection = cmd.pop("projection", None)
@@ -230,7 +230,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             cursor = cursor.sort(list(sort.items()))
         return _docs_to_result(await cursor.to_list())
 
-    async def _aggregate(self, db: Any, cmd: dict[str, Any]) -> SelectResult:
+    async def _aggregate(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
         col = db[cmd.pop("aggregate")]
         cursor = await col.aggregate(cmd.pop("pipeline", []))
         return _docs_to_result(await cursor.to_list())

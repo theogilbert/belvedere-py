@@ -1,6 +1,6 @@
 from typing import Any
 
-from .protocol import SelectResult
+from .protocol import ReadResult
 
 
 def _to_str(value: Any) -> str | None:
@@ -27,8 +27,8 @@ def _flatten(prefix: str, value: Any) -> list[tuple[str, Any]]:
 
 def flatten_docs(
     columns: list[str], rows: list[list[Any]], rows_total: int | None = None
-) -> SelectResult:
-    """Flatten rows where values may be nested dicts into a flat SelectResult.
+) -> ReadResult:
+    """Flatten rows where values may be nested dicts into a flat ReadResult.
 
     Dict values are recursively expanded with dot-notation column names.
     Columns absent in some rows are filled with None.
@@ -36,7 +36,7 @@ def flatten_docs(
     driver knows the full result set exceeds what was returned (e.g. ES hits).
     """
     if not rows:
-        return SelectResult(
+        return ReadResult(
             columns=columns,
             rows=[],
             rows_total=rows_total if rows_total is not None else 0,
@@ -59,7 +59,7 @@ def flatten_docs(
                 seen.add(k)
 
     result_rows = [[_to_str(flat.get(col)) for col in all_cols] for flat in flat_rows]
-    return SelectResult(
+    return ReadResult(
         columns=all_cols,
         rows=result_rows,
         rows_total=rows_total if rows_total is not None else len(result_rows),

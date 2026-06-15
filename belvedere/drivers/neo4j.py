@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, LiteralString
 from ..protocol import (
     DMLResult,
     ExploreItem,
-    SelectResult,
+    ReadResult,
     TableDescription,
     DriverParam,
 )
@@ -116,15 +116,15 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
     async def disconnect(self) -> None:
         await self._driver.close()
 
-    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
         """Run a Cypher statement. Positional bind values map to ``$0``, ``$1``, …
 
         Args:
-            sql: Cypher statement to execute.
+            query: Cypher statement to execute.
             binds: Positional bind parameters (referenced as ``$0``, ``$1``, … in the query).
 
         Returns:
-            SelectResult for queries that RETURN rows, DMLResult otherwise.
+            ReadResult for queries that RETURN rows, DMLResult otherwise.
 
         Raises:
             ConnectionLostError: If the connection was lost during execution.
@@ -133,7 +133,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
         db = self.params.get("database", "neo4j")
         try:
             async with self._driver.session(database=db) as session:
-                result = await session.run(sql, params)  # ty: ignore[invalid-argument-type]
+                result = await session.run(query, params)  # ty: ignore[invalid-argument-type]
                 keys = result.keys()
                 if keys:
                     rows = []

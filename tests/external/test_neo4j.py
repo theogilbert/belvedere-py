@@ -17,7 +17,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.neo4j import Neo4jDriver
-from belvedere.protocol import DMLResult, ExploreItem, SelectResult
+from belvedere.protocol import DMLResult, ExploreItem, ReadResult
 
 pytestmark = pytest.mark.external
 
@@ -53,13 +53,13 @@ async def clean_db(driver: Neo4jDriver) -> AsyncGenerator[None, None]:
 class TestExecute:
     async def test_should_return_columns_and_rows(self, driver: Neo4jDriver) -> None:
         result = await driver.execute("RETURN 1 AS n, 'hello' AS s", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == ["n", "s"]
         assert result.rows == [["1", "hello"]]
 
     async def test_should_support_positional_params(self, driver: Neo4jDriver) -> None:
         result = await driver.execute("RETURN $0 AS val", [42])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.rows == [["42"]]
 
     async def test_should_return_dml_result_for_create(
@@ -80,7 +80,7 @@ class TestExecute:
     async def test_should_serialize_node_to_dict(self, driver: Neo4jDriver) -> None:
         await driver.execute("CREATE (:User {name: 'Alice', age: 30})", [])
         result = await driver.execute("MATCH (p:User) RETURN p", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert len(result.rows) == 1
         row = dict(zip(result.columns, result.rows[0]))
         assert row["p.name"] == "Alice"
@@ -95,7 +95,7 @@ class TestExecute:
             [],
         )
         result = await driver.execute("MATCH ()-[r:BOUGHT]->() RETURN r", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         row = dict(zip(result.columns, result.rows[0]))
         assert row["r._type"] == "BOUGHT"
         assert row["r.price"] == "9.99"
@@ -103,7 +103,7 @@ class TestExecute:
     async def test_should_persist_within_connection(self, driver: Neo4jDriver) -> None:
         await driver.execute("CREATE (n:User {name: 'Alice'})", [])
         result = await driver.execute("MATCH (n:User) RETURN n.name AS name", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.rows == [["Alice"]]
 
 

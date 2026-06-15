@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.oracle import OracleDriver
-from belvedere.protocol import DMLResult, SelectResult, TableDescription
+from belvedere.protocol import DMLResult, ReadResult, TableDescription
 
 pytestmark = pytest.mark.external
 
@@ -48,7 +48,7 @@ async def driver() -> AsyncGenerator[OracleDriver, None]:
 @pytest.fixture
 async def schema(driver: OracleDriver) -> str:
     result = await driver.execute("SELECT USER FROM DUAL", [])
-    assert isinstance(result, SelectResult)
+    assert isinstance(result, ReadResult)
     return result.rows[0][0]
 
 
@@ -83,13 +83,13 @@ async def tables(
 class TestExecute:
     async def test_should_return_columns_and_rows(self, driver: OracleDriver) -> None:
         result = await driver.execute("SELECT 1 AS n, 'hello' AS s FROM DUAL", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == ["N", "S"]
         assert result.rows == [[1, "hello"]]
 
     async def test_should_support_positional_params(self, driver: OracleDriver) -> None:
         result = await driver.execute("SELECT :1 AS val FROM DUAL", [42])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.rows == [[42]]
 
     async def test_should_return_dml_result_for_insert(
@@ -124,7 +124,7 @@ class TestExecute:
             f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [1, "hello"]
         )
         result = await driver.execute(f"SELECT id, val FROM {schema}.{table}", [])
-        assert isinstance(result, SelectResult)
+        assert isinstance(result, ReadResult)
         assert result.columns == ["ID", "VAL"]
         assert result.rows == [[1, "hello"]]
 

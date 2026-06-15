@@ -20,12 +20,13 @@ pip install "belvedere-py[mssql]"
 The server is started by the Neovim plugin automatically. To run it manually:
 
 ```bash
-belvedere [--log] [--max-concurrency N]
+belvedere [--log] [-v] [--max-concurrency N]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--log` | off | Log all requests and responses to `~/.local/state/belvedere/server.log` |
+| `-v` | off | Log at DEBUG level (requires `--log`) |
 | `--max-concurrency N` | 5 | Max concurrent requests per connection |
 
 ## Supported drivers
@@ -47,10 +48,12 @@ Communication uses newline-delimited JSON (one message per line). See [docs/prot
 
 ### Methods
 
+- **`capabilities`** — list available drivers and their connection parameters
+- **`driver.help`** — return Markdown help text for a named driver
 - **`connect`** — open a database connection, returns a `connection_id`
 - **`disconnect`** — close a connection
 - **`execute`** — run a query against the connected database
-  - Query with results → `{"columns": [...], "rows": [...]}`
+  - Query with results → `{"columns": [...], "rows": [...], "rows_total": N}` (`rows_total` is the total number of matching rows; may exceed `len(rows)` when the driver applies a default fetch limit)
   - Write operation → `{"rows_affected": N}`
 
   Query syntax depends on the driver. Examples:

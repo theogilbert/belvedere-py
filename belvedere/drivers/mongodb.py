@@ -70,12 +70,12 @@ class MongoDriver(BaseDriver):
 
 **Install:** `pip install pymongo`
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `uri` | no | `mongodb://localhost:27017` | Connection URI |
-| `database` | yes | — | Default database |
-| `username` | no | — | Username (can also be embedded in the URI) |
-| `password` | no | — | Password (masked; can also be embedded in the URI) |
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `uri` | yes | Connection URI |
+| `database` | yes | Database |
+| `username` | yes | Username (can also be embedded in the URI) |
+| `password` | yes | Password (masked; can also be embedded in the URI) |
 
 **Queries:** JSON command objects. The top-level key selects the operation and
 its value names the collection. Add `"db": "<name>"` to target a database other

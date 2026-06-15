@@ -80,9 +80,8 @@ class Dispatcher:
             Method-specific result dict.
 
         Raises:
-            ValueError: If the method name is unknown.
-            KeyError: If the ``connection_id`` does not refer to an open connection
-                and the method requires one.
+            DispatchError: If the method is unknown, the ``connection_id`` does not
+                refer to an open connection, or a required param is missing.
         """
         handler = self._route(method)
 

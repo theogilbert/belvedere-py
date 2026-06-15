@@ -7,21 +7,27 @@ def get_driver_help(name: str) -> str:
     match name.lower():
         case "sqlite":
             from .sqlite import SQLiteDriver
+
             return SQLiteDriver.HELP
         case "sqlserver":
             from .sqlserver import SQLServerDriver
+
             return SQLServerDriver.HELP
         case "neo4j":
             from .neo4j import Neo4jDriver
+
             return Neo4jDriver.HELP
         case "oracle":
             from .oracle import OracleDriver
+
             return OracleDriver.HELP
         case "mongodb":
             from .mongodb import MongoDriver
+
             return MongoDriver.HELP
         case "elasticsearch":
             from .elasticsearch import ElasticsearchDriver
+
             return ElasticsearchDriver.HELP
         case _:
             raise ValueError(f"Unknown driver: {name!r}")
@@ -47,9 +53,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import neo4j  # noqa: F401
             except ImportError:
-                raise RuntimeError(
-                    "neo4j not installed — run: pip install neo4j"
-                )
+                raise RuntimeError("neo4j not installed — run: pip install neo4j")
             from .neo4j import Neo4jDriver
 
             return Neo4jDriver
@@ -57,9 +61,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import oracledb  # noqa: F401
             except ImportError:
-                raise RuntimeError(
-                    "oracledb not installed — run: pip install oracledb"
-                )
+                raise RuntimeError("oracledb not installed — run: pip install oracledb")
             from .oracle import OracleDriver
 
             return OracleDriver
@@ -67,9 +69,7 @@ def get_driver(name: str) -> type[BaseDriver]:
             try:
                 import pymongo  # noqa: F401
             except ImportError:
-                raise RuntimeError(
-                    "pymongo not installed — run: pip install pymongo"
-                )
+                raise RuntimeError("pymongo not installed — run: pip install pymongo")
             from .mongodb import MongoDriver
 
             return MongoDriver
@@ -96,7 +96,11 @@ def list_drivers() -> list[Driver]:
         import mssql_python  # noqa: F401
         from .sqlserver import SQLServerDriver
 
-        techs.append(Driver(driver="sqlserver", label="SQL Server", params=SQLServerDriver.PARAMS))
+        techs.append(
+            Driver(
+                driver="sqlserver", label="SQL Server", params=SQLServerDriver.PARAMS
+            )
+        )
     except ImportError:
         pass
     try:
@@ -110,21 +114,31 @@ def list_drivers() -> list[Driver]:
         import oracledb  # noqa: F401
         from .oracle import OracleDriver
 
-        techs.append(Driver(driver="oracle", label="Oracle", params=OracleDriver.PARAMS))
+        techs.append(
+            Driver(driver="oracle", label="Oracle", params=OracleDriver.PARAMS)
+        )
     except ImportError:
         pass
     try:
         import pymongo  # noqa: F401
         from .mongodb import MongoDriver
 
-        techs.append(Driver(driver="mongodb", label="MongoDB", params=MongoDriver.PARAMS))
+        techs.append(
+            Driver(driver="mongodb", label="MongoDB", params=MongoDriver.PARAMS)
+        )
     except ImportError:
         pass
     try:
         import elasticsearch  # noqa: F401
         from .elasticsearch import ElasticsearchDriver
 
-        techs.append(Driver(driver="elasticsearch", label="Elasticsearch", params=ElasticsearchDriver.PARAMS))
+        techs.append(
+            Driver(
+                driver="elasticsearch",
+                label="Elasticsearch",
+                params=ElasticsearchDriver.PARAMS,
+            )
+        )
     except ImportError:
         pass
     return techs

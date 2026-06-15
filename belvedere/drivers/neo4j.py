@@ -1,8 +1,14 @@
 """Neo4j driver — requires: pip install neo4j"""
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, LiteralString
 
-from ..protocol import DMLResult, ExploreItem, SelectResult, TableDescription, DriverParam
+from ..protocol import (
+    DMLResult,
+    ExploreItem,
+    SelectResult,
+    TableDescription,
+    DriverParam,
+)
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError
 
@@ -14,6 +20,7 @@ def _serialize(value: Any) -> Any:
     """Recursively convert neo4j graph objects to plain Python values."""
     try:
         from neo4j.graph import Node, Relationship, Path
+
         if isinstance(value, Node):
             return {"_labels": sorted(value.labels), **dict(value)}
         if isinstance(value, Relationship):
@@ -38,7 +45,9 @@ class Neo4jDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="uri", type="string", label="Bolt URI", default="bolt://localhost:7687"),
+        DriverParam(
+            key="uri", type="string", label="Bolt URI", default="bolt://localhost:7687"
+        ),
         DriverParam(key="user", type="string", label="User", default="neo4j"),
         DriverParam(key="password", type="string", label="Password", secret=True),
         DriverParam(key="database", type="string", label="Database", default="neo4j"),
@@ -97,6 +106,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
     async def reconnect(self) -> None:
         await self._driver.close()
         import neo4j as _neo4j
+
         self._driver = _neo4j.AsyncGraphDatabase.driver(
             self.params.get("uri", "bolt://localhost:7687"),
             auth=(self.params.get("user", "neo4j"), self.params.get("password", "")),
@@ -123,7 +133,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
         db = self.params.get("database", "neo4j")
         try:
             async with self._driver.session(database=db) as session:
-                result = await session.run(sql, params)
+                result = await session.run(sql, params)  # ty: ignore[invalid-argument-type]
                 keys = result.keys()
                 if keys:
                     rows = []
@@ -133,14 +143,17 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
                 summary = await result.consume()
                 c = summary.counters
                 affected = (
-                    c.nodes_created + c.nodes_deleted
-                    + c.relationships_created + c.relationships_deleted
+                    c.nodes_created
+                    + c.nodes_deleted
+                    + c.relationships_created
+                    + c.relationships_deleted
                     + c.properties_set
                 )
                 return DMLResult(rows_affected=affected)
         except Exception as exc:
             try:
                 import neo4j.exceptions as _exc
+
                 if isinstance(exc, (_exc.ServiceUnavailable, _exc.SessionExpired)):
                     raise ConnectionLostError(str(exc)) from exc
             except ImportError:
@@ -159,32 +172,46 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
                 names = await self._query_column(
                     "SHOW INDEXES YIELD name RETURN name ORDER BY name", "name"
                 )
-                return [ExploreItem(name=n, type="index", expandable=False) for n in names]
+                return [
+                    ExploreItem(name=n, type="index", expandable=False) for n in names
+                ]
             case ["entities"]:
                 labels = await self._query_column(
                     "CALL db.labels() YIELD label RETURN label ORDER BY label", "label"
                 )
-                return [ExploreItem(name=l, type="label", expandable=True) for l in labels]
+                return [
+                    ExploreItem(name=label, type="label", expandable=True)
+                    for label in labels
+                ]
             case ["relationships"]:
                 types = await self._query_column(
                     "CALL db.relationshipTypes() YIELD relationshipType"
                     " RETURN relationshipType ORDER BY relationshipType",
                     "relationshipType",
                 )
-                return [ExploreItem(name=t, type="relationship_type", expandable=True) for t in types]
+                return [
+                    ExploreItem(name=t, type="relationship_type", expandable=True)
+                    for t in types
+                ]
             case ["entities", label]:
                 props = await self._node_properties(label)
-                return [ExploreItem(name=p, type="property", expandable=False) for p in props]
+                return [
+                    ExploreItem(name=p, type="property", expandable=False)
+                    for p in props
+                ]
             case ["relationships", rel_type]:
                 props = await self._relationship_properties(rel_type)
-                return [ExploreItem(name=p, type="property", expandable=False) for p in props]
+                return [
+                    ExploreItem(name=p, type="property", expandable=False)
+                    for p in props
+                ]
             case _:
                 return []
 
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
         return None
 
-    async def _query_column(self, query: str, key: str) -> list[str]:
+    async def _query_column(self, query: LiteralString, key: str) -> list[str]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
             result = await session.run(query)
@@ -194,7 +221,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
             result = await session.run(
-                f"MATCH (n:`{label}`) UNWIND keys(n) AS prop"
+                f"MATCH (n:`{label}`) UNWIND keys(n) AS prop"  # ty: ignore[invalid-argument-type]
                 " RETURN DISTINCT prop ORDER BY prop"
             )
             return [r["prop"] for r in await result.data()]
@@ -203,7 +230,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
             result = await session.run(
-                f"MATCH ()-[r:`{rel_type}`]->() UNWIND keys(r) AS prop"
+                f"MATCH ()-[r:`{rel_type}`]->() UNWIND keys(r) AS prop"  # ty: ignore[invalid-argument-type]
                 " RETURN DISTINCT prop ORDER BY prop"
             )
             return [r["prop"] for r in await result.data()]

@@ -20,13 +20,17 @@ class TestExecute:
         assert result.columns == ["n", "s"]
         assert result.rows == [[1, "a"]]
 
-    async def test_should_return_rows_affected_for_insert(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_rows_affected_for_insert(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         result = await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 1
 
-    async def test_should_return_rows_affected_for_update(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_rows_affected_for_update(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         await driver.execute("INSERT INTO t VALUES (1, 'a')", [])
         await driver.execute("INSERT INTO t VALUES (2, 'b')", [])
@@ -34,7 +38,9 @@ class TestExecute:
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 2
 
-    async def test_should_return_rows_affected_for_delete(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_rows_affected_for_delete(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         await driver.execute("INSERT INTO t VALUES (1)", [])
         await driver.execute("INSERT INTO t VALUES (2)", [])
@@ -42,7 +48,9 @@ class TestExecute:
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 1
 
-    async def test_should_persist_inserts_within_connection(self, driver: SQLiteDriver) -> None:
+    async def test_should_persist_inserts_within_connection(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
         result = await driver.execute("SELECT * FROM t", [])
@@ -73,7 +81,9 @@ class TestExploreList:
         assert {i.name for i in items} == {"columns", "indices", "foreign_keys"}
         assert all(i.type == "group" and i.expandable for i in items)
 
-    async def test_should_list_columns_in_definition_order(self, driver: SQLiteDriver) -> None:
+    async def test_should_list_columns_in_definition_order(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         items = await driver.explore_list(["t", "columns"])
         assert [i.name for i in items] == ["id", "val"]
@@ -86,14 +96,19 @@ class TestExploreList:
         assert any(i.name == "idx_val" for i in items)
         assert all(not i.expandable for i in items)
 
-    async def test_should_return_empty_indices_when_none_exist(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_empty_indices_when_none_exist(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         assert await driver.explore_list(["t", "indices"]) == []
 
-    async def test_should_list_foreign_key_reference(self, driver: SQLiteDriver) -> None:
+    async def test_should_list_foreign_key_reference(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
         await driver.execute(
-            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))", []
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
         )
         items = await driver.explore_list(["child", "foreign_keys"])
         assert len(items) == 1
@@ -101,16 +116,22 @@ class TestExploreList:
         assert items[0].type == "foreign_key"
         assert not items[0].expandable
 
-    async def test_should_return_empty_foreign_keys_when_none_exist(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_empty_foreign_keys_when_none_exist(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         assert await driver.explore_list(["t", "foreign_keys"]) == []
 
-    async def test_should_return_empty_when_path_is_too_deep(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_empty_when_path_is_too_deep(
+        self, driver: SQLiteDriver
+    ) -> None:
         assert await driver.explore_list(["a", "b", "c", "d"]) == []
 
 
 class TestExploreDescribe:
-    async def test_should_return_column_names_and_types(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_column_names_and_types(
+        self, driver: SQLiteDriver
+    ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         desc = await driver.explore_describe(["t"])
         assert desc is not None
@@ -134,5 +155,7 @@ class TestExploreDescribe:
         assert by_name["id"].pk is True
         assert by_name["val"].pk is False
 
-    async def test_should_return_none_when_path_is_invalid(self, driver: SQLiteDriver) -> None:
+    async def test_should_return_none_when_path_is_invalid(
+        self, driver: SQLiteDriver
+    ) -> None:
         assert await driver.explore_describe([]) is None

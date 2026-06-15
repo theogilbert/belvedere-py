@@ -17,14 +17,46 @@ _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "forei
 # Pre-12c fallback: ORACLE_MAINTAINED column doesn't exist before 12.1, so we
 # exclude known system schemas by name instead.
 _PRE12_SYSTEM_SCHEMAS_SQL = ", ".join(
-    f"'{u}'" for u in sorted({
-        "ANONYMOUS", "APEX_030200", "APEX_040000", "APPQOSSYS", "AUDSYS",
-        "CTXSYS", "DBSFWUSER", "DBSNMP", "DIP", "DVF", "DVSYS", "EXFSYS",
-        "FLOWS_FILES", "GGSYS", "GSMADMIN_INTERNAL", "LBACSYS", "MDDATA",
-        "MDSYS", "OJVMSYS", "OLAPSYS", "ORACLE_OCM", "ORDDATA", "ORDPLUGINS",
-        "ORDSYS", "OUTLN", "SI_INFORMTN_SCHEMA", "SYS", "SYSBACKUP", "SYSDG",
-        "SYSKM", "SYSRAC", "SYSTEM", "WMSYS", "XDB", "XS$NULL",
-    })
+    f"'{u}'"
+    for u in sorted(
+        {
+            "ANONYMOUS",
+            "APEX_030200",
+            "APEX_040000",
+            "APPQOSSYS",
+            "AUDSYS",
+            "CTXSYS",
+            "DBSFWUSER",
+            "DBSNMP",
+            "DIP",
+            "DVF",
+            "DVSYS",
+            "EXFSYS",
+            "FLOWS_FILES",
+            "GGSYS",
+            "GSMADMIN_INTERNAL",
+            "LBACSYS",
+            "MDDATA",
+            "MDSYS",
+            "OJVMSYS",
+            "OLAPSYS",
+            "ORACLE_OCM",
+            "ORDDATA",
+            "ORDPLUGINS",
+            "ORDSYS",
+            "OUTLN",
+            "SI_INFORMTN_SCHEMA",
+            "SYS",
+            "SYSBACKUP",
+            "SYSDG",
+            "SYSKM",
+            "SYSRAC",
+            "SYSTEM",
+            "WMSYS",
+            "XDB",
+            "XS$NULL",
+        }
+    )
 )
 
 
@@ -40,7 +72,9 @@ class OracleDriver(BaseDriver):
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type="string", label="Host", default="localhost"),
         DriverParam(key="port", type="integer", label="Port", default=1521),
-        DriverParam(key="service_name", type="string", label="Service Name", default="FREEPDB1"),
+        DriverParam(
+            key="service_name", type="string", label="Service Name", default="FREEPDB1"
+        ),
         DriverParam(key="user", type="string", label="User"),
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]
@@ -79,7 +113,9 @@ SELECT * FROM employees WHERE department_id = :1 AND hire_date > :2
 column metadata (name, type, nullability, primary key flag, default).
 """
 
-    def __init__(self, params: dict[str, Any], conn: Any, has_oracle_maintained: bool) -> None:
+    def __init__(
+        self, params: dict[str, Any], conn: Any, has_oracle_maintained: bool
+    ) -> None:
         super().__init__(params)
         self._conn = conn
         self._has_oracle_maintained = has_oracle_maintained
@@ -96,6 +132,7 @@ column metadata (name, type, nullability, primary key flag, default).
     @staticmethod
     async def _open(params: dict[str, Any]) -> tuple[Any, bool]:
         import oracledb
+
         conn = await oracledb.connect_async(
             user=params.get("user", ""),
             password=params.get("password", ""),
@@ -140,7 +177,10 @@ column metadata (name, type, nullability, primary key flag, default).
         except Exception as exc:
             try:
                 import oracledb
-                if isinstance(exc, (oracledb.OperationalError, oracledb.InterfaceError)):
+
+                if isinstance(
+                    exc, (oracledb.OperationalError, oracledb.InterfaceError)
+                ):
                     raise ConnectionLostError(str(exc)) from exc
             except ImportError:
                 pass

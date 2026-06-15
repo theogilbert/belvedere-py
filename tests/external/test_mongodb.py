@@ -66,7 +66,9 @@ class TestExecuteFind:
 
     async def test_flattens_nested_documents(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        await driver._client[db]["users"].insert_one({"name": "Bob", "address": {"city": "NYC", "zip": "10001"}})
+        await driver._client[db]["users"].insert_one(
+            {"name": "Bob", "address": {"city": "NYC", "zip": "10001"}}
+        )
         result = await driver.execute(_cmd(find="users", filter={"name": "Bob"}), [])
         assert isinstance(result, SelectResult)
         row = dict(zip(result.columns, result.rows[0]))
@@ -82,7 +84,9 @@ class TestExecuteFind:
         assert "_id" in row
         assert row["_id"] is not None
 
-    async def test_returns_empty_result_for_no_matches(self, driver: MongoDriver) -> None:
+    async def test_returns_empty_result_for_no_matches(
+        self, driver: MongoDriver
+    ) -> None:
         result = await driver.execute(_cmd(find="users", filter={"name": "Ghost"}), [])
         assert isinstance(result, SelectResult)
         assert result.rows == []
@@ -98,18 +102,23 @@ class TestExecuteFind:
 class TestExecuteAggregate:
     async def test_aggregate_groups_correctly(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        await driver._client[db]["orders"].insert_many([
-            {"status": "open", "amount": 10},
-            {"status": "open", "amount": 20},
-            {"status": "closed", "amount": 5},
-        ])
-        result = await driver.execute(_cmd(
-            aggregate="orders",
-            pipeline=[
-                {"$group": {"_id": "$status", "total": {"$sum": "$amount"}}},
-                {"$sort": {"_id": 1}},
-            ],
-        ), [])
+        await driver._client[db]["orders"].insert_many(
+            [
+                {"status": "open", "amount": 10},
+                {"status": "open", "amount": 20},
+                {"status": "closed", "amount": 5},
+            ]
+        )
+        result = await driver.execute(
+            _cmd(
+                aggregate="orders",
+                pipeline=[
+                    {"$group": {"_id": "$status", "total": {"$sum": "$amount"}}},
+                    {"$sort": {"_id": 1}},
+                ],
+            ),
+            [],
+        )
         assert isinstance(result, SelectResult)
         rows = [dict(zip(result.columns, r)) for r in result.rows]
         by_status = {r["_id"]: r["total"] for r in rows}
@@ -119,48 +128,70 @@ class TestExecuteAggregate:
 
 class TestExecuteDML:
     async def test_insert_one_returns_rows_affected(self, driver: MongoDriver) -> None:
-        result = await driver.execute(_cmd(insertOne="users", document={"name": "Alice"}), [])
+        result = await driver.execute(
+            _cmd(insertOne="users", document={"name": "Alice"}), []
+        )
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 1
 
     async def test_insert_many_returns_rows_affected(self, driver: MongoDriver) -> None:
-        result = await driver.execute(_cmd(insertMany="users", documents=[{"name": "Alice"}, {"name": "Bob"}]), [])
+        result = await driver.execute(
+            _cmd(insertMany="users", documents=[{"name": "Alice"}, {"name": "Bob"}]), []
+        )
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 2
 
     async def test_update_one_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        await driver._client[db]["users"].insert_many([{"name": "Alice", "active": False}])
-        result = await driver.execute(_cmd(
-            updateOne="users",
-            filter={"name": "Alice"},
-            update={"$set": {"active": True}},
-        ), [])
+        await driver._client[db]["users"].insert_many(
+            [{"name": "Alice", "active": False}]
+        )
+        result = await driver.execute(
+            _cmd(
+                updateOne="users",
+                filter={"name": "Alice"},
+                update={"$set": {"active": True}},
+            ),
+            [],
+        )
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 1
 
     async def test_update_many_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        await driver._client[db]["users"].insert_many([{"role": "admin"}, {"role": "admin"}])
-        result = await driver.execute(_cmd(
-            updateMany="users",
-            filter={"role": "admin"},
-            update={"$set": {"active": True}},
-        ), [])
+        await driver._client[db]["users"].insert_many(
+            [{"role": "admin"}, {"role": "admin"}]
+        )
+        result = await driver.execute(
+            _cmd(
+                updateMany="users",
+                filter={"role": "admin"},
+                update={"$set": {"active": True}},
+            ),
+            [],
+        )
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 2
 
     async def test_delete_one_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        await driver._client[db]["users"].insert_many([{"name": "Alice"}, {"name": "Bob"}])
-        result = await driver.execute(_cmd(deleteOne="users", filter={"name": "Alice"}), [])
+        await driver._client[db]["users"].insert_many(
+            [{"name": "Alice"}, {"name": "Bob"}]
+        )
+        result = await driver.execute(
+            _cmd(deleteOne="users", filter={"name": "Alice"}), []
+        )
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 1
 
     async def test_delete_many_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        await driver._client[db]["users"].insert_many([{"role": "admin"}, {"role": "admin"}, {"role": "user"}])
-        result = await driver.execute(_cmd(deleteMany="users", filter={"role": "admin"}), [])
+        await driver._client[db]["users"].insert_many(
+            [{"role": "admin"}, {"role": "admin"}, {"role": "user"}]
+        )
+        result = await driver.execute(
+            _cmd(deleteMany="users", filter={"role": "admin"}), []
+        )
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 2
 
@@ -186,7 +217,9 @@ class TestExploreList:
         assert all(i.type == "collection" for i in items)
         assert all(i.expandable for i in items)
 
-    async def test_collection_lists_fields_and_indexes_groups(self, driver: MongoDriver) -> None:
+    async def test_collection_lists_fields_and_indexes_groups(
+        self, driver: MongoDriver
+    ) -> None:
         db = _params()["database"]
         await driver._client[db]["users"].insert_one({"x": 1})
         items = await driver.explore_list([db, "users"])
@@ -197,10 +230,12 @@ class TestExploreList:
 
     async def test_fields_samples_top_level_keys(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        await driver._client[db]["users"].insert_many([
-            {"name": "Alice", "age": 30},
-            {"name": "Bob", "email": "b@b.com"},
-        ])
+        await driver._client[db]["users"].insert_many(
+            [
+                {"name": "Alice", "age": 30},
+                {"name": "Bob", "email": "b@b.com"},
+            ]
+        )
         items = await driver.explore_list([db, "users", "fields"])
         names = [i.name for i in items]
         assert "name" in names

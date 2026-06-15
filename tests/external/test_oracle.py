@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.oracle import OracleDriver
-from belvedere.protocol import DMLResult, ExploreItem, SelectResult, TableDescription
+from belvedere.protocol import DMLResult, SelectResult, TableDescription
 
 pytestmark = pytest.mark.external
 
@@ -57,19 +57,25 @@ async def table(driver: OracleDriver, schema: str) -> AsyncGenerator[str, None]:
     name = "T_" + uuid.uuid4().hex[:12].upper()
     yield name
     try:
-        await driver.execute(f"DROP TABLE {schema}.{name} CASCADE CONSTRAINTS PURGE", [])
+        await driver.execute(
+            f"DROP TABLE {schema}.{name} CASCADE CONSTRAINTS PURGE", []
+        )
     except Exception:
         pass
 
 
 @pytest.fixture
-async def tables(driver: OracleDriver, schema: str) -> AsyncGenerator[tuple[str, str], None]:
+async def tables(
+    driver: OracleDriver, schema: str
+) -> AsyncGenerator[tuple[str, str], None]:
     parent = "T_" + uuid.uuid4().hex[:12].upper()
     child = "T_" + uuid.uuid4().hex[:12].upper()
     yield parent, child
     for name in (child, parent):
         try:
-            await driver.execute(f"DROP TABLE {schema}.{name} CASCADE CONSTRAINTS PURGE", [])
+            await driver.execute(
+                f"DROP TABLE {schema}.{name} CASCADE CONSTRAINTS PURGE", []
+            )
         except Exception:
             pass
 
@@ -89,7 +95,9 @@ class TestExecute:
     async def test_should_return_dml_result_for_insert(
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
-        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", [])
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
+        )
         result = await driver.execute(
             f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [1, "hello"]
         )
@@ -109,8 +117,12 @@ class TestExecute:
     async def test_should_persist_inserts_within_connection(
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
-        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", [])
-        await driver.execute(f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [1, "hello"])
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
+        )
+        await driver.execute(
+            f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [1, "hello"]
+        )
         result = await driver.execute(f"SELECT id, val FROM {schema}.{table}", [])
         assert isinstance(result, SelectResult)
         assert result.columns == ["ID", "VAL"]
@@ -142,7 +154,9 @@ class TestExploreList:
         await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
         view = table + "_V"
         try:
-            await driver.execute(f"CREATE VIEW {schema}.{view} AS SELECT * FROM {schema}.{table}", [])
+            await driver.execute(
+                f"CREATE VIEW {schema}.{view} AS SELECT * FROM {schema}.{table}", []
+            )
             items = await driver.explore_list([schema])
             assert any(i.name == view and i.type == "view" for i in items)
         finally:
@@ -163,7 +177,8 @@ class TestExploreList:
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
         await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50), active NUMBER(1))", []
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50), active NUMBER(1))",
+            [],
         )
         items = await driver.explore_list([schema, table, "columns"])
         assert [i.name for i in items] == ["ID", "VAL", "ACTIVE"]
@@ -187,7 +202,9 @@ class TestExploreList:
             f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
         )
         idx = "IDX_" + table
-        await driver.execute(f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val)", [])
+        await driver.execute(
+            f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val)", []
+        )
         items = await driver.explore_list([schema, table, "indexes"])
         assert any(i.name == idx for i in items)
         assert all(not i.expandable for i in items)
@@ -204,7 +221,8 @@ class TestExploreList:
     ) -> None:
         pk = "PK_" + table
         await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, CONSTRAINT {pk} PRIMARY KEY (id))", []
+            f"CREATE TABLE {schema}.{table} (id NUMBER, CONSTRAINT {pk} PRIMARY KEY (id))",
+            [],
         )
         items = await driver.explore_list([schema, table, "constraints"])
         by_name = {i.name: i for i in items}
@@ -247,7 +265,8 @@ class TestExploreList:
         pk = "PK_" + parent
         fk = "FK_" + child
         await driver.execute(
-            f"CREATE TABLE {schema}.{parent} (id NUMBER, CONSTRAINT {pk} PRIMARY KEY (id))", []
+            f"CREATE TABLE {schema}.{parent} (id NUMBER, CONSTRAINT {pk} PRIMARY KEY (id))",
+            [],
         )
         await driver.execute(
             f"CREATE TABLE {schema}.{child} ("
@@ -262,7 +281,10 @@ class TestExploreList:
         assert by_name[fk].type == "foreign_key"
 
     async def test_unknown_path_returns_empty(self, driver: OracleDriver) -> None:
-        assert await driver.explore_list(["NO_SUCH_SCHEMA", "NO_SUCH_TABLE", "extra"]) == []
+        assert (
+            await driver.explore_list(["NO_SUCH_SCHEMA", "NO_SUCH_TABLE", "extra"])
+            == []
+        )
 
 
 class TestExploreDescribe:
@@ -287,7 +309,8 @@ class TestExploreDescribe:
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
         await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER PRIMARY KEY, val VARCHAR2(50))", []
+            f"CREATE TABLE {schema}.{table} (id NUMBER PRIMARY KEY, val VARCHAR2(50))",
+            [],
         )
         desc = await driver.explore_describe([schema, table])
         assert desc is not None

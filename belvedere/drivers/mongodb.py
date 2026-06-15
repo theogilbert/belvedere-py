@@ -3,7 +3,13 @@
 import json
 from typing import TYPE_CHECKING, Any
 
-from ..protocol import DMLResult, DriverParam, ExploreItem, SelectResult, TableDescription
+from ..protocol import (
+    DMLResult,
+    DriverParam,
+    ExploreItem,
+    SelectResult,
+    TableDescription,
+)
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError
 
@@ -17,6 +23,7 @@ def _serialize(value: Any) -> Any:
     """Recursively convert BSON types to plain Python values."""
     try:
         from bson import Decimal128, ObjectId
+
         if isinstance(value, ObjectId):
             return str(value)
         if isinstance(value, Decimal128):
@@ -50,8 +57,15 @@ class MongoDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="uri", type="string", label="Connection URI", default="mongodb://localhost:27017"),
-        DriverParam(key="database", type="string", label="Default database", required=True),
+        DriverParam(
+            key="uri",
+            type="string",
+            label="Connection URI",
+            default="mongodb://localhost:27017",
+        ),
+        DriverParam(
+            key="database", type="string", label="Default database", required=True
+        ),
         DriverParam(key="username", type="string", label="Username"),
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]
@@ -115,7 +129,9 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
 `explore.describe` always returns `None` (no fixed schema).
 """
 
-    def __init__(self, params: dict[str, Any], client: "pymongo.AsyncMongoClient") -> None:
+    def __init__(
+        self, params: dict[str, Any], client: "pymongo.AsyncMongoClient"
+    ) -> None:
         super().__init__(params)
         self._client = client
 
@@ -131,19 +147,24 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             kwargs["username"] = params["username"]
         if params.get("password"):
             kwargs["password"] = params["password"]
-        client = AsyncMongoClient(params.get("uri", "mongodb://localhost:27017"), **kwargs)
+        client = AsyncMongoClient(
+            params.get("uri", "mongodb://localhost:27017"), **kwargs
+        )
         await client.admin.command("ping")
         return cls(params, client)
 
     async def reconnect(self) -> None:
         await self._client.close()
         from pymongo import AsyncMongoClient
+
         kwargs: dict[str, Any] = {}
         if self.params.get("username"):
             kwargs["username"] = self.params["username"]
         if self.params.get("password"):
             kwargs["password"] = self.params["password"]
-        self._client = AsyncMongoClient(self.params.get("uri", "mongodb://localhost:27017"), **kwargs)
+        self._client = AsyncMongoClient(
+            self.params.get("uri", "mongodb://localhost:27017"), **kwargs
+        )
         await self._client.admin.command("ping")
 
     async def disconnect(self) -> None:
@@ -281,7 +302,9 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         return None
 
     async def _sample_fields(self, db_name: str, collection_name: str) -> list[str]:
-        cursor = await self._client[db_name][collection_name].aggregate([{"$sample": {"size": 10}}])
+        cursor = await self._client[db_name][collection_name].aggregate(
+            [{"$sample": {"size": 10}}]
+        )
         docs = await cursor.to_list()
         seen: dict[str, None] = {}
         for doc in docs:
@@ -296,6 +319,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
 def _maybe_raise_connection_lost(exc: Exception) -> None:
     try:
         from pymongo.errors import AutoReconnect, ConnectionFailure, NetworkTimeout
+
         if isinstance(exc, (AutoReconnect, ConnectionFailure, NetworkTimeout)):
             raise ConnectionLostError(str(exc)) from exc
     except ImportError:

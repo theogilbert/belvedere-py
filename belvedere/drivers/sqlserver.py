@@ -107,6 +107,7 @@ column metadata (name, type, nullability, default).
     @staticmethod
     async def _open(params: dict[str, Any]) -> "mssql_python.Connection":
         import mssql_python
+
         intent = params.get("applicationIntent", "")
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -139,6 +140,7 @@ column metadata (name, type, nullability, default).
             return await self._run(self._execute_sync, sql, binds)
         except Exception as exc:
             import mssql_python
+
             if isinstance(
                 exc, (mssql_python.OperationalError, mssql_python.InterfaceError)
             ):
@@ -150,7 +152,7 @@ column metadata (name, type, nullability, default).
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
-            rows: list[list[Any]] = [list(r) for r in cur.fetchall()]
+            rows: list[list[Any]] = [list(r) for r in cur.fetchall()]  # ty: ignore[missing-argument]
             return SelectResult(columns=columns, rows=rows, rows_total=len(rows))
         return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
@@ -180,7 +182,7 @@ column metadata (name, type, nullability, default).
                 )
                 return [
                     ExploreItem(name=r[0], type="schema", expandable=True)
-                    for r in cur.fetchall()
+                    for r in cur.fetchall()  # ty: ignore[missing-argument]
                 ]
 
             case [schema]:
@@ -191,7 +193,7 @@ column metadata (name, type, nullability, default).
                 )
                 return [
                     ExploreItem(name=r[0], type=r[1].lower(), expandable=True)
-                    for r in cur.fetchall()
+                    for r in cur.fetchall()  # ty: ignore[missing-argument]
                 ]
 
             case [_schema, _table]:
@@ -210,7 +212,7 @@ column metadata (name, type, nullability, default).
                 )
                 return [
                     ExploreItem(name=r[0], type=r[1], expandable=False)
-                    for r in cur.fetchall()
+                    for r in cur.fetchall()  # ty: ignore[missing-argument]
                 ]
 
             case [schema, table, "indices"]:
@@ -225,7 +227,7 @@ column metadata (name, type, nullability, default).
                 )
                 return [
                     ExploreItem(name=r[0], type=r[1].lower(), expandable=False)
-                    for r in cur.fetchall()
+                    for r in cur.fetchall()  # ty: ignore[missing-argument]
                 ]
 
             case [schema, table, "constraints"]:
@@ -242,7 +244,7 @@ column metadata (name, type, nullability, default).
                         type=r[1].lower().replace(" ", "_"),
                         expandable=False,
                     )
-                    for r in cur.fetchall()
+                    for r in cur.fetchall()  # ty: ignore[missing-argument]
                 ]
 
             case _:
@@ -278,7 +280,7 @@ column metadata (name, type, nullability, default).
                         ColumnInfo(
                             name=r[0], type=r[1], nullable=r[2] == "YES", default=r[3]
                         )
-                        for r in cur.fetchall()
+                        for r in cur.fetchall()  # ty: ignore[missing-argument]
                     ],
                 )
             case _:

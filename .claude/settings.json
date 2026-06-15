@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); echo \"$f\" | grep -q '\\.py$' || exit 0; .venv/bin/ruff check --fix \"$f\" 2>/dev/null; .venv/bin/ruff format \"$f\" 2>/dev/null; .venv/bin/ty check",
+            "statusMessage": "ruff + ty"
+          }
+        ]
+      }
+    ]
+  }
+}

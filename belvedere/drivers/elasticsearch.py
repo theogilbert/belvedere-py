@@ -103,7 +103,9 @@ System indices (names starting with `.`) are hidden in the explore tree.
 from the index mapping (name, type).
 """
 
-    def __init__(self, params: dict[str, Any], client: "elasticsearch.Elasticsearch") -> None:
+    def __init__(
+        self, params: dict[str, Any], client: "elasticsearch.Elasticsearch"
+    ) -> None:
         super().__init__(params)
         self._client = client
 
@@ -112,8 +114,12 @@ from the index mapping (name, type).
         try:
             import elasticsearch  # noqa: F401
         except ImportError:
-            raise RuntimeError("elasticsearch not installed — run: pip install elasticsearch")
-        client = await asyncio.get_running_loop().run_in_executor(None, lambda: cls._open(params))
+            raise RuntimeError(
+                "elasticsearch not installed — run: pip install elasticsearch"
+            )
+        client = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: cls._open(params)
+        )
         return cls(params, client)
 
     @staticmethod
@@ -137,11 +143,12 @@ from the index mapping (name, type).
     async def disconnect(self) -> None:
         await asyncio.get_running_loop().run_in_executor(None, self._client.close)
 
-    async def execute(self, query: str, binds: list[Any]) -> SelectResult | DMLResult:
+    async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
         try:
-            return await self._run(self._execute_sync, query)
+            return await self._run(self._execute_sync, sql)
         except Exception as exc:
             import elasticsearch
+
             if isinstance(exc, elasticsearch.ConnectionError):
                 raise ConnectionLostError(str(exc)) from exc
             raise
@@ -162,7 +169,9 @@ from the index mapping (name, type).
                 "Example: orders | status:open AND total:>50"
             )
         index, _, lucene = query.partition(" | ")
-        resp = self._client.search(index=index.strip(), q=lucene.strip(), size=_DEFAULT_SEARCH_SIZE)
+        resp = self._client.search(
+            index=index.strip(), q=lucene.strip(), size=_DEFAULT_SEARCH_SIZE
+        )
         return self._hits_to_result(resp)
 
     def _execute_dsl_sync(self, query: str) -> SelectResult:
@@ -186,12 +195,14 @@ from the index mapping (name, type).
             if "_search" in path:
                 body.setdefault("size", _DEFAULT_SEARCH_SIZE)
             headers["Content-Type"] = "application/json"
-        raw = self._client.transport.perform_request(method, path, body=body, headers=headers)
+        raw = self._client.transport.perform_request(
+            method, path, body=body, headers=headers
+        )
         resp = raw.body if hasattr(raw, "body") else raw
         if isinstance(resp, dict) and "hits" in resp:
             return self._hits_to_result(resp)
         if isinstance(resp, dict):
-            return flatten_docs(list(resp.keys()), [[resp[k] for k in resp]])
+            return flatten_docs(list(resp.keys()), [[resp[k] for k in resp]])  # ty: ignore[invalid-argument-type]
         return SelectResult(columns=["response"], rows=[[str(resp)]], rows_total=1)
 
     def _hits_to_result(self, resp: Any) -> SelectResult:
@@ -213,9 +224,9 @@ from the index mapping (name, type).
             case []:
                 resp = self._client.cat.indices(format="json", h="index", s="index")
                 return [
-                    ExploreItem(name=entry["index"], type="index", expandable=True)
+                    ExploreItem(name=entry["index"], type="index", expandable=True)  # ty: ignore[invalid-argument-type]
                     for entry in resp
-                    if not entry["index"].startswith(".")
+                    if not entry["index"].startswith(".")  # ty: ignore[invalid-argument-type]
                 ]
             case [_index]:
                 return [
@@ -226,7 +237,9 @@ from the index mapping (name, type).
                 resp = self._client.indices.get_mapping(index=index)
                 props = resp[index]["mappings"].get("properties", {})
                 return [
-                    ExploreItem(name=field, type=info.get("type", "object"), expandable=False)
+                    ExploreItem(
+                        name=field, type=info.get("type", "object"), expandable=False
+                    )
                     for field, info in props.items()
                 ]
             case [index, "aliases"]:

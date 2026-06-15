@@ -84,15 +84,13 @@ class Dispatcher:
 
         conn_id = params.get("connection_id")
         conn = self._connections.get(conn_id) if conn_id else None
-        cache = self._caches[conn_id] if conn else None
 
         if conn_id and conn is None and method in _CONNECTION_REQUIRED:
             raise KeyError(f"Unknown connection_id: {conn_id!r}")
 
-        if conn_id:
-            self._idle_timer.reset(conn_id)
-
         if conn:
+            cache = self._caches[conn.id]
+            self._idle_timer.reset(conn.id)
             async with conn:
                 return await handler(conn, cache, params, send_progress)
         return await handler(None, None, params, send_progress)
@@ -164,7 +162,11 @@ class Dispatcher:
             result = await conn.driver.execute(query, binds)
         if isinstance(result, DMLResult):
             return {"rows_affected": result.rows_affected}
-        return {"columns": result.columns, "rows": result.rows, "rows_total": result.rows_total}
+        return {
+            "columns": result.columns,
+            "rows": result.rows,
+            "rows_total": result.rows_total,
+        }
 
     async def _handle_explore_list(
         self,
@@ -205,7 +207,7 @@ class Dispatcher:
         cache.set_describe(path, desc)
         return {"details": desc}
 
-    def _route(self, method: str) -> _Handler:
+    def _route(self, method: str) -> Callable[..., Awaitable[dict[str, Any]]]:
         match method:
             case Method.CAPABILITIES:
                 return self._handle_capabilities

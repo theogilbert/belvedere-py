@@ -86,7 +86,7 @@ class TestHandle:
             params={"connection_id": conn_id, "query": "SELECT 42 AS n"},
         )
         assert r2["error"] is None
-        assert r2["result"] == {"columns": ["n"], "rows": [[42]]}
+        assert r2["result"] == {"columns": ["n"], "rows": [[42]], "rows_total": 1}
 
     async def test_should_return_error_when_execute_is_called_after_disconnect(
         self, server: Server, out: io.BytesIO
@@ -145,7 +145,7 @@ class TestHandle:
         mock_driver = AsyncMock()
         mock_driver.execute.side_effect = [
             ConnectionLostError(),
-            SelectResult(columns=["n"], rows=[[1]]),
+            SelectResult(columns=["n"], rows=[[1]], rows_total=1),
         ]
         driver_cls = AsyncMock()
         driver_cls.create = AsyncMock(return_value=mock_driver)
@@ -163,4 +163,4 @@ class TestHandle:
         )
         msgs = all_responses(out)
         assert any("progress" in m for m in msgs)
-        assert msgs[-1]["result"] == {"columns": ["n"], "rows": [[1]]}
+        assert msgs[-1]["result"] == {"columns": ["n"], "rows": [[1]], "rows_total": 1}

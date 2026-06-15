@@ -45,7 +45,9 @@ class TestConnection:
 
 
 class TestCacheStore:
-    def test_open_creates_cache_accessible_by_conn_id(self, tmp_path: pathlib.Path) -> None:
+    def test_open_creates_cache_accessible_by_conn_id(
+        self, tmp_path: pathlib.Path
+    ) -> None:
         store = CacheStore(tmp_path)
         store.open("1", {"driver": "sqlite"})
         assert store["1"] is not None
@@ -169,15 +171,23 @@ class TestCapabilities:
 
 class TestDriverHelp:
     async def test_should_return_markdown_content(self, dispatcher: Dispatcher) -> None:
-        result = await dispatcher.dispatch("driver.help", {"driver": "sqlite"}, noop_progress)
+        result = await dispatcher.dispatch(
+            "driver.help", {"driver": "sqlite"}, noop_progress
+        )
         assert "content" in result
         assert "SQLite" in result["content"]
 
-    async def test_should_raise_for_unknown_driver(self, dispatcher: Dispatcher) -> None:
+    async def test_should_raise_for_unknown_driver(
+        self, dispatcher: Dispatcher
+    ) -> None:
         with pytest.raises(ValueError, match="Unknown driver"):
-            await dispatcher.dispatch("driver.help", {"driver": "no_such"}, noop_progress)
+            await dispatcher.dispatch(
+                "driver.help", {"driver": "no_such"}, noop_progress
+            )
 
-    async def test_should_raise_when_driver_param_missing(self, dispatcher: Dispatcher) -> None:
+    async def test_should_raise_when_driver_param_missing(
+        self, dispatcher: Dispatcher
+    ) -> None:
         with pytest.raises(ValueError, match="Missing required param"):
             await dispatcher.dispatch("driver.help", {}, noop_progress)
 
@@ -195,7 +205,9 @@ class TestExecute:
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
-        driver.execute.return_value = SelectResult(columns=["id"], rows=[[1], [2]], rows_total=2)
+        driver.execute.return_value = SelectResult(
+            columns=["id"], rows=[[1], [2]], rows_total=2
+        )
         result = await disp.dispatch(
             "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
         )
@@ -207,7 +219,9 @@ class TestExecute:
         disp, conn_id, driver = connected
         driver.execute.return_value = DMLResult(rows_affected=3)
         result = await disp.dispatch(
-            "execute", {"connection_id": conn_id, "query": "DELETE FROM t"}, noop_progress
+            "execute",
+            {"connection_id": conn_id, "query": "DELETE FROM t"},
+            noop_progress,
         )
         assert result == {"rows_affected": 3}
 
@@ -453,12 +467,16 @@ class TestConcurrency:
 
         t1 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
+                "execute",
+                {"connection_id": conn_id, "query": "SELECT 1"},
+                noop_progress,
             )
         )
         t2 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_id, "query": "SELECT 2"}, noop_progress
+                "execute",
+                {"connection_id": conn_id, "query": "SELECT 2"},
+                noop_progress,
             )
         )
         await asyncio.sleep(0)  # let both tasks reach the semaphore
@@ -523,7 +541,9 @@ class TestIdleTimeout:
         mock_driver.disconnect.assert_awaited_once()
         with pytest.raises(KeyError):
             await dispatcher.dispatch(
-                "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
+                "execute",
+                {"connection_id": conn_id, "query": "SELECT 1"},
+                noop_progress,
             )
 
     async def test_timer_resets_on_request(

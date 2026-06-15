@@ -3,7 +3,6 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from belvedere.drivers.oracle import OracleDriver, _PRE12_SYSTEM_SCHEMAS_SQL
 from belvedere.protocol import ExploreItem

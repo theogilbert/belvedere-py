@@ -85,4 +85,6 @@ def parse_cli_args() -> CliArgs:
     )
     args = parser.parse_args()
 
-    return CliArgs(max_concurrency=args.max_concurrency, log=args.log, verbose=args.verbose)
+    return CliArgs(
+        max_concurrency=args.max_concurrency, log=args.log, verbose=args.verbose
+    )

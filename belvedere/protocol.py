@@ -153,13 +153,14 @@ class Driver:
 
 
 class Method(StrEnum):
-    CAPABILITIES    = "capabilities"
-    DRIVER_HELP     = "driver.help"
-    CONNECT         = "connect"
-    DISCONNECT      = "disconnect"
-    EXECUTE         = "execute"
-    EXPLORE_LIST    = "explore.list"
+    CAPABILITIES = "capabilities"
+    DRIVER_HELP = "driver.help"
+    CONNECT = "connect"
+    DISCONNECT = "disconnect"
+    EXECUTE = "execute"
+    EXPLORE_LIST = "explore.list"
     EXPLORE_DESCRIBE = "explore.describe"
+
 
 Response = Result | Progress | ExploreItem
 

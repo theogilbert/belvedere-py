@@ -1,6 +1,10 @@
 version = 1
 revision = 3
 requires-python = ">=3.14"
+resolution-markers = [
+    "python_full_version >= '3.15'",
+    "python_full_version < '3.15'",
+]
 
 [[package]]
 name = "azure-core"
@@ -29,6 +33,54 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c5/0e/3a63efb48aa4a5ae2cfca61ee152fbcb668092134d3eb8bfda472dd5c617/azure_identity-1.25.3.tar.gz", hash = "sha256:ab23c0d63015f50b630ef6c6cf395e7262f439ce06e5d07a64e874c724f8d9e6", size = 286304, upload-time = "2026-03-13T01:12:20.892Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/49/9a/417b3a533e01953a7c618884df2cb05a71e7b68bdbce4fbdb62349d2a2e8/azure_identity-1.25.3-py3-none-any.whl", hash = "sha256:f4d0b956a8146f30333e071374171f3cfa7bdb8073adb8c3814b65567aa7447c", size = 192138, upload-time = "2026-03-13T01:12:22.951Z" },
+]
+
+[[package]]
+name = "belvedere-py"
+version = "0.1.0"
+source = { editable = "." }
+
+[package.optional-dependencies]
+elasticsearch = [
+    { name = "elasticsearch" },
+]
+mongodb = [
+    { name = "pymongo" },
+]
+mssql = [
+    { name = "mssql-python" },
+]
+neo4j = [
+    { name = "neo4j" },
+]
+oracle = [
+    { name = "oracledb" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "elasticsearch", marker = "extra == 'elasticsearch'", specifier = ">=8.0,<9.0" },
+    { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.8.0" },
+    { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.0" },
+    { name = "oracledb", marker = "extra == 'oracle'", specifier = ">=2.0" },
+    { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.0" },
+]
+provides-extras = ["mssql", "neo4j", "oracle", "mongodb", "elasticsearch"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "ruff", specifier = ">=0.15.16" },
+    { name = "ty", specifier = ">=0.0.44" },
 ]
 
 [[package]]
@@ -174,54 +226,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/75/a2e55f99c16fcac7b5d6c1eb19ad8e00799854d6be5ca845f9259eae1681/cryptography-48.0.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a5da777e32ffed6f85a7b2b3f7c5cbc88c146bfcd0a1d7baf5fcc6c52ee35dd4", size = 4960575, upload-time = "2026-05-04T22:59:09.851Z" },
     { url = "https://files.pythonhosted.org/packages/b8/23/6e6f32143ab5d8b36ca848a502c4bcd477ae75b9e1677e3530d669062578/cryptography-48.0.0-cp39-abi3-win32.whl", hash = "sha256:77a2ccbbe917f6710e05ba9adaa25fb5075620bf3ea6fb751997875aff4ae4bd", size = 3279117, upload-time = "2026-05-04T22:59:12.019Z" },
     { url = "https://files.pythonhosted.org/packages/9d/9a/0fea98a70cf1749d41d738836f6349d97945f7c89433a259a6c2642eefeb/cryptography-48.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:16cd65b9330583e4619939b3a3843eec1e6e789744bb01e7c7e2e62e33c239c8", size = 3792100, upload-time = "2026-05-04T22:59:14.884Z" },
-]
-
-[[package]]
-name = "belvedere-py"
-version = "0.1.0"
-source = { editable = "." }
-
-[package.optional-dependencies]
-elasticsearch = [
-    { name = "elasticsearch" },
-]
-mongodb = [
-    { name = "pymongo" },
-]
-mssql = [
-    { name = "mssql-python" },
-]
-neo4j = [
-    { name = "neo4j" },
-]
-oracle = [
-    { name = "oracledb" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-    { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "elasticsearch", marker = "extra == 'elasticsearch'", specifier = ">=8.0,<9.0" },
-    { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.8.0" },
-    { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.0" },
-    { name = "oracledb", marker = "extra == 'oracle'", specifier = ">=2.0" },
-    { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.0" },
-]
-provides-extras = ["mssql", "neo4j", "oracle", "mongodb", "elasticsearch"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "ruff", specifier = ">=0.15.16" },
-    { name = "ty", specifier = ">=0.0.44" },
 ]
 
 [[package]]

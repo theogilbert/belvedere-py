@@ -9,7 +9,9 @@ def test_empty_rows_preserves_columns() -> None:
 
 def test_scalar_values_stringified() -> None:
     result = flatten_docs(["x", "y"], [[1, "hello"]])
-    assert result == SelectResult(columns=["x", "y"], rows=[["1", "hello"]], rows_total=1)
+    assert result == SelectResult(
+        columns=["x", "y"], rows=[["1", "hello"]], rows_total=1
+    )
 
 
 def test_top_level_dict_flattened() -> None:
@@ -74,9 +76,16 @@ def test_list_with_multiple_items() -> None:
 
 
 def test_list_of_dicts_flattened_with_index() -> None:
-    rows = [[{"items": [{"productId": "abc", "qty": 2}, {"productId": "def", "qty": 1}]}]]
+    rows = [
+        [{"items": [{"productId": "abc", "qty": 2}, {"productId": "def", "qty": 1}]}]
+    ]
     result = flatten_docs(["doc"], rows)
-    assert result.columns == ["doc.items[0].productId", "doc.items[0].qty", "doc.items[1].productId", "doc.items[1].qty"]
+    assert result.columns == [
+        "doc.items[0].productId",
+        "doc.items[0].qty",
+        "doc.items[1].productId",
+        "doc.items[1].qty",
+    ]
     assert result.rows == [["abc", "2", "def", "1"]]
 
 

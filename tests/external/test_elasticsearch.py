@@ -10,13 +10,12 @@ server is unreachable.
 """
 
 import os
-import time
 from collections.abc import AsyncGenerator
 
 import pytest
 
 from belvedere.drivers.elasticsearch import ElasticsearchDriver
-from belvedere.protocol import ExploreItem, SelectResult, TableDescription
+from belvedere.protocol import SelectResult, TableDescription
 
 pytestmark = pytest.mark.external
 
@@ -85,29 +84,38 @@ class TestExecute:
         assert "name" in result.columns
         assert any("Alice" in row for row in result.rows)
 
-    async def test_returns_empty_for_no_matches(self, driver: ElasticsearchDriver) -> None:
+    async def test_returns_empty_for_no_matches(
+        self, driver: ElasticsearchDriver
+    ) -> None:
         result = await driver.execute(f"{_INDEX} | status:nonexistent", [])
         assert isinstance(result, SelectResult)
         assert result.columns == []
         assert result.rows == []
 
     async def test_filters_by_field(self, driver: ElasticsearchDriver) -> None:
-        _index_docs(driver, [
-            {"name": "Alice", "status": "active"},
-            {"name": "Bob", "status": "inactive"},
-        ])
+        _index_docs(
+            driver,
+            [
+                {"name": "Alice", "status": "active"},
+                {"name": "Bob", "status": "inactive"},
+            ],
+        )
         result = await driver.execute(f"{_INDEX} | status:active", [])
         assert isinstance(result, SelectResult)
         names = [row[result.columns.index("name")] for row in result.rows]
         assert names == ["Alice"]
 
-    async def test_raises_for_missing_separator(self, driver: ElasticsearchDriver) -> None:
+    async def test_raises_for_missing_separator(
+        self, driver: ElasticsearchDriver
+    ) -> None:
         with pytest.raises(ValueError, match="index.*query"):
             await driver.execute("no separator here", [])
 
 
 class TestExecuteDSL:
-    async def test_match_all_returns_rows(self, dsl_driver: ElasticsearchDriver) -> None:
+    async def test_match_all_returns_rows(
+        self, dsl_driver: ElasticsearchDriver
+    ) -> None:
         _index_docs(dsl_driver, [{"name": "Alice", "status": "active"}])
         result = await dsl_driver.execute(
             f"GET /{_INDEX}/_search\n" + '{"query": {"match_all": {}}}', []
@@ -116,22 +124,30 @@ class TestExecuteDSL:
         assert "name" in result.columns
 
     async def test_filters_by_field(self, dsl_driver: ElasticsearchDriver) -> None:
-        _index_docs(dsl_driver, [
-            {"name": "Alice", "status": "active"},
-            {"name": "Bob", "status": "inactive"},
-        ])
+        _index_docs(
+            dsl_driver,
+            [
+                {"name": "Alice", "status": "active"},
+                {"name": "Bob", "status": "inactive"},
+            ],
+        )
         result = await dsl_driver.execute(
             f"GET /{_INDEX}/_search\n" + '{"query": {"term": {"status": "active"}}}', []
         )
+        assert isinstance(result, SelectResult)
         names = [row[result.columns.index("name")] for row in result.rows]
         assert names == ["Alice"]
 
-    async def test_non_search_endpoint_returns_flat_row(self, dsl_driver: ElasticsearchDriver) -> None:
+    async def test_non_search_endpoint_returns_flat_row(
+        self, dsl_driver: ElasticsearchDriver
+    ) -> None:
         result = await dsl_driver.execute(f"GET /{_INDEX}/_count", [])
         assert isinstance(result, SelectResult)
         assert "count" in result.columns
 
-    async def test_raises_for_missing_method_path(self, dsl_driver: ElasticsearchDriver) -> None:
+    async def test_raises_for_missing_method_path(
+        self, dsl_driver: ElasticsearchDriver
+    ) -> None:
         with pytest.raises(ValueError, match="Kibana Dev Tools"):
             await dsl_driver.execute("just a query with no method", [])
 
@@ -159,13 +175,17 @@ class TestExploreList:
         assert "status" in names
         assert "total" in names
 
-    async def test_unknown_path_returns_empty(self, driver: ElasticsearchDriver) -> None:
+    async def test_unknown_path_returns_empty(
+        self, driver: ElasticsearchDriver
+    ) -> None:
         items = await driver.explore_list([_INDEX, "mappings", "extra"])
         assert items == []
 
 
 class TestExploreDescribe:
-    async def test_returns_table_description_for_index(self, driver: ElasticsearchDriver) -> None:
+    async def test_returns_table_description_for_index(
+        self, driver: ElasticsearchDriver
+    ) -> None:
         result = await driver.explore_describe([_INDEX])
         assert isinstance(result, TableDescription)
         assert result.table == _INDEX
@@ -174,6 +194,8 @@ class TestExploreDescribe:
         assert "name" in field_names
         assert "status" in field_names
 
-    async def test_returns_none_for_unknown_path(self, driver: ElasticsearchDriver) -> None:
+    async def test_returns_none_for_unknown_path(
+        self, driver: ElasticsearchDriver
+    ) -> None:
         result = await driver.explore_describe([_INDEX, "mappings"])
         assert result is None

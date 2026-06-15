@@ -41,7 +41,9 @@ class TestDiskCache:
     ) -> None:
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
-        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch(
+            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+        )
         assert any(tmp_path.iterdir())
 
     async def test_should_load_cache_from_disk_on_reconnect(
@@ -50,13 +52,17 @@ class TestDiskCache:
         # first session: populate and persist
         disp1 = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp1, mock_driver, PARAMS)
-        await disp1.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp1.dispatch(
+            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+        )
         await disp1.dispatch("disconnect", {"connection_id": conn_id}, noop_progress)
 
         # second session: cache loaded from disk, driver not called again
         disp2 = Dispatcher(cache_dir=tmp_path)
         conn_id2 = await connect(disp2, mock_driver, PARAMS)
-        await disp2.dispatch("explore.list", {"connection_id": conn_id2, "path": []}, noop_progress)
+        await disp2.dispatch(
+            "explore.list", {"connection_id": conn_id2, "path": []}, noop_progress
+        )
 
         mock_driver.explore_list.assert_awaited_once()
 
@@ -65,13 +71,17 @@ class TestDiskCache:
     ) -> None:
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
-        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch(
+            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+        )
 
         cache_path = cache_file(PARAMS, tmp_path)
         assert cache_path.exists()
 
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": [], "reset_cache": True}, noop_progress
+            "explore.list",
+            {"connection_id": conn_id, "path": [], "reset_cache": True},
+            noop_progress,
         )
 
         assert cache_path.exists()
@@ -85,12 +95,16 @@ class TestDiskCache:
         # first session: populate cache
         disp1 = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp1, mock_driver, PARAMS)
-        await disp1.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp1.dispatch(
+            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+        )
 
         # reset and return new data
         mock_driver.explore_list.return_value = [fresh_item]
         await disp1.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": [], "reset_cache": True}, noop_progress
+            "explore.list",
+            {"connection_id": conn_id, "path": [], "reset_cache": True},
+            noop_progress,
         )
         await disp1.dispatch("disconnect", {"connection_id": conn_id}, noop_progress)
 
@@ -102,7 +116,9 @@ class TestDiskCache:
         )
 
         assert result["items"] == [fresh_item]
-        assert mock_driver.explore_list.await_count == 2  # initial + reset; second session hits cache
+        assert (
+            mock_driver.explore_list.await_count == 2
+        )  # initial + reset; second session hits cache
 
     async def test_should_survive_corruptcache_file(
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
@@ -110,7 +126,9 @@ class TestDiskCache:
         cache_file(PARAMS, tmp_path).write_text("not valid json{{{")
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
-        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch(
+            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+        )
         mock_driver.explore_list.assert_awaited_once()
 
     async def test_should_not_write_password_tocache_file(
@@ -119,7 +137,9 @@ class TestDiskCache:
         params = {**PARAMS, "password": "s3cr3t"}
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, params)
-        await disp.dispatch("explore.list", {"connection_id": conn_id, "path": []}, noop_progress)
+        await disp.dispatch(
+            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+        )
 
         cache_path = cache_file(params, tmp_path)
         assert "s3cr3t" not in cache_path.read_text()
@@ -128,8 +148,12 @@ class TestDiskCache:
         self, tmp_path: pathlib.Path
     ) -> None:
         driver_a, driver_b = AsyncMock(), AsyncMock()
-        driver_a.explore_list.return_value = [ExploreItem(name="a", type="table", expandable=True)]
-        driver_b.explore_list.return_value = [ExploreItem(name="b", type="table", expandable=True)]
+        driver_a.explore_list.return_value = [
+            ExploreItem(name="a", type="table", expandable=True)
+        ]
+        driver_b.explore_list.return_value = [
+            ExploreItem(name="b", type="table", expandable=True)
+        ]
 
         params_a = {"driver": "sqlite", "database": "a.db"}
         params_b = {"driver": "sqlite", "database": "b.db"}
@@ -138,8 +162,12 @@ class TestDiskCache:
         conn_a = await connect(disp, driver_a, params_a)
         conn_b = await connect(disp, driver_b, params_b)
 
-        await disp.dispatch("explore.list", {"connection_id": conn_a, "path": []}, noop_progress)
-        await disp.dispatch("explore.list", {"connection_id": conn_b, "path": []}, noop_progress)
+        await disp.dispatch(
+            "explore.list", {"connection_id": conn_a, "path": []}, noop_progress
+        )
+        await disp.dispatch(
+            "explore.list", {"connection_id": conn_b, "path": []}, noop_progress
+        )
 
         assert cache_file(params_a, tmp_path) != cache_file(params_b, tmp_path)
         assert len(list(tmp_path.iterdir())) == 2

@@ -1,8 +1,6 @@
 """Oracle driver — requires: pip install oracledb"""
 
-import asyncio
-from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from ..protocol import (
     ColumnInfo,
@@ -13,8 +11,6 @@ from ..protocol import (
     DriverParam,
 )
 from .base import BaseDriver, ConnectionLostError
-
-T = TypeVar("T")
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
 
@@ -37,7 +33,7 @@ class OracleDriver(BaseDriver):
 
     Args:
         params: Connect request fields (``host``, ``port``, ``service_name``, ``user``, ``password``).
-        conn: Open oracledb connection. Use :meth:`create` instead of constructing directly.
+        conn: Open oracledb async connection. Use :meth:`create` instead of constructing directly.
         has_oracle_maintained: True when connected to Oracle 12c+.
     """
 
@@ -100,30 +96,25 @@ column metadata (name, type, nullability, primary key flag, default).
     @staticmethod
     async def _open(params: dict[str, Any]) -> tuple[Any, bool]:
         import oracledb
-        loop = asyncio.get_running_loop()
-
-        def connect() -> tuple[Any, bool]:
-            conn = oracledb.connect(
-                user=params.get("user", ""),
-                password=params.get("password", ""),
-                dsn=(
-                    f"{params.get('host', 'localhost')}"
-                    f":{params.get('port', 1521)}"
-                    f"/{params.get('service_name', 'FREEPDB1')}"
-                ),
-            )
-            conn.autocommit = True
-            major_version = int(conn.version.split(".")[0])
-            return conn, major_version >= 12
-
-        return await loop.run_in_executor(None, connect)
+        conn = await oracledb.connect_async(
+            user=params.get("user", ""),
+            password=params.get("password", ""),
+            dsn=(
+                f"{params.get('host', 'localhost')}"
+                f":{params.get('port', 1521)}"
+                f"/{params.get('service_name', 'FREEPDB1')}"
+            ),
+        )
+        conn.autocommit = True
+        major_version = int(conn.version.split(".")[0])
+        return conn, major_version >= 12
 
     async def reconnect(self) -> None:
-        await self._run(self._conn.close)
+        await self._conn.close()
         self._conn, self._has_oracle_maintained = await self._open(self.params)
 
     async def disconnect(self) -> None:
-        await self._run(self._conn.close)
+        await self._conn.close()
 
     async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
         """Run a SQL statement. Positional bind values map to ``:1``, ``:2``, … in the query.
@@ -139,7 +130,13 @@ column metadata (name, type, nullability, primary key flag, default).
             ConnectionLostError: If the connection was lost during execution.
         """
         try:
-            return await self._run(self._execute_sync, sql, binds)
+            cur = self._conn.cursor()
+            await cur.execute(sql, binds)
+            if cur.description is not None:
+                columns = [d[0] for d in cur.description]
+                rows: list[list[Any]] = [list(r) for r in await cur.fetchall()]
+                return SelectResult(columns=columns, rows=rows)
+            return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
             try:
                 import oracledb
@@ -149,40 +146,28 @@ column metadata (name, type, nullability, primary key flag, default).
                 pass
             raise
 
-    def _execute_sync(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
-        cur = self._conn.cursor()
-        cur.execute(sql, binds)
-        if cur.description is not None:
-            columns = [d[0] for d in cur.description]
-            rows: list[list[Any]] = [list(r) for r in cur.fetchall()]
-            return SelectResult(columns=columns, rows=rows)
-        return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
-
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
-        return await self._run(self._explore_list_sync, path)
-
-    def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
         cur = self._conn.cursor()
         match path:
             case []:
                 if self._has_oracle_maintained:
-                    cur.execute(
+                    await cur.execute(
                         "SELECT USERNAME FROM ALL_USERS"
                         " WHERE ORACLE_MAINTAINED = 'N' ORDER BY USERNAME"
                     )
                 else:
-                    cur.execute(
+                    await cur.execute(
                         "SELECT USERNAME FROM ALL_USERS"
                         f" WHERE USERNAME NOT IN ({_PRE12_SYSTEM_SCHEMAS_SQL})"
                         " ORDER BY USERNAME"
                     )
                 return [
                     ExploreItem(name=r[0], type="schema", expandable=True)
-                    for r in cur.fetchall()
+                    for r in await cur.fetchall()
                 ]
 
             case [schema]:
-                cur.execute(
+                await cur.execute(
                     "SELECT TABLE_NAME AS N, 'table' AS T FROM ALL_TABLES WHERE OWNER = :1"
                     " UNION ALL"
                     " SELECT VIEW_NAME, 'view' FROM ALL_VIEWS WHERE OWNER = :2"
@@ -191,7 +176,7 @@ column metadata (name, type, nullability, primary key flag, default).
                 )
                 return [
                     ExploreItem(name=r[0], type=r[1], expandable=True)
-                    for r in cur.fetchall()
+                    for r in await cur.fetchall()
                 ]
 
             case [_schema, _table]:
@@ -202,29 +187,29 @@ column metadata (name, type, nullability, primary key flag, default).
                 ]
 
             case [schema, table, "columns"]:
-                cur.execute(
+                await cur.execute(
                     "SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS"
                     " WHERE OWNER = :1 AND TABLE_NAME = :2 ORDER BY COLUMN_ID",
                     [schema.upper(), table.upper()],
                 )
                 return [
                     ExploreItem(name=r[0], type=r[1], expandable=False)
-                    for r in cur.fetchall()
+                    for r in await cur.fetchall()
                 ]
 
             case [schema, table, "indexes"]:
-                cur.execute(
+                await cur.execute(
                     "SELECT INDEX_NAME, LOWER(INDEX_TYPE) FROM ALL_INDEXES"
                     " WHERE TABLE_OWNER = :1 AND TABLE_NAME = :2 ORDER BY INDEX_NAME",
                     [schema.upper(), table.upper()],
                 )
                 return [
                     ExploreItem(name=r[0], type=r[1], expandable=False)
-                    for r in cur.fetchall()
+                    for r in await cur.fetchall()
                 ]
 
             case [schema, table, "constraints"]:
-                cur.execute(
+                await cur.execute(
                     "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM ALL_CONSTRAINTS"
                     " WHERE OWNER = :1 AND TABLE_NAME = :2"
                     " AND CONSTRAINT_TYPE IN ('P', 'U', 'C', 'R')"
@@ -238,31 +223,28 @@ column metadata (name, type, nullability, primary key flag, default).
                         type=_CONSTRAINT_TYPE.get(r[1], r[1].lower()),
                         expandable=False,
                     )
-                    for r in cur.fetchall()
+                    for r in await cur.fetchall()
                 ]
 
             case _:
                 return []
 
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
-        return await self._run(self._explore_describe_sync, path)
-
-    def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
         match path:
             case [schema, table]:
                 schema_up = schema.upper()
                 table_up = table.upper()
                 cur = self._conn.cursor()
 
-                cur.execute(
+                await cur.execute(
                     "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT"
                     " FROM ALL_TAB_COLUMNS"
                     " WHERE OWNER = :1 AND TABLE_NAME = :2 ORDER BY COLUMN_ID",
                     [schema_up, table_up],
                 )
-                col_rows = cur.fetchall()
+                col_rows = await cur.fetchall()
 
-                cur.execute(
+                await cur.execute(
                     "SELECT cc.COLUMN_NAME FROM ALL_CONSTRAINTS con"
                     " JOIN ALL_CONS_COLUMNS cc"
                     "  ON con.OWNER = cc.OWNER"
@@ -272,7 +254,7 @@ column metadata (name, type, nullability, primary key flag, default).
                     "  AND con.CONSTRAINT_TYPE = 'P'",
                     [schema_up, table_up],
                 )
-                pk_cols = {r[0] for r in cur.fetchall()}
+                pk_cols = {r[0] for r in await cur.fetchall()}
 
                 return TableDescription(
                     table=table_up,
@@ -290,8 +272,3 @@ column metadata (name, type, nullability, primary key flag, default).
                 )
             case _:
                 return None
-
-    async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        return await asyncio.get_running_loop().run_in_executor(
-            None, lambda: fn(*args, **kwargs)
-        )

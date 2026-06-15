@@ -1,6 +1,8 @@
 # belvedere-py
 
-JSON-over-stdio server backend for [belvedere.nvim](../belvedere.nvim). The Neovim plugin spawns this process and communicates through its stdin/stdout pipes using newline-delimited JSON.
+JSON-over-stdio server backend to query databases.
+
+This server can be used by compatible clients (e.g. [belvedere.nvim](https://github.com/theogilbert/belvedere.nvim)) to explore and query databases in an IDE.
 
 ## Requirements
 

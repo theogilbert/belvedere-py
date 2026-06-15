@@ -63,7 +63,7 @@ def _req(**kwargs: object) -> str:
 
 
 class TestRunLoop:
-    async def test_non_dict_params_produces_no_response_and_logs_warning(
+    async def test_non_dict_params_produces_error_response_and_logs_warning(
         self,
         tmp_path: pathlib.Path,
         caplog: pytest.LogCaptureFixture,
@@ -72,8 +72,10 @@ class TestRunLoop:
             out = await _run_server(
                 tmp_path, _req(id=1, method="capabilities", params=[])
             )
-        assert out.getvalue() == b""
-        assert any("params must be an object" in r.message for r in caplog.records)
+        msg = json.loads(out.getvalue())
+        assert msg["id"] == 1
+        assert msg["error"] is not None
+        assert any("params must be a JSON object" in r.message for r in caplog.records)
 
     async def test_loop_continues_after_non_dict_params(
         self, tmp_path: pathlib.Path
@@ -84,7 +86,7 @@ class TestRunLoop:
             _req(id=2, method="capabilities", params={}),
         )
         ids = [json.loads(line)["id"] for line in out.getvalue().splitlines()]
-        assert ids == [2]
+        assert ids == [1, 2]
 
 
 class TestServerLogging:

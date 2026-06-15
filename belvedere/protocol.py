@@ -101,7 +101,7 @@ class TableDescription:
 
 
 @dataclass
-class SelectResult:
+class ReadResult:
     """Result of a SELECT query."""
 
     columns: list[str]
@@ -186,6 +186,14 @@ def encode(msg: Response) -> bytes:
     return (json.dumps(asdict(msg), separators=(",", ":")) + "\n").encode()
 
 
+class DecodeError(Exception):
+    """Raised when a raw line cannot be parsed into a valid Request."""
+
+    def __init__(self, message: str, id: int | None = None) -> None:
+        super().__init__(message)
+        self.id = id
+
+
 def decode(line: bytes) -> Request:
     """Parse a raw JSON line into a Request.
 
@@ -196,12 +204,29 @@ def decode(line: bytes) -> Request:
         The decoded Request.
 
     Raises:
-        json.JSONDecodeError: If the line is not valid JSON.
-        TypeError: If the JSON object is missing required fields.
+        DecodeError: If the line is not valid JSON, is not a JSON object,
+            has missing or unexpected fields, or has a non-object params value.
     """
-    req = Request(**json.loads(line))
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError as e:
+        raise DecodeError(f"Invalid JSON: {e}") from e
+
+    if not isinstance(data, dict):
+        raise DecodeError(f"Request must be a JSON object, got {type(data).__name__}")
+
+    raw_id = data.get("id")
+    req_id = raw_id if isinstance(raw_id, int) else None
+
+    try:
+        req = Request(**data)
+    except TypeError as e:
+        raise DecodeError(str(e), id=req_id) from e
+
     if not isinstance(req.params, dict):
-        raise TypeError(
-            f"Request {req.id!r}: params must be an object, got {type(req.params).__name__}"
+        raise DecodeError(
+            f"params must be a JSON object, got {type(req.params).__name__}",
+            id=req.id,
         )
+
     return req

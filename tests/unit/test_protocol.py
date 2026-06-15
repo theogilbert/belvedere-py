@@ -1,9 +1,9 @@
 import json
-from json import JSONDecodeError
 
 import pytest
 
 from belvedere.protocol import (
+    DecodeError,
     ExploreItem,
     Progress,
     ProgressDetail,
@@ -20,15 +20,15 @@ class TestDecode:
         assert msg == Request(id=1, method="connect", params={"driver": "sqlite"})
 
     def test_should_raise_when_json_is_malformed(self) -> None:
-        with pytest.raises(JSONDecodeError):
+        with pytest.raises(DecodeError):
             decode(b"not json\n")
 
     def test_should_raise_when_required_fields_are_missing(self) -> None:
-        with pytest.raises(TypeError):
+        with pytest.raises(DecodeError):
             decode(b'{"id":1}\n')
 
     def test_should_raise_when_params_is_not_an_object(self) -> None:
-        with pytest.raises(TypeError, match="params must be an object"):
+        with pytest.raises(DecodeError, match="params must be a JSON object"):
             decode(b'{"id":1,"method":"connect","params":[1,2,3]}\n')
 
 

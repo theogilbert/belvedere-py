@@ -7,6 +7,7 @@ from typing import Any, BinaryIO
 
 from .dispatcher import Dispatcher
 from .protocol import (
+    DecodeError,
     Progress,
     ProgressDetail,
     Request,
@@ -78,13 +79,11 @@ class Server:
                     f"Received {_truncate(json.dumps({'id': msg.id, 'method': msg.method, 'params': _redact(msg.params)}))}"
                 )
                 asyncio.create_task(self._handle(msg))
-            except json.JSONDecodeError as e:
-                logger.exception(f"Failed to decode JSON payload: {e}")
-                asyncio.create_task(
-                    self._send(Result(id=None, result=None, error="decode error"))
-                )
-            except TypeError as e:
+            except DecodeError as e:
                 logger.warning(f"Received invalid request: {e}")
+                asyncio.create_task(
+                    self._send(Result(id=e.id, result=None, error=str(e)))
+                )
 
     async def _handle(self, msg: Request) -> None:
         async def send_progress(status: str, message: str) -> None:

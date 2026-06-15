@@ -37,4 +37,4 @@ echo "MongoDB is ready."
 
 MONGODB_URI="mongodb://localhost:$PORT" \
 MONGODB_DATABASE="$DATABASE" \
-    python -m pytest tests/integration/test_mongodb.py -v "$@"
+    python -m pytest tests/external/test_mongodb.py -v "$@"

@@ -54,4 +54,4 @@ ORACLE_PORT="$PORT" \
 ORACLE_USER="$APP_USER" \
 ORACLE_PASSWORD="$APP_PASSWORD" \
 ORACLE_SERVICE="$SERVICE" \
-    python -m pytest tests/integration/test_oracle.py -v "$@"
+    python -m pytest tests/external/test_oracle.py -v "$@"

@@ -41,4 +41,4 @@ MSSQL_PASSWORD="$PASSWORD" \
 MSSQL_USER="sa" \
 MSSQL_HOST="localhost" \
 MSSQL_PORT="$PORT" \
-    python -m pytest tests/integration/test_sqlserver.py -v "$@"
+    python -m pytest tests/external/test_sqlserver.py -v "$@"

@@ -40,4 +40,4 @@ echo "Neo4j is ready."
 NEO4J_PASSWORD="$PASSWORD" \
 NEO4J_USER="neo4j" \
 NEO4J_URI="bolt://localhost:$BOLT_PORT" \
-    python -m pytest tests/integration/test_neo4j.py -v "$@"
+    python -m pytest tests/external/test_neo4j.py -v "$@"

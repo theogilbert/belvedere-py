@@ -11,6 +11,28 @@ from .protocol import DMLResult, ProgressCallback
 
 logger = logging.getLogger(__name__)
 
+
+class Connection:
+    """Bundles a driver with its connection id and concurrency semaphore."""
+
+    def __init__(self, id: str, driver: BaseDriver, max_concurrency: int) -> None:
+        self.id = id
+        """The connection id assigned by the dispatcher."""
+        self.driver = driver
+        """The underlying database driver."""
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        """Limits the number of concurrent requests on this connection."""
+
+    async def __aenter__(self) -> "Connection":
+        await self._semaphore.acquire()
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        self._semaphore.release()
+
+
+_Handler = Callable[[Connection | None, ConnectionCache | None, dict[str, Any], ProgressCallback], Awaitable[dict[str, Any]]]
+
 _DEFAULT_IDLE_TIMEOUT = 600.0
 _CONNECTION_REQUIRED = frozenset({"execute", "explore.list", "explore.describe"})
 
@@ -53,10 +75,7 @@ class Dispatcher:
             KeyError: If the ``connection_id`` does not refer to an open connection
                 and the method requires one.
         """
-        handler_name = "_handle_" + method.replace(".", "_")
-        handler = getattr(self, handler_name, None)
-        if handler is None:
-            raise ValueError(f"Unknown method: {method!r}")
+        handler = self._route(method)
 
         conn_id = params.get("connection_id")
         conn = self._connections.get(conn_id) if conn_id else None
@@ -149,6 +168,18 @@ class Dispatcher:
         cache.set_describe(path, desc)
         return {"details": desc}
 
+    def _route(self, method: str) -> _Handler:
+        match method:
+            case "capabilities":     return self._handle_capabilities
+            case "driver.help":      return self._handle_driver_help
+            case "connect":          return self._handle_connect
+            case "disconnect":       return self._handle_disconnect
+            case "execute":          return self._handle_execute
+            case "explore.list":     return self._handle_explore_list
+            case "explore.describe": return self._handle_explore_describe
+            case _:
+                raise ValueError(f"Unknown method: {method!r}")
+
     def _require_param(self, params: dict[str, Any], key: str) -> Any:
         if key not in params:
             raise ValueError(f"Missing required param: {key!r}")
@@ -160,25 +191,6 @@ class Dispatcher:
         self._caches.close(conn_id)
         if conn:
             await conn.driver.disconnect()
-
-
-class Connection:
-    """Bundles a driver with its connection id and concurrency semaphore."""
-
-    def __init__(self, id: str, driver: BaseDriver, max_concurrency: int) -> None:
-        self.id = id
-        """The connection id assigned by the dispatcher."""
-        self.driver = driver
-        """The underlying database driver."""
-        self._semaphore = asyncio.Semaphore(max_concurrency)
-        """Limits the number of concurrent requests on this connection."""
-
-    async def __aenter__(self) -> "Connection":
-        await self._semaphore.acquire()
-        return self
-
-    async def __aexit__(self, *_: object) -> None:
-        self._semaphore.release()
 
 
 class CacheStore:

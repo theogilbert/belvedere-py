@@ -1,9 +1,9 @@
 """
 Wire format: newline-delimited JSON (one message per line).
 
-Request  (nvim → python): {id: int, method: str, params: dict}
-Response (python → nvim): {id: int, result: any, error: str|None}
-Progress (python → nvim): {id: int, progress: {status: str, message: str}}
+Request  (client → server): {id: int, method: str, params: dict}
+Response (server → client): {id: int, result: any, error: str|None}
+Progress (server → client): {id: int, progress: {status: str, message: str}}
 """
 
 import json

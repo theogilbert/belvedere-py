@@ -1,9 +1,7 @@
 """MongoDB driver — requires: pip install pymongo"""
 
-import asyncio
 import json
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from ..protocol import DMLResult, DriverParam, ExploreItem, SelectResult, TableDescription
 from ..tabular import flatten_docs
@@ -11,8 +9,6 @@ from .base import BaseDriver, ConnectionLostError
 
 if TYPE_CHECKING:
     import pymongo
-
-T = TypeVar("T")
 
 _DEFAULT_FIND_LIMIT = 1000
 
@@ -46,11 +42,11 @@ def _docs_to_result(docs: list[dict[str, Any]]) -> SelectResult:
 
 
 class MongoDriver(BaseDriver):
-    """MongoDB driver backed by pymongo, run in a thread executor.
+    """MongoDB driver backed by the pymongo async API.
 
     Args:
         params: Connect request fields (``uri``, ``database``).
-        client: Open MongoClient. Use :meth:`create` instead of constructing directly.
+        client: Open AsyncMongoClient. Use :meth:`create` instead of constructing directly.
     """
 
     PARAMS: list[DriverParam] = [
@@ -119,46 +115,39 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
 `explore.describe` always returns `None` (no fixed schema).
 """
 
-    def __init__(self, params: dict[str, Any], client: "pymongo.MongoClient") -> None:
+    def __init__(self, params: dict[str, Any], client: "pymongo.AsyncMongoClient") -> None:
         super().__init__(params)
         self._client = client
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "MongoDriver":
         try:
-            from pymongo import MongoClient
+            from pymongo import AsyncMongoClient
         except ImportError:
             raise RuntimeError("pymongo not installed — run: pip install pymongo")
 
-        def _connect() -> "pymongo.MongoClient":
-            kwargs: dict[str, Any] = {}
-            if params.get("username"):
-                kwargs["username"] = params["username"]
-            if params.get("password"):
-                kwargs["password"] = params["password"]
-            client = MongoClient(params.get("uri", "mongodb://localhost:27017"), **kwargs)
-            client.admin.command("ping")
-            return client
-
-        client = await asyncio.get_running_loop().run_in_executor(None, _connect)
+        kwargs: dict[str, Any] = {}
+        if params.get("username"):
+            kwargs["username"] = params["username"]
+        if params.get("password"):
+            kwargs["password"] = params["password"]
+        client = AsyncMongoClient(params.get("uri", "mongodb://localhost:27017"), **kwargs)
+        await client.admin.command("ping")
         return cls(params, client)
 
     async def reconnect(self) -> None:
-        await self._run(self._reconnect_sync)
-
-    def _reconnect_sync(self) -> None:
-        self._client.close()
-        from pymongo import MongoClient
+        await self._client.close()
+        from pymongo import AsyncMongoClient
         kwargs: dict[str, Any] = {}
         if self.params.get("username"):
             kwargs["username"] = self.params["username"]
         if self.params.get("password"):
             kwargs["password"] = self.params["password"]
-        self._client = MongoClient(self.params.get("uri", "mongodb://localhost:27017"), **kwargs)
-        self._client.admin.command("ping")
+        self._client = AsyncMongoClient(self.params.get("uri", "mongodb://localhost:27017"), **kwargs)
+        await self._client.admin.command("ping")
 
     async def disconnect(self) -> None:
-        await self._run(self._client.close)
+        await self._client.close()
 
     async def execute(self, sql: str, binds: list[Any]) -> SelectResult | DMLResult:
         """Run a MongoDB command expressed as a JSON string.
@@ -185,94 +174,90 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             cmd: dict[str, Any] = json.loads(sql)
         except json.JSONDecodeError as exc:
             raise ValueError(f"MongoDB command must be valid JSON: {exc}") from exc
-        return await self._run(self._execute_sync, cmd)
 
-    def _execute_sync(self, cmd: dict[str, Any]) -> SelectResult | DMLResult:
         db = self._client[cmd.pop("db", self.params.get("database", "test"))]
         try:
             if "find" in cmd:
-                return self._find(db, cmd)
+                return await self._find(db, cmd)
             if "aggregate" in cmd:
-                return self._aggregate(db, cmd)
+                return await self._aggregate(db, cmd)
             if "insertOne" in cmd:
-                return self._insert_one(db, cmd)
+                return await self._insert_one(db, cmd)
             if "insertMany" in cmd:
-                return self._insert_many(db, cmd)
+                return await self._insert_many(db, cmd)
             if "updateOne" in cmd:
-                return self._update_one(db, cmd)
+                return await self._update_one(db, cmd)
             if "updateMany" in cmd:
-                return self._update_many(db, cmd)
+                return await self._update_many(db, cmd)
             if "deleteOne" in cmd:
-                return self._delete_one(db, cmd)
+                return await self._delete_one(db, cmd)
             if "deleteMany" in cmd:
-                return self._delete_many(db, cmd)
+                return await self._delete_many(db, cmd)
             raise ValueError(f"Unsupported command keys: {list(cmd.keys())}")
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             raise
 
-    def _find(self, db: Any, cmd: dict[str, Any]) -> SelectResult:
+    async def _find(self, db: Any, cmd: dict[str, Any]) -> SelectResult:
         col = db[cmd.pop("find")]
         filter_ = cmd.pop("filter", {})
         projection = cmd.pop("projection", None)
         sort = cmd.pop("sort", None)
         limit = cmd.pop("limit", _DEFAULT_FIND_LIMIT)
-        cursor = col.find(filter_, projection)
+        cursor = col.find(filter_, projection).limit(limit)
         if sort:
             cursor = cursor.sort(list(sort.items()))
-        return _docs_to_result(list(cursor.limit(limit)))
+        return _docs_to_result(await cursor.to_list())
 
-    def _aggregate(self, db: Any, cmd: dict[str, Any]) -> SelectResult:
+    async def _aggregate(self, db: Any, cmd: dict[str, Any]) -> SelectResult:
         col = db[cmd.pop("aggregate")]
-        return _docs_to_result(list(col.aggregate(cmd.pop("pipeline", []))))
+        cursor = await col.aggregate(cmd.pop("pipeline", []))
+        return _docs_to_result(await cursor.to_list())
 
-    def _insert_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _insert_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
         col = db[cmd.pop("insertOne")]
-        doc = cmd.pop("document", {})
-        col.insert_one(doc)
+        await col.insert_one(cmd.pop("document", {}))
         return DMLResult(rows_affected=1)
 
-    def _insert_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _insert_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
         col = db[cmd.pop("insertMany")]
         docs = cmd.pop("documents", [])
         if not docs:
             return DMLResult(rows_affected=0)
-        return DMLResult(rows_affected=len(col.insert_many(docs).inserted_ids))
+        result = await col.insert_many(docs)
+        return DMLResult(rows_affected=len(result.inserted_ids))
 
-    def _update_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _update_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
         col = db[cmd.pop("updateOne")]
-        affected = col.update_one(cmd.pop("filter", {}), cmd.pop("update", {})).modified_count
-        return DMLResult(rows_affected=affected)
+        result = await col.update_one(cmd.pop("filter", {}), cmd.pop("update", {}))
+        return DMLResult(rows_affected=result.modified_count)
 
-    def _update_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _update_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
         col = db[cmd.pop("updateMany")]
-        affected = col.update_many(cmd.pop("filter", {}), cmd.pop("update", {})).modified_count
-        return DMLResult(rows_affected=affected)
+        result = await col.update_many(cmd.pop("filter", {}), cmd.pop("update", {}))
+        return DMLResult(rows_affected=result.modified_count)
 
-    def _delete_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _delete_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
         col = db[cmd.pop("deleteOne")]
-        affected = col.delete_one(cmd.pop("filter", {})).deleted_count
-        return DMLResult(rows_affected=affected)
+        result = await col.delete_one(cmd.pop("filter", {}))
+        return DMLResult(rows_affected=result.deleted_count)
 
-    def _delete_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _delete_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
         col = db[cmd.pop("deleteMany")]
-        affected = col.delete_many(cmd.pop("filter", {})).deleted_count
-        return DMLResult(rows_affected=affected)
+        result = await col.delete_many(cmd.pop("filter", {}))
+        return DMLResult(rows_affected=result.deleted_count)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
-        return await self._run(self._explore_list_sync, path)
-
-    def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
                 return [
                     ExploreItem(name=n, type="database", expandable=True)
-                    for n in sorted(self._client.list_database_names())
+                    for n in sorted(await self._client.list_database_names())
                 ]
             case [db_name]:
                 return [
                     ExploreItem(name=n, type="collection", expandable=True)
-                    for n in sorted(self._client[db_name].list_collection_names())
+                    for n in sorted(await self._client[db_name].list_collection_names())
                 ]
             case [_, _]:
                 return [
@@ -282,12 +267,12 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             case [db_name, collection_name, "fields"]:
                 return [
                     ExploreItem(name=f, type="field", expandable=False)
-                    for f in self._sample_fields(db_name, collection_name)
+                    for f in await self._sample_fields(db_name, collection_name)
                 ]
             case [db_name, collection_name, "indexes"]:
                 return [
                     ExploreItem(name=i, type="index", expandable=False)
-                    for i in self._list_indexes(db_name, collection_name)
+                    for i in await self._list_indexes(db_name, collection_name)
                 ]
             case _:
                 return []
@@ -295,19 +280,17 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
         return None
 
-    def _sample_fields(self, db_name: str, collection_name: str) -> list[str]:
-        docs = list(self._client[db_name][collection_name].aggregate([{"$sample": {"size": 10}}]))
+    async def _sample_fields(self, db_name: str, collection_name: str) -> list[str]:
+        cursor = await self._client[db_name][collection_name].aggregate([{"$sample": {"size": 10}}])
+        docs = await cursor.to_list()
         seen: dict[str, None] = {}
         for doc in docs:
             for key in doc:
                 seen[key] = None
         return list(seen)
 
-    def _list_indexes(self, db_name: str, collection_name: str) -> list[str]:
-        return sorted(self._client[db_name][collection_name].index_information())
-
-    async def _run(self, fn: Callable[..., T], *args: Any) -> T:
-        return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args))
+    async def _list_indexes(self, db_name: str, collection_name: str) -> list[str]:
+        return sorted(await self._client[db_name][collection_name].index_information())
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:

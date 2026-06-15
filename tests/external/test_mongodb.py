@@ -43,11 +43,11 @@ async def driver() -> AsyncGenerator[MongoDriver, None]:
 @pytest.fixture(autouse=True)
 async def clean_db(driver: MongoDriver) -> AsyncGenerator[None, None]:
     db_name = _params()["database"]
-    driver._client[db_name].drop_collection("users")
-    driver._client[db_name].drop_collection("orders")
+    await driver._client[db_name].drop_collection("users")
+    await driver._client[db_name].drop_collection("orders")
     yield
-    driver._client[db_name].drop_collection("users")
-    driver._client[db_name].drop_collection("orders")
+    await driver._client[db_name].drop_collection("users")
+    await driver._client[db_name].drop_collection("orders")
 
 
 def _cmd(**kwargs: Any) -> str:
@@ -57,7 +57,7 @@ def _cmd(**kwargs: Any) -> str:
 class TestExecuteFind:
     async def test_returns_columns_and_rows(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({"name": "Alice", "age": 30})
+        await driver._client[db]["users"].insert_one({"name": "Alice", "age": 30})
         result = await driver.execute(_cmd(find="users", filter={"name": "Alice"}), [])
         assert isinstance(result, SelectResult)
         row = dict(zip(result.columns, result.rows[0]))
@@ -66,7 +66,7 @@ class TestExecuteFind:
 
     async def test_flattens_nested_documents(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({"name": "Bob", "address": {"city": "NYC", "zip": "10001"}})
+        await driver._client[db]["users"].insert_one({"name": "Bob", "address": {"city": "NYC", "zip": "10001"}})
         result = await driver.execute(_cmd(find="users", filter={"name": "Bob"}), [])
         assert isinstance(result, SelectResult)
         row = dict(zip(result.columns, result.rows[0]))
@@ -75,7 +75,7 @@ class TestExecuteFind:
 
     async def test_serializes_object_id(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({"name": "Carol"})
+        await driver._client[db]["users"].insert_one({"name": "Carol"})
         result = await driver.execute(_cmd(find="users"), [])
         assert isinstance(result, SelectResult)
         row = dict(zip(result.columns, result.rows[0]))
@@ -89,7 +89,7 @@ class TestExecuteFind:
 
     async def test_respects_limit(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_many([{"n": i} for i in range(20)])
+        await driver._client[db]["users"].insert_many([{"n": i} for i in range(20)])
         result = await driver.execute(_cmd(find="users", limit=5), [])
         assert isinstance(result, SelectResult)
         assert len(result.rows) == 5
@@ -98,7 +98,7 @@ class TestExecuteFind:
 class TestExecuteAggregate:
     async def test_aggregate_groups_correctly(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["orders"].insert_many([
+        await driver._client[db]["orders"].insert_many([
             {"status": "open", "amount": 10},
             {"status": "open", "amount": 20},
             {"status": "closed", "amount": 5},
@@ -130,7 +130,7 @@ class TestExecuteDML:
 
     async def test_update_one_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_many([{"name": "Alice", "active": False}])
+        await driver._client[db]["users"].insert_many([{"name": "Alice", "active": False}])
         result = await driver.execute(_cmd(
             updateOne="users",
             filter={"name": "Alice"},
@@ -141,7 +141,7 @@ class TestExecuteDML:
 
     async def test_update_many_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_many([{"role": "admin"}, {"role": "admin"}])
+        await driver._client[db]["users"].insert_many([{"role": "admin"}, {"role": "admin"}])
         result = await driver.execute(_cmd(
             updateMany="users",
             filter={"role": "admin"},
@@ -152,14 +152,14 @@ class TestExecuteDML:
 
     async def test_delete_one_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_many([{"name": "Alice"}, {"name": "Bob"}])
+        await driver._client[db]["users"].insert_many([{"name": "Alice"}, {"name": "Bob"}])
         result = await driver.execute(_cmd(deleteOne="users", filter={"name": "Alice"}), [])
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 1
 
     async def test_delete_many_returns_rows_affected(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_many([{"role": "admin"}, {"role": "admin"}, {"role": "user"}])
+        await driver._client[db]["users"].insert_many([{"role": "admin"}, {"role": "admin"}, {"role": "user"}])
         result = await driver.execute(_cmd(deleteMany="users", filter={"role": "admin"}), [])
         assert isinstance(result, DMLResult)
         assert result.rows_affected == 2
@@ -168,7 +168,7 @@ class TestExecuteDML:
 class TestExploreList:
     async def test_root_lists_databases(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({"seed": True})
+        await driver._client[db]["users"].insert_one({"seed": True})
         items = await driver.explore_list([])
         names = [i.name for i in items]
         assert db in names
@@ -177,8 +177,8 @@ class TestExploreList:
 
     async def test_database_lists_collections(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({"x": 1})
-        driver._client[db]["orders"].insert_one({"x": 1})
+        await driver._client[db]["users"].insert_one({"x": 1})
+        await driver._client[db]["orders"].insert_one({"x": 1})
         items = await driver.explore_list([db])
         names = [i.name for i in items]
         assert "users" in names
@@ -188,7 +188,7 @@ class TestExploreList:
 
     async def test_collection_lists_fields_and_indexes_groups(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({"x": 1})
+        await driver._client[db]["users"].insert_one({"x": 1})
         items = await driver.explore_list([db, "users"])
         assert items == [
             ExploreItem(name="fields", type="group", expandable=True),
@@ -197,7 +197,7 @@ class TestExploreList:
 
     async def test_fields_samples_top_level_keys(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_many([
+        await driver._client[db]["users"].insert_many([
             {"name": "Alice", "age": 30},
             {"name": "Bob", "email": "b@b.com"},
         ])
@@ -211,8 +211,8 @@ class TestExploreList:
 
     async def test_indexes_lists_index_names(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({"name": "Alice"})
-        driver._client[db]["users"].create_index("name", name="name_idx")
+        await driver._client[db]["users"].insert_one({"name": "Alice"})
+        await driver._client[db]["users"].create_index("name", name="name_idx")
         items = await driver.explore_list([db, "users", "indexes"])
         names = [i.name for i in items]
         assert "_id_" in names
@@ -222,8 +222,8 @@ class TestExploreList:
 
     async def test_fields_empty_for_empty_collection(self, driver: MongoDriver) -> None:
         db = _params()["database"]
-        driver._client[db]["users"].insert_one({})
-        driver._client[db]["users"].delete_many({})
+        await driver._client[db]["users"].insert_one({})
+        await driver._client[db]["users"].delete_many({})
         items = await driver.explore_list([db, "users", "fields"])
         assert items == []
 

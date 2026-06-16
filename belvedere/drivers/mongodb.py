@@ -1,6 +1,7 @@
 """MongoDB driver — requires: pip install pymongo"""
 
 import json
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from ..protocol import (
@@ -17,6 +18,17 @@ if TYPE_CHECKING:
     import pymongo
 
 _DEFAULT_FIND_LIMIT = 1000
+
+
+class _Op(StrEnum):
+    FIND = "find"
+    AGGREGATE = "aggregate"
+    INSERT_ONE = "insertOne"
+    INSERT_MANY = "insertMany"
+    UPDATE_ONE = "updateOne"
+    UPDATE_MANY = "updateMany"
+    DELETE_ONE = "deleteOne"
+    DELETE_MANY = "deleteMany"
 
 
 def _serialize(value: Any) -> Any:
@@ -212,21 +224,21 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             )
         db = self._client[cmd.pop("db")]
         try:
-            if "find" in cmd:
+            if _Op.FIND in cmd:
                 return await self._find(db, cmd)
-            if "aggregate" in cmd:
+            if _Op.AGGREGATE in cmd:
                 return await self._aggregate(db, cmd)
-            if "insertOne" in cmd:
+            if _Op.INSERT_ONE in cmd:
                 return await self._insert_one(db, cmd)
-            if "insertMany" in cmd:
+            if _Op.INSERT_MANY in cmd:
                 return await self._insert_many(db, cmd)
-            if "updateOne" in cmd:
+            if _Op.UPDATE_ONE in cmd:
                 return await self._update_one(db, cmd)
-            if "updateMany" in cmd:
+            if _Op.UPDATE_MANY in cmd:
                 return await self._update_many(db, cmd)
-            if "deleteOne" in cmd:
+            if _Op.DELETE_ONE in cmd:
                 return await self._delete_one(db, cmd)
-            if "deleteMany" in cmd:
+            if _Op.DELETE_MANY in cmd:
                 return await self._delete_many(db, cmd)
             raise DriverError(f"Unsupported command keys: {list(cmd.keys())}")
         except Exception as exc:
@@ -236,7 +248,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             raise DriverError(str(exc)) from exc
 
     async def _find(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
-        col = db[cmd.pop("find")]
+        col = db[cmd.pop(_Op.FIND)]
         filter_ = cmd.pop("filter", {})
         projection = cmd.pop("projection", None)
         sort = cmd.pop("sort", None)
@@ -247,17 +259,17 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         return _docs_to_result(await cursor.to_list())
 
     async def _aggregate(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
-        col = db[cmd.pop("aggregate")]
+        col = db[cmd.pop(_Op.AGGREGATE)]
         cursor = await col.aggregate(cmd.pop("pipeline", []))
         return _docs_to_result(await cursor.to_list())
 
     async def _insert_one(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
-        col = db[cmd.pop("insertOne")]
+        col = db[cmd.pop(_Op.INSERT_ONE)]
         await col.insert_one(cmd.pop("document", {}))
         return WriteResult(rows_affected=1)
 
     async def _insert_many(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
-        col = db[cmd.pop("insertMany")]
+        col = db[cmd.pop(_Op.INSERT_MANY)]
         docs = cmd.pop("documents", [])
         if not docs:
             return WriteResult(rows_affected=0)
@@ -265,22 +277,22 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         return WriteResult(rows_affected=len(result.inserted_ids))
 
     async def _update_one(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
-        col = db[cmd.pop("updateOne")]
+        col = db[cmd.pop(_Op.UPDATE_ONE)]
         result = await col.update_one(cmd.pop("filter", {}), cmd.pop("update", {}))
         return WriteResult(rows_affected=result.modified_count)
 
     async def _update_many(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
-        col = db[cmd.pop("updateMany")]
+        col = db[cmd.pop(_Op.UPDATE_MANY)]
         result = await col.update_many(cmd.pop("filter", {}), cmd.pop("update", {}))
         return WriteResult(rows_affected=result.modified_count)
 
     async def _delete_one(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
-        col = db[cmd.pop("deleteOne")]
+        col = db[cmd.pop(_Op.DELETE_ONE)]
         result = await col.delete_one(cmd.pop("filter", {}))
         return WriteResult(rows_affected=result.deleted_count)
 
     async def _delete_many(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
-        col = db[cmd.pop("deleteMany")]
+        col = db[cmd.pop(_Op.DELETE_MANY)]
         result = await col.delete_many(cmd.pop("filter", {}))
         return WriteResult(rows_affected=result.deleted_count)
 

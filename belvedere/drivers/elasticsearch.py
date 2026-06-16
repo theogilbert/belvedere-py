@@ -110,6 +110,7 @@ from the index mapping (name, type).
     ) -> None:
         super().__init__(params)
         self._client = client
+        self._ever_connected = False
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "ElasticsearchDriver":
@@ -137,18 +138,23 @@ from the index mapping (name, type).
     async def reconnect(self) -> None:
         await self._client.close()
         self._client = self._open(self.params)
+        self._ever_connected = False
 
     async def disconnect(self) -> None:
         await self._client.close()
 
     async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         try:
-            return await self._execute(query)
+            result = await self._execute(query)
+            self._ever_connected = True
+            return result
         except Exception as exc:
             import elasticsearch
 
             if isinstance(exc, elasticsearch.ConnectionError):
-                raise ConnectionLostError(str(exc)) from exc
+                if self._ever_connected:
+                    raise ConnectionLostError(str(exc)) from exc
+                raise DriverError(str(exc)) from exc
             raise DriverError(str(exc)) from exc
 
     async def _execute(self, query: str) -> ReadResult:

@@ -140,7 +140,7 @@ class DriverParam:
     """Value type — ``"string"``, ``"integer"``, or ``"enum"``."""
     label: str
     """Human-readable label for UI display."""
-    required: bool = False
+    required: bool = True
     """Whether a non-empty value is required."""
     default: str | int | None = None
     """Default value pre-filled in the UI."""

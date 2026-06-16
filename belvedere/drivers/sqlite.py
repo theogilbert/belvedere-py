@@ -25,9 +25,7 @@ class SQLiteDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
-        DriverParam(
-            key="database", type="string", label="Database file path", required=True
-        ),
+        DriverParam(key="database", type="string", label="Database file path"),
     ]
 
     HELP: str = """\

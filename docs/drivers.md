@@ -40,12 +40,12 @@ metadata (name, type, nullability, primary key flag).
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `host` | no | `localhost` | Server hostname or IP |
-| `port` | no | `1433` | TCP port |
-| `database` | no | — | Database name |
-| `user` | no | — | Login name |
-| `password` | no | — | Password (masked) |
-| `applicationIntent` | no | — | `READ_WRITE` or `READ_ONLY` |
+| `host` | yes | — | Server hostname or IP |
+| `port` | yes | `1433` | TCP port |
+| `database` | yes | — | Database name |
+| `user` | yes | — | Login name |
+| `password` | yes | — | Password (masked) |
+| `applicationIntent` | yes | — | `READ_WRITE` or `READ_ONLY` |
 
 **Queries:** Standard T-SQL. Positional bind parameters use `?` placeholders.
 
@@ -77,11 +77,11 @@ column metadata (name, type, nullability, default).
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `host` | no | `localhost` | Server hostname or IP |
-| `port` | no | `1521` | Listener port |
-| `service_name` | no | `FREEPDB1` | Database service name |
-| `user` | no | — | Username |
-| `password` | no | — | Password (masked) |
+| `host` | yes | — | Server hostname or IP |
+| `port` | yes | `1521` | Listener port |
+| `service_name` | yes | — | Database service name |
+| `user` | yes | — | Username |
+| `password` | yes | — | Password (masked) |
 
 **Queries:** Standard SQL. Positional bind parameters use `:1`, `:2`, … placeholders.
 
@@ -111,9 +111,9 @@ column metadata (name, type, nullability, primary key flag, default).
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `uri` | no | `bolt://localhost:7687` | Bolt URI |
-| `user` | no | `neo4j` | Username |
-| `password` | no | — | Password (masked) |
+| `uri` | yes | `bolt://localhost:7687` | Bolt URI |
+| `user` | yes | `neo4j` | Username |
+| `password` | yes | — | Password (masked) |
 | `database` | no | `neo4j` | Database name |
 
 **Queries:** Cypher. Positional bind parameters are referenced as `$0`, `$1`, …
@@ -144,11 +144,11 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `host` | no | `localhost` | Server hostname or IP |
-| `port` | no | `9200` | HTTP port |
+| `host` | yes | — | Server hostname or IP |
+| `port` | yes | `9200` | HTTP port |
 | `username` | no | — | Username |
 | `password` | no | — | Password (masked) |
-| `query_mode` | no | `lucene` | Query language: `lucene` or `dsl` |
+| `query_mode` | yes | `lucene` | Query language: `lucene` or `dev_tools` |
 
 **Queries:** Prefix with the target index name (pattern or alias) and ` | `.
 
@@ -162,7 +162,7 @@ orders | status:open AND total:>50
 orders | *
 ```
 
-*DSL mode — Kibana Dev Tools syntax:*
+*Dev Tools mode (Kibana Dev Tools syntax):*
 
 ```
 GET /orders/_search
@@ -201,25 +201,24 @@ from the index mapping (name, type).
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `uri` | yes | Connection URI |
-| `database` | yes | Database |
-| `username` | yes | Username (can also be embedded in the URI) |
-| `password` | yes | Password (masked; can also be embedded in the URI) |
+| `database` | yes | Default database |
+| `username` | no | Username (can also be embedded in the URI) |
+| `password` | no | Password (masked; can also be embedded in the URI) |
 
-**Queries:** JSON command objects. The top-level key selects the operation and
-its value names the collection. Add `"db": "<name>"` to target a database other
-than the default.
+**Queries:** JSON command objects. `"db"` is required and names the target
+database. The top-level operation key names the collection.
 
 **Read:**
 
 ```json
-{"find": "orders", "filter": {"status": "open"}, "sort": {"createdAt": -1}, "limit": 100}
+{"find": "orders", "db": "mydb", "filter": {"status": "open"}, "sort": {"createdAt": -1}, "limit": 100}
 ```
 
 `filter`, `sort`, `projection`, and `limit` are all optional. `find` defaults
 to a limit of 1000 rows when `"limit"` is omitted.
 
 ```json
-{"aggregate": "orders", "pipeline": [
+{"aggregate": "orders", "db": "mydb", "pipeline": [
   {"$group": {"_id": "$status", "total": {"$sum": "$amount"}}},
   {"$sort": {"total": -1}}
 ]}
@@ -228,31 +227,31 @@ to a limit of 1000 rows when `"limit"` is omitted.
 **Insert:**
 
 ```json
-{"insertOne": "users", "document": {"name": "Alice", "age": 30}}
+{"insertOne": "users", "db": "mydb", "document": {"name": "Alice", "age": 30}}
 ```
 
 ```json
-{"insertMany": "users", "documents": [{"name": "Alice"}, {"name": "Bob"}]}
+{"insertMany": "users", "db": "mydb", "documents": [{"name": "Alice"}, {"name": "Bob"}]}
 ```
 
 **Update:**
 
 ```json
-{"updateOne": "users", "filter": {"name": "Alice"}, "update": {"$set": {"age": 31}}}
+{"updateOne": "users", "db": "mydb", "filter": {"name": "Alice"}, "update": {"$set": {"age": 31}}}
 ```
 
 ```json
-{"updateMany": "users", "filter": {"role": "guest"}, "update": {"$set": {"active": false}}}
+{"updateMany": "users", "db": "mydb", "filter": {"role": "guest"}, "update": {"$set": {"active": false}}}
 ```
 
 **Delete:**
 
 ```json
-{"deleteOne": "orders", "filter": {"status": "cancelled"}}
+{"deleteOne": "orders", "db": "mydb", "filter": {"status": "cancelled"}}
 ```
 
 ```json
-{"deleteMany": "orders", "filter": {"status": "cancelled"}}
+{"deleteMany": "orders", "db": "mydb", "filter": {"status": "cancelled"}}
 ```
 
 Results are flattened with dot-notation column names (`address.city`,

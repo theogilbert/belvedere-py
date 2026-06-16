@@ -57,11 +57,11 @@ class MongoDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="uri", type="string", label="Connection URI", required=True),
-        DriverParam(key="database", type="string", label="Database", required=True),
-        DriverParam(key="username", type="string", label="Username", required=True),
+        DriverParam(key="uri", type="string", label="Connection URI"),
+        DriverParam(key="database", type="string", label="Database"),
+        DriverParam(key="username", type="string", label="Username", required=False),
         DriverParam(
-            key="password", type="string", label="Password", required=True, secret=True
+            key="password", type="string", label="Password", required=False, secret=True
         ),
     ]
 

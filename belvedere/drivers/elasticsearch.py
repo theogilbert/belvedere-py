@@ -37,8 +37,10 @@ class ElasticsearchDriver(BaseDriver):
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type="string", label="Host"),
         DriverParam(key="port", type="integer", label="Port", default=9200),
-        DriverParam(key="username", type="string", label="Username"),
-        DriverParam(key="password", type="string", label="Password", secret=True),
+        DriverParam(key="username", type="string", label="Username", required=False),
+        DriverParam(
+            key="password", type="string", label="Password", secret=True, required=False
+        ),
         DriverParam(
             key="query_mode",
             type="enum",

@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from ..protocol import (
     ColumnInfo,
     DMLResult,
+    DriverParam,
+    DriverParamChoice,
     ExploreItem,
     ReadResult,
     TableDescription,
-    DriverParam,
 )
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError
@@ -42,7 +43,10 @@ class ElasticsearchDriver(BaseDriver):
             key="query_mode",
             type="enum",
             label="Query Mode",
-            choices=["lucene", "dsl"],
+            choices=[
+                DriverParamChoice(value="lucene", label="Lucene"),
+                DriverParamChoice(value="dev_tools", label="Dev Tools"),
+            ],
             default="lucene",
         ),
     ]
@@ -58,7 +62,7 @@ class ElasticsearchDriver(BaseDriver):
 | `port` | no | `9200` | HTTP port |
 | `username` | no | — | Username |
 | `password` | no | — | Password (masked) |
-| `query_mode` | no | `lucene` | Query language: `lucene` or `dsl` |
+| `query_mode` | no | `lucene` | Query language: `lucene` or `dev_tools` |
 
 **Queries:** Prefix with the target index name (pattern or alias) and ` | `.
 
@@ -72,7 +76,7 @@ orders | status:open AND total:>50
 orders | *
 ```
 
-*DSL mode — Kibana Dev Tools syntax:*
+*Dev Tools mode (Kibana Dev Tools syntax):*
 
 ```
 GET /orders/_search
@@ -157,8 +161,8 @@ from the index mapping (name, type).
         mode = self.params.get("query_mode", "lucene")
         if mode == "lucene":
             return self._execute_lucene_sync(query)
-        elif mode == "dsl":
-            return self._execute_dsl_sync(query)
+        elif mode == "dev_tools":
+            return self._execute_dev_tools_sync(query)
         else:
             raise DriverError(f"Unknown query_mode: {mode!r}")
 
@@ -174,13 +178,13 @@ from the index mapping (name, type).
         )
         return self._hits_to_result(resp)
 
-    def _execute_dsl_sync(self, query: str) -> ReadResult:
+    def _execute_dev_tools_sync(self, query: str) -> ReadResult:
         _VALID_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"}
         lines = query.strip().splitlines()
         tokens = lines[0].strip().split(None, 1)
         if len(tokens) != 2 or tokens[0].upper() not in _VALID_METHODS:
             raise DriverError(
-                "DSL query must be in Kibana Dev Tools format:\n"
+                "Dev Tools query must be in Kibana Dev Tools format:\n"
                 "  METHOD /path\n"
                 "  {optional body}\n"
                 "Example:\n"

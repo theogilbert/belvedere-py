@@ -121,6 +121,16 @@ class DMLResult:
 
 
 @dataclass
+class DriverParamChoice:
+    """A single option within an ``"enum"`` driver parameter."""
+
+    value: str
+    """Machine-readable value sent in ``connect.params``."""
+    label: str
+    """Human-readable display name shown in the UI."""
+
+
+@dataclass
 class DriverParam:
     """A single connection parameter announced by a driver."""
 
@@ -134,8 +144,8 @@ class DriverParam:
     """Whether a non-empty value is required."""
     default: str | int | None = None
     """Default value pre-filled in the UI."""
-    choices: list[str] | None = None
-    """Allowed values for ``"enum"`` params."""
+    choices: list[DriverParamChoice] | None = None
+    """Allowed options for ``"enum"`` params."""
     secret: bool = False
     """Mask input in the UI; value is never persisted to disk."""
 

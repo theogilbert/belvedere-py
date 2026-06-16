@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from ..protocol import (
     ColumnInfo,
     DMLResult,
+    DriverParamChoice,
     ExploreItem,
     ReadResult,
     TableDescription,
@@ -40,7 +41,10 @@ class SQLServerDriver(BaseDriver):
             key="applicationIntent",
             type="enum",
             label="Application Intent",
-            choices=["READ_WRITE", "READ_ONLY"],
+            choices=[
+                DriverParamChoice(value="READ_WRITE", label="READ_WRITE"),
+                DriverParamChoice(value="READ_ONLY", label="READ_ONLY"),
+            ],
         ),
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]

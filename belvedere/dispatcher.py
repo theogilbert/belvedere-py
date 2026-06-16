@@ -133,6 +133,11 @@ class Dispatcher:
             driver_cls = get_driver(driver_name)
         except ValueError as exc:
             raise DispatchError(str(exc)) from exc
+        missing = [
+            p.label for p in driver_cls.PARAMS if p.required and not params.get(p.key)
+        ]
+        if missing:
+            raise DispatchError(f"Missing required parameter(s): {', '.join(missing)}")
         driver = await driver_cls.create(params)
         conn_id = str(self._next_id)
         self._next_id += 1

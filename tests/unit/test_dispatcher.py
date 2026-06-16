@@ -14,10 +14,11 @@ from belvedere.dispatcher import (
 from belvedere.drivers.base import ConnectionLostError
 from belvedere.protocol import (
     ColumnInfo,
-    WriteResult,
+    DriverParam,
     ExploreItem,
     ReadResult,
     TableDescription,
+    WriteResult,
 )
 
 
@@ -196,6 +197,58 @@ class TestDriverHelp:
     ) -> None:
         with pytest.raises(DispatchError, match="Missing required param"):
             await dispatcher.dispatch("driver.help", {}, noop_progress)
+
+
+class TestConnect:
+    def _driver_class_with_params(self, params: list[DriverParam]) -> AsyncMock:
+        cls = AsyncMock()
+        cls.PARAMS = params
+        cls.create = AsyncMock(return_value=AsyncMock())
+        return cls
+
+    async def test_raises_when_required_param_is_missing(
+        self, dispatcher: Dispatcher
+    ) -> None:
+        cls = self._driver_class_with_params(
+            [DriverParam(key="host", type="string", label="Host")]
+        )
+        with patch("belvedere.dispatcher.get_driver", return_value=cls):
+            with pytest.raises(DispatchError, match="Host"):
+                await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+
+    async def test_raises_when_required_param_is_empty_string(
+        self, dispatcher: Dispatcher
+    ) -> None:
+        cls = self._driver_class_with_params(
+            [DriverParam(key="host", type="string", label="Host")]
+        )
+        with patch("belvedere.dispatcher.get_driver", return_value=cls):
+            with pytest.raises(DispatchError, match="Host"):
+                await dispatcher.dispatch(
+                    "connect", {"driver": "mock", "host": ""}, noop_progress
+                )
+
+    async def test_succeeds_when_all_required_params_are_provided(
+        self, dispatcher: Dispatcher
+    ) -> None:
+        cls = self._driver_class_with_params(
+            [DriverParam(key="host", type="string", label="Host")]
+        )
+        with patch("belvedere.dispatcher.get_driver", return_value=cls):
+            result = await dispatcher.dispatch(
+                "connect", {"driver": "mock", "host": "localhost"}, noop_progress
+            )
+        assert "connection_id" in result
+
+    async def test_optional_params_may_be_absent(self, dispatcher: Dispatcher) -> None:
+        cls = self._driver_class_with_params(
+            [DriverParam(key="user", type="string", label="User", required=False)]
+        )
+        with patch("belvedere.dispatcher.get_driver", return_value=cls):
+            result = await dispatcher.dispatch(
+                "connect", {"driver": "mock"}, noop_progress
+            )
+        assert "connection_id" in result
 
 
 class TestDispatch:

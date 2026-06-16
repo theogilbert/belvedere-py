@@ -81,9 +81,9 @@ class BaseDriver(ABC):
         """Return column metadata for the node at the given path.
 
         Args:
-            path: Ordered path segments identifying a table.
+            path: Ordered path segments identifying a node.
 
         Returns:
-            Column metadata, or None if the path does not resolve to a table.
+            Column metadata, or None if the path does not resolve to a node.
         """
         ...

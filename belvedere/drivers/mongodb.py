@@ -77,9 +77,8 @@ class MongoDriver(BaseDriver):
 | `username` | yes | Username (can also be embedded in the URI) |
 | `password` | yes | Password (masked; can also be embedded in the URI) |
 
-**Queries:** JSON command objects. The top-level key selects the operation and
-its value names the collection. Add `"db": "<name>"` to target a database other
-than the default.
+**Queries:** JSON command objects. `"db"` is required and names the target
+database. The top-level operation key names the collection.
 
 ```json
 {"find": "users", "db": "auth"}
@@ -88,14 +87,14 @@ than the default.
 **Read:**
 
 ```json
-{"find": "orders", "filter": {"status": "open"}, "sort": {"createdAt": -1}, "limit": 100}
+{"find": "orders", "db": "mydb", "filter": {"status": "open"}, "sort": {"createdAt": -1}, "limit": 100}
 ```
 
 `filter`, `sort`, `projection`, and `limit` are all optional. `find` defaults
 to a limit of 1000 rows when `"limit"` is omitted.
 
 ```json
-{"aggregate": "orders", "pipeline": [
+{"aggregate": "orders", "db": "mydb", "pipeline": [
   {"$group": {"_id": "$status", "total": {"$sum": "$amount"}}},
   {"$sort": {"total": -1}}
 ]}
@@ -104,9 +103,9 @@ to a limit of 1000 rows when `"limit"` is omitted.
 **Write:**
 
 ```json
-{"insertOne": "users", "document": {"name": "Alice", "age": 30}}
-{"updateOne": "users", "filter": {"name": "Alice"}, "update": {"$set": {"age": 31}}}
-{"deleteOne": "orders", "filter": {"status": "cancelled"}}
+{"insertOne": "users", "db": "mydb", "document": {"name": "Alice", "age": 30}}
+{"updateOne": "users", "db": "mydb", "filter": {"name": "Alice"}, "update": {"$set": {"age": 31}}}
+{"deleteOne": "orders", "db": "mydb", "filter": {"status": "cancelled"}}
 ```
 
 Results are flattened with dot-notation column names (`address.city`, `address.zip`).
@@ -193,7 +192,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
                 - ``deleteOne``: ``{"deleteOne": "col", "filter": {}}``
                 - ``deleteMany``: ``{"deleteMany": "col", "filter": {}}``
 
-                Add ``"db": "name"`` to target a database other than the default.
+                ``"db"`` is required and names the target database.
             binds: Unused for MongoDB.
         """
         try:
@@ -201,7 +200,11 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         except json.JSONDecodeError as exc:
             raise DriverError(f"MongoDB command must be valid JSON: {exc}") from exc
 
-        db = self._client[cmd.pop("db", self.params.get("database", "test"))]
+        if "db" not in cmd:
+            raise DriverError(
+                'MongoDB command must include a "db" key specifying the target database'
+            )
+        db = self._client[cmd.pop("db")]
         try:
             if "find" in cmd:
                 return await self._find(db, cmd)

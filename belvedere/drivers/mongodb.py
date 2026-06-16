@@ -57,7 +57,12 @@ class MongoDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="uri", type="string", label="Connection URI"),
+        DriverParam(
+            key="uri",
+            type="string",
+            label="Connection URI",
+            default="mongodb://localhost:27017",
+        ),
         DriverParam(key="database", type="string", label="Database"),
         DriverParam(key="username", type="string", label="Username", required=False),
         DriverParam(

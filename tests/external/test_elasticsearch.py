@@ -14,6 +14,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from belvedere.drivers.base import DriverError
 from belvedere.drivers.elasticsearch import ElasticsearchDriver
 from belvedere.protocol import ReadResult, TableDescription
 
@@ -53,8 +54,8 @@ async def dev_tools_driver() -> AsyncGenerator[ElasticsearchDriver, None]:
 
 @pytest.fixture(autouse=True)
 async def clean_index(driver: ElasticsearchDriver) -> AsyncGenerator[None, None]:
-    driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
-    driver._client.indices.create(
+    await driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
+    await driver._client.indices.create(
         index=_INDEX,
         body={
             "mappings": {
@@ -67,18 +68,20 @@ async def clean_index(driver: ElasticsearchDriver) -> AsyncGenerator[None, None]
         },
     )
     yield
-    driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
+    await driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
 
 
-def _index_docs(driver: ElasticsearchDriver, docs: list[dict]) -> None:
+async def _index_docs(driver: ElasticsearchDriver, docs: list[dict]) -> None:
     for doc in docs:
-        driver._client.index(index=_INDEX, document=doc)
-    driver._client.indices.refresh(index=_INDEX)
+        await driver._client.index(index=_INDEX, document=doc)
+    await driver._client.indices.refresh(index=_INDEX)
 
 
 class TestExecute:
     async def test_returns_columns_and_rows(self, driver: ElasticsearchDriver) -> None:
-        _index_docs(driver, [{"name": "Alice", "status": "active", "total": 10.0}])
+        await _index_docs(
+            driver, [{"name": "Alice", "status": "active", "total": 10.0}]
+        )
         result = await driver.execute(f"{_INDEX} | *", [])
         assert isinstance(result, ReadResult)
         assert "name" in result.columns
@@ -93,7 +96,7 @@ class TestExecute:
         assert result.rows == []
 
     async def test_filters_by_field(self, driver: ElasticsearchDriver) -> None:
-        _index_docs(
+        await _index_docs(
             driver,
             [
                 {"name": "Alice", "status": "active"},
@@ -108,7 +111,7 @@ class TestExecute:
     async def test_raises_for_missing_separator(
         self, driver: ElasticsearchDriver
     ) -> None:
-        with pytest.raises(ValueError, match="index.*query"):
+        with pytest.raises(DriverError, match="index.*query"):
             await driver.execute("no separator here", [])
 
 
@@ -116,7 +119,7 @@ class TestExecuteDSL:
     async def test_match_all_returns_rows(
         self, dev_tools_driver: ElasticsearchDriver
     ) -> None:
-        _index_docs(dev_tools_driver, [{"name": "Alice", "status": "active"}])
+        await _index_docs(dev_tools_driver, [{"name": "Alice", "status": "active"}])
         result = await dev_tools_driver.execute(
             f"GET /{_INDEX}/_search\n" + '{"query": {"match_all": {}}}', []
         )
@@ -126,7 +129,7 @@ class TestExecuteDSL:
     async def test_filters_by_field(
         self, dev_tools_driver: ElasticsearchDriver
     ) -> None:
-        _index_docs(
+        await _index_docs(
             dev_tools_driver,
             [
                 {"name": "Alice", "status": "active"},
@@ -150,7 +153,7 @@ class TestExecuteDSL:
     async def test_raises_for_missing_method_path(
         self, dev_tools_driver: ElasticsearchDriver
     ) -> None:
-        with pytest.raises(ValueError, match="Kibana Dev Tools"):
+        with pytest.raises(DriverError, match="Kibana Dev Tools"):
             await dev_tools_driver.execute("just a query with no method", [])
 
 

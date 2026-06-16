@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from ..protocol import (
     ColumnInfo,
     DMLResult,
+    DriverParam,
     DriverParamChoice,
     ExploreItem,
     ReadResult,
     TableDescription,
-    DriverParam,
 )
 from .base import BaseDriver, ConnectionLostError, DriverError
 
@@ -33,7 +33,7 @@ class SQLServerDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="host", type="string", label="Host", default="localhost"),
+        DriverParam(key="host", type="string", label="Host"),
         DriverParam(key="port", type="integer", label="Port", default=1433),
         DriverParam(key="database", type="string", label="Database"),
         DriverParam(key="user", type="string", label="User"),

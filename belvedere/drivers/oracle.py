@@ -70,11 +70,9 @@ class OracleDriver(BaseDriver):
     """
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="host", type="string", label="Host", default="localhost"),
+        DriverParam(key="host", type="string", label="Host"),
         DriverParam(key="port", type="integer", label="Port", default=1521),
-        DriverParam(
-            key="service_name", type="string", label="Service Name", default="FREEPDB1"
-        ),
+        DriverParam(key="service_name", type="string", label="Service Name"),
         DriverParam(key="user", type="string", label="User"),
         DriverParam(key="password", type="string", label="Password", secret=True),
     ]

@@ -6,6 +6,7 @@ import sys
 from typing import Any, BinaryIO
 
 from .dispatcher import DispatchError, Dispatcher
+from .drivers import SENSITIVE_PARAM_KEYS
 from .drivers.base import DriverError
 from .protocol import (
     DecodeError,
@@ -20,7 +21,6 @@ from .protocol import (
 
 
 _LOG_CAP = 512
-_SENSITIVE_KEYS = frozenset({"password"})
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def _truncate(text: str) -> str:
 
 
 def _redact(params: dict[str, Any]) -> dict[str, Any]:
-    return {k: "***" if k in _SENSITIVE_KEYS else v for k, v in params.items()}
+    return {k: "***" if k in SENSITIVE_PARAM_KEYS else v for k, v in params.items()}
 
 
 class Server:

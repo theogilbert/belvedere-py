@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Self
 
-from ..protocol import DMLResult, ExploreItem, ReadResult, TableDescription
+from ..protocol import DMLResult, DriverParam, ExploreItem, ReadResult, TableDescription
 
 
 class DriverError(Exception):
@@ -18,6 +18,9 @@ class BaseDriver(ABC):
     Args:
         params: Raw connect request fields (e.g. ``{"driver": "sqlite", "database": "..."}``).
     """
+
+    PARAMS: list[DriverParam] = []
+    """Connection parameters declared by each driver subclass."""
 
     def __init__(self, params: dict[str, Any]) -> None:
         self.params = params

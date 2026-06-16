@@ -142,3 +142,8 @@ def list_drivers() -> list[Driver]:
     except ImportError:
         pass
     return techs
+
+
+SENSITIVE_PARAM_KEYS: frozenset[str] = frozenset(
+    p.key for d in list_drivers() for p in d.params if p.secret
+)

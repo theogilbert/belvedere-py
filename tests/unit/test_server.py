@@ -27,21 +27,18 @@ class TestTruncate:
 
 
 class TestRedact:
-    def test_should_redact_password(self) -> None:
+    def test_redacts_password(self) -> None:
         assert _redact({"password": "secret"}) == {"password": "***"}
 
-    def test_should_preserve_non_sensitive_keys(self) -> None:
-        params = {"driver": "postgres", "host": "localhost", "user": "alice"}
+    def test_preserves_non_sensitive_keys(self) -> None:
+        params = {"driver": "sqlite", "host": "localhost", "user": "alice"}
         assert _redact(params) == params
 
-    def test_should_redact_password_while_preserving_other_keys(self) -> None:
-        params = {"host": "localhost", "user": "alice", "password": "secret"}
-        result = _redact(params)
-        assert result["password"] == "***"
-        assert result["host"] == "localhost"
-        assert result["user"] == "alice"
+    def test_redacts_password_while_preserving_other_keys(self) -> None:
+        result = _redact({"host": "localhost", "user": "alice", "password": "secret"})
+        assert result == {"host": "localhost", "user": "alice", "password": "***"}
 
-    def test_should_return_empty_dict_unchanged(self) -> None:
+    def test_empty_dict_unchanged(self) -> None:
         assert _redact({}) == {}
 
 

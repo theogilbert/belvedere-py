@@ -5,11 +5,13 @@ from typing import Any, TypeVar
 
 from ..protocol import (
     ColumnInfo,
-    WriteResult,
+    DriverParam,
     ExploreItem,
+    IndexDescription,
+    IndexKeyField,
     ReadResult,
     TableDescription,
-    DriverParam,
+    WriteResult,
 )
 from .base import BaseDriver, DriverError
 
@@ -173,7 +175,9 @@ metadata (name, type, nullability, primary key flag).
             case _:
                 return []
 
-    async def explore_describe(self, path: list[str]) -> TableDescription | None:
+    async def explore_describe(
+        self, path: list[str]
+    ) -> TableDescription | IndexDescription | None:
         """Return column metadata for the table at the given path.
 
         Args:
@@ -184,8 +188,9 @@ metadata (name, type, nullability, primary key flag).
         """
         return await self._run(self._explore_describe_sync, path)
 
-    def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
-
+    def _explore_describe_sync(
+        self, path: list[str]
+    ) -> TableDescription | IndexDescription | None:
         match path:
             case [table]:
                 cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -197,6 +202,40 @@ metadata (name, type, nullability, primary key flag).
                         )
                         for r in cols
                     ],
+                )
+            case [table, "indices", index_name]:
+                index_list = self._conn.execute(
+                    f"PRAGMA index_list({table})"
+                ).fetchall()
+                index_row = next((r for r in index_list if r[1] == index_name), None)
+                if index_row is None:
+                    return None
+                unique = bool(index_row[2])
+                is_partial = bool(index_row[4])
+                xinfo = self._conn.execute(
+                    f"PRAGMA index_xinfo({index_name})"
+                ).fetchall()
+                fields = [
+                    IndexKeyField(name=r[2], direction="desc" if r[3] else "asc")
+                    for r in xinfo
+                    if r[5]  # key=1: part of the index key; 0 = implicit rowid
+                ]
+                condition = None
+                if is_partial:
+                    row = self._conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+                        (index_name,),
+                    ).fetchone()
+                    if row and row[0]:
+                        sql: str = row[0]
+                        where_pos = sql.upper().find(" WHERE ")
+                        if where_pos != -1:
+                            condition = sql[where_pos + 7 :].strip()
+                return IndexDescription(
+                    index=index_name,
+                    fields=fields,
+                    unique=unique,
+                    condition=condition,
                 )
             case _:
                 return None

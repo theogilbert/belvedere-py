@@ -5,7 +5,13 @@ import pathlib
 from dataclasses import asdict
 from typing import Any
 
-from .protocol import ColumnInfo, ExploreItem, TableDescription
+from .protocol import (
+    ColumnInfo,
+    ExploreItem,
+    IndexDescription,
+    IndexKeyField,
+    TableDescription,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +53,8 @@ class ConnectionCache:
         """Path to the backing JSON cache file."""
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
         """In-memory cache mapping path tuples to their explore.list results."""
-        self._describe: dict[tuple[str, ...], TableDescription | None] = {}
-        """In-memory cache mapping path tuples to their explore.describe results;
-        None means the path was fetched but does not resolve to a table."""
+        self._describe: dict[tuple[str, ...], TableDescription | IndexDescription] = {}
+        """In-memory cache mapping path tuples to their explore.describe results."""
         self._load()
 
     def reset(self) -> None:
@@ -80,28 +85,22 @@ class ConnectionCache:
         self._persist()
 
     def has_describe(self, path: list[str]) -> bool:
-        """Return True if explore.describe results for path are cached (including None).
+        """Return True if a non-None explore.describe result for path is cached.
 
         Args:
             path: Path segments identifying the node.
-
-        Returns:
-            True if the path has a cached result, whether it is a TableDescription or None.
         """
         return tuple(path) in self._describe
 
-    def get_describe(self, path: list[str]) -> TableDescription | None:
-        """Return cached explore.describe results for path.
-
-        Args:
-            path: Path segments identifying the node.
-
-        Returns:
-            Cached TableDescription, or None if the path does not resolve to a table.
-        """
+    def get_describe(
+        self, path: list[str]
+    ) -> TableDescription | IndexDescription | None:
+        """Return cached explore.describe results for path, or None on a miss."""
         return self._describe.get(tuple(path))
 
-    def set_describe(self, path: list[str], desc: TableDescription | None) -> None:
+    def set_describe(
+        self, path: list[str], desc: TableDescription | IndexDescription
+    ) -> None:
         """Store explore.describe results for path and persist to disk.
 
         Args:
@@ -121,15 +120,21 @@ class ConnectionCache:
                 self._list[key] = [ExploreItem(**item) for item in items]
             for str_path, desc in data.get("describe", {}).items():
                 key = tuple(json.loads(str_path))
-                self._describe[key] = (
-                    TableDescription(
+                if desc is None:
+                    pass  # legacy: None was cached before; skip it
+                elif desc.get("type") == "index":
+                    self._describe[key] = IndexDescription(
+                        index=desc["index"],
+                        fields=[IndexKeyField(**f) for f in desc.get("fields", [])],
+                        unique=desc.get("unique", False),
+                        condition=desc.get("condition"),
+                    )
+                else:
+                    self._describe[key] = TableDescription(
                         table=desc["table"],
                         schema=desc.get("schema"),
                         columns=[ColumnInfo(**col) for col in desc.get("columns", [])],
                     )
-                    if desc is not None
-                    else None
-                )
         except Exception:
             logger.warning(f"Discarding unreadable explore cache at {self._path}")
             self._list.clear()

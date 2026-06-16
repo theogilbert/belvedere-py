@@ -98,6 +98,34 @@ class TableDescription:
     """Ordered list of column metadata."""
     schema: str | None = None
     """Schema name, or None for databases without schema support."""
+    type: str = "table"
+    """Discriminator — always ``"table"``."""
+
+
+@dataclass
+class IndexKeyField:
+    """One field in an index key."""
+
+    name: str
+    """Field name."""
+    direction: str
+    """Sort direction or index kind (``"asc"``, ``"desc"``, ``"text"``, ``"hashed"``, …)."""
+
+
+@dataclass
+class IndexDescription:
+    """Key field metadata for an index returned by explore.describe."""
+
+    index: str
+    """Index name."""
+    fields: list[IndexKeyField]
+    """Ordered list of key fields."""
+    unique: bool = False
+    """Whether the index enforces uniqueness."""
+    condition: str | None = None
+    """Partial/filtered index predicate in the driver's native syntax; None if the index covers all documents."""
+    type: str = "index"
+    """Discriminator — always ``"index"``."""
 
 
 @dataclass

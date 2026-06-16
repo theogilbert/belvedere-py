@@ -5,11 +5,12 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from ..protocol import (
-    WriteResult,
     DriverParam,
     ExploreItem,
+    IndexDescription,
+    IndexKeyField,
     ReadResult,
-    TableDescription,
+    WriteResult,
 )
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError
@@ -18,6 +19,14 @@ if TYPE_CHECKING:
     import pymongo
 
 _DEFAULT_FIND_LIMIT = 1000
+
+
+def _index_direction(direction: Any) -> str:
+    if direction == 1:
+        return "asc"
+    if direction == -1:
+        return "desc"
+    return str(direction)
 
 
 class _Op(StrEnum):
@@ -136,7 +145,8 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         └── indexes  → index names
 ```
 
-`explore.describe` always returns `None` (no fixed schema).
+`explore.describe` is supported on `[database, collection, "indexes", index_name]` paths
+and returns the index key fields with their sort direction (`asc` / `desc`).
 """
 
     def __init__(
@@ -324,8 +334,27 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
             case _:
                 return []
 
-    async def explore_describe(self, path: list[str]) -> TableDescription | None:
-        return None
+    async def explore_describe(self, path: list[str]) -> IndexDescription | None:
+        match path:
+            case [db_name, collection_name, "indexes", index_name]:
+                info = await self._client[db_name][collection_name].index_information()
+                spec = info.get(index_name)
+                if spec is None:
+                    return None
+                partial = spec.get("partialFilterExpression")
+                return IndexDescription(
+                    index=index_name,
+                    fields=[
+                        IndexKeyField(name=field, direction=_index_direction(direction))
+                        for field, direction in spec.get("key", [])
+                    ],
+                    unique=bool(spec.get("unique", False)),
+                    condition=json.dumps(partial, separators=(",", ":"))
+                    if partial is not None
+                    else None,
+                )
+            case _:
+                return None
 
     async def _sample_fields(self, db_name: str, collection_name: str) -> list[str]:
         cursor = await self._client[db_name][collection_name].aggregate(

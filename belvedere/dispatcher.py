@@ -221,7 +221,8 @@ class Dispatcher:
             )
             return {"details": cache.get_describe(path)}
         desc = await conn.driver.explore_describe(path)
-        cache.set_describe(path, desc)
+        if desc is not None:
+            cache.set_describe(path, desc)
         return {"details": desc}
 
     def _route(self, method: str) -> Callable[..., Awaitable[dict[str, Any]]]:

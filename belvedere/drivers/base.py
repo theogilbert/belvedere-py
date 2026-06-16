@@ -2,11 +2,12 @@ from abc import ABC, abstractmethod
 from typing import Any, Self
 
 from ..protocol import (
-    WriteResult,
     DriverParam,
     ExploreItem,
+    IndexDescription,
     ReadResult,
     TableDescription,
+    WriteResult,
 )
 
 
@@ -83,7 +84,9 @@ class BaseDriver(ABC):
         ...
 
     @abstractmethod
-    async def explore_describe(self, path: list[str]) -> TableDescription | None:
+    async def explore_describe(
+        self, path: list[str]
+    ) -> TableDescription | IndexDescription | None:
         """Return column metadata for the node at the given path.
 
         Args:

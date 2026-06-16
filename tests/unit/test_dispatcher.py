@@ -455,6 +455,9 @@ class TestExploreDescribe:
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
+        driver.explore_describe.return_value = TableDescription(
+            table="t", columns=[ColumnInfo(name="id", type="INTEGER")]
+        )
         await disp.dispatch(
             "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
         )
@@ -494,6 +497,29 @@ class TestExploreDescribe:
             "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
         )
         assert driver.explore_list.await_count == 2
+
+    async def test_should_not_cache_none_result(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_describe.return_value = None
+        await disp.dispatch(
+            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+        )
+        await disp.dispatch(
+            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+        )
+        assert driver.explore_describe.await_count == 2
+
+    async def test_should_return_null_details_when_driver_returns_none(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_describe.return_value = None
+        result = await disp.dispatch(
+            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+        )
+        assert result == {"details": None}
 
 
 class TestConcurrency:

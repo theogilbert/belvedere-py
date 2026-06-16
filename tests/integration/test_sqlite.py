@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.sqlite import SQLiteDriver
-from belvedere.protocol import WriteResult, ExploreItem, ReadResult
+from belvedere.protocol import ExploreItem, IndexDescription, ReadResult, WriteResult
 
 
 @pytest.fixture
@@ -159,3 +159,65 @@ class TestExploreDescribe:
         self, driver: SQLiteDriver
     ) -> None:
         assert await driver.explore_describe([]) is None
+
+
+class TestExploreDescribeIndex:
+    async def test_basic_index_fields_and_direction(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.index == "idx"
+        assert len(desc.fields) == 1
+        assert desc.fields[0].name == "val"
+        assert desc.fields[0].direction == "asc"
+
+    async def test_descending_direction(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val DESC)", [])
+        desc = await driver.explore_describe(["t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.fields[0].direction == "desc"
+
+    async def test_unique_index(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, email TEXT)", [])
+        await driver.execute("CREATE UNIQUE INDEX idx ON t(email)", [])
+        desc = await driver.explore_describe(["t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.unique is True
+
+    async def test_non_unique_index(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.unique is False
+
+    async def test_multi_column_index(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, first TEXT, last TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(last, first)", [])
+        desc = await driver.explore_describe(["t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert [f.name for f in desc.fields] == ["last", "first"]
+
+    async def test_partial_index_condition(self, driver: SQLiteDriver) -> None:
+        await driver.execute(
+            "CREATE TABLE t (id INTEGER, email TEXT, active INTEGER)", []
+        )
+        await driver.execute("CREATE INDEX idx ON t(email) WHERE active = 1", [])
+        desc = await driver.explore_describe(["t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.condition == "active = 1"
+
+    async def test_non_partial_index_has_no_condition(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.condition is None
+
+    async def test_unknown_index_returns_none(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert await driver.explore_describe(["t", "indices", "no_such_idx"]) is None

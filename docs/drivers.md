@@ -29,8 +29,9 @@ SELECT * FROM users WHERE age > ?
     └── foreign_keys  → "col → ref_table.ref_col"
 ```
 
-`explore.describe` is supported on tables and views and returns full column
-metadata (name, type, nullability, primary key flag).
+`explore.describe` is supported on:
+- `[table|view]` — returns full column metadata (name, type, nullability, primary key flag)
+- `[table, "indices", index_name]` — returns an `IndexDescription` with key fields (name + direction), `unique`, and `condition` (the SQL WHERE clause for partial indexes)
 
 ---
 
@@ -266,4 +267,6 @@ Results are flattened with dot-notation column names (`address.city`,
         └── indexes  → index names
 ```
 
-`explore.describe` always returns `None` (no fixed schema).
+`explore.describe` is supported on `[database, collection, "indexes", index_name]` paths
+and returns an `IndexDescription` with key fields (name + direction), `unique`, and `condition`
+(the `partialFilterExpression` serialized as JSON, if set).

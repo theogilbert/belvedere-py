@@ -200,8 +200,7 @@ from the index mapping (name, type).
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `uri` | yes | Connection URI |
-| `database` | yes | Default database |
+| `uri` | yes | Connection URI (embed credentials and `authSource` here if needed) |
 | `username` | no | Username (can also be embedded in the URI) |
 | `password` | no | Password (masked; can also be embedded in the URI) |
 

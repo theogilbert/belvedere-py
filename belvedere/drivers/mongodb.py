@@ -65,7 +65,7 @@ class MongoDriver(BaseDriver):
     """MongoDB driver backed by the pymongo async API.
 
     Args:
-        params: Connect request fields (``uri``, ``database``).
+        params: Connect request fields (``uri``).
         client: Open AsyncMongoClient. Use :meth:`create` instead of constructing directly.
     """
 
@@ -76,7 +76,6 @@ class MongoDriver(BaseDriver):
             label="Connection URI",
             default="mongodb://localhost:27017",
         ),
-        DriverParam(key="database", type="string", label="Database"),
         DriverParam(key="username", type="string", label="Username", required=False),
         DriverParam(
             key="password", type="string", label="Password", required=False, secret=True
@@ -90,10 +89,9 @@ class MongoDriver(BaseDriver):
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `uri` | yes | Connection URI |
-| `database` | yes | Database |
-| `username` | yes | Username (can also be embedded in the URI) |
-| `password` | yes | Password (masked; can also be embedded in the URI) |
+| `uri` | yes | Connection URI (embed credentials and `authSource` here if needed) |
+| `username` | no | Username (can also be embedded in the URI) |
+| `password` | no | Password (masked; can also be embedded in the URI) |
 
 **Queries:** JSON command objects. `"db"` is required and names the target
 database. The top-level operation key names the collection.

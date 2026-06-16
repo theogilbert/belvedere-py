@@ -1,9 +1,7 @@
-"""Elasticsearch driver — requires: pip install elasticsearch"""
+"""Elasticsearch driver — requires: pip install elasticsearch aiohttp"""
 
-import asyncio
 import json
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from ..protocol import (
     ColumnInfo,
@@ -19,8 +17,6 @@ from .base import BaseDriver, ConnectionLostError, DriverError
 
 if TYPE_CHECKING:
     import elasticsearch
-
-T = TypeVar("T")
 
 _DEFAULT_SEARCH_SIZE = 1000
 
@@ -56,7 +52,7 @@ class ElasticsearchDriver(BaseDriver):
     HELP: str = """\
 ## Elasticsearch
 
-**Install:** `pip install elasticsearch`
+**Install:** `pip install elasticsearch aiohttp`
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
@@ -110,7 +106,7 @@ from the index mapping (name, type).
 """
 
     def __init__(
-        self, params: dict[str, Any], client: "elasticsearch.Elasticsearch"
+        self, params: dict[str, Any], client: "elasticsearch.AsyncElasticsearch"
     ) -> None:
         super().__init__(params)
         self._client = client
@@ -121,15 +117,12 @@ from the index mapping (name, type).
             import elasticsearch  # noqa: F401
         except ImportError:
             raise RuntimeError(
-                "elasticsearch not installed — run: pip install elasticsearch"
+                "elasticsearch not installed — run: pip install elasticsearch aiohttp"
             )
-        client = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: cls._open(params)
-        )
-        return cls(params, client)
+        return cls(params, cls._open(params))
 
     @staticmethod
-    def _open(params: dict[str, Any]) -> "elasticsearch.Elasticsearch":
+    def _open(params: dict[str, Any]) -> "elasticsearch.AsyncElasticsearch":
         import elasticsearch
 
         host = params.get("host", "localhost")
@@ -139,19 +132,18 @@ from the index mapping (name, type).
         password = params.get("password")
         if username and password:
             kwargs["basic_auth"] = (username, password)
-        return elasticsearch.Elasticsearch(**kwargs)
+        return elasticsearch.AsyncElasticsearch(**kwargs)
 
     async def reconnect(self) -> None:
-        self._client = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: self._open(self.params)
-        )
+        await self._client.close()
+        self._client = self._open(self.params)
 
     async def disconnect(self) -> None:
-        await asyncio.get_running_loop().run_in_executor(None, self._client.close)
+        await self._client.close()
 
     async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         try:
-            return await self._run(self._execute_sync, query)
+            return await self._execute(query)
         except Exception as exc:
             import elasticsearch
 
@@ -159,28 +151,28 @@ from the index mapping (name, type).
                 raise ConnectionLostError(str(exc)) from exc
             raise DriverError(str(exc)) from exc
 
-    def _execute_sync(self, query: str) -> ReadResult:
+    async def _execute(self, query: str) -> ReadResult:
         mode = self.params.get("query_mode", "lucene")
         if mode == "lucene":
-            return self._execute_lucene_sync(query)
+            return await self._execute_lucene(query)
         elif mode == "dev_tools":
-            return self._execute_dev_tools_sync(query)
+            return await self._execute_dev_tools(query)
         else:
             raise DriverError(f"Unknown query_mode: {mode!r}")
 
-    def _execute_lucene_sync(self, query: str) -> ReadResult:
+    async def _execute_lucene(self, query: str) -> ReadResult:
         if " | " not in query:
             raise DriverError(
                 "Query must be in the format: <index> | <query>\n"
                 "Example: orders | status:open AND total:>50"
             )
         index, _, lucene = query.partition(" | ")
-        resp = self._client.search(
+        resp = await self._client.search(
             index=index.strip(), q=lucene.strip(), size=_DEFAULT_SEARCH_SIZE
         )
         return self._hits_to_result(resp)
 
-    def _execute_dev_tools_sync(self, query: str) -> ReadResult:
+    async def _execute_dev_tools(self, query: str) -> ReadResult:
         _VALID_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"}
         lines = query.strip().splitlines()
         tokens = lines[0].strip().split(None, 1)
@@ -201,7 +193,7 @@ from the index mapping (name, type).
             if "_search" in path:
                 body.setdefault("size", _DEFAULT_SEARCH_SIZE)
             headers["Content-Type"] = "application/json"
-        raw = self._client.transport.perform_request(
+        raw = await self._client.transport.perform_request(
             method, path, body=body, headers=headers
         )
         resp = raw.body if hasattr(raw, "body") else raw
@@ -223,12 +215,11 @@ from the index mapping (name, type).
         return flatten_docs(columns, rows, rows_total=rows_total)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
-        return await self._run(self._explore_list_sync, path)
-
-    def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
-                resp = self._client.cat.indices(format="json", h="index", s="index")
+                resp = await self._client.cat.indices(
+                    format="json", h="index", s="index"
+                )
                 return [
                     ExploreItem(name=entry["index"], type="index", expandable=True)  # ty: ignore[invalid-argument-type]
                     for entry in resp
@@ -240,7 +231,7 @@ from the index mapping (name, type).
                     ExploreItem(name="aliases", type="group", expandable=True),
                 ]
             case [index, "mappings"]:
-                resp = self._client.indices.get_mapping(index=index)
+                resp = await self._client.indices.get_mapping(index=index)
                 props = resp[index]["mappings"].get("properties", {})
                 return [
                     ExploreItem(
@@ -249,7 +240,7 @@ from the index mapping (name, type).
                     for field, info in props.items()
                 ]
             case [index, "aliases"]:
-                resp = self._client.indices.get_alias(index=index)
+                resp = await self._client.indices.get_alias(index=index)
                 aliases = resp.get(index, {}).get("aliases", {})
                 return [
                     ExploreItem(name=alias, type="alias", expandable=False)
@@ -259,12 +250,9 @@ from the index mapping (name, type).
                 return []
 
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
-        return await self._run(self._explore_describe_sync, path)
-
-    def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
         match path:
             case [index]:
-                resp = self._client.indices.get_mapping(index=index)
+                resp = await self._client.indices.get_mapping(index=index)
                 props = resp[index]["mappings"].get("properties", {})
                 return TableDescription(
                     table=index,
@@ -276,6 +264,3 @@ from the index mapping (name, type).
                 )
             case _:
                 return None
-
-    async def _run(self, fn: Callable[..., T], *args: Any) -> T:
-        return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*args))

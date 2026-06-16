@@ -140,7 +140,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 
 ## Elasticsearch
 
-**Install:** `pip install elasticsearch`
+**Install:** `pip install elasticsearch aiohttp`
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|

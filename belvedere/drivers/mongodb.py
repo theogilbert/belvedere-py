@@ -43,6 +43,7 @@ def _docs_to_result(docs: list[dict[str, Any]]) -> ReadResult:
     if not docs:
         return ReadResult(columns=[], rows=[], rows_total=0)
     serialized = [{k: _serialize(v) for k, v in doc.items()} for doc in docs]
+    # dict.fromkeys deduplicates while preserving first-seen order (set would not)
     columns: list[str] = list(dict.fromkeys(k for doc in serialized for k in doc))
     rows = [[doc.get(col) for col in columns] for doc in serialized]
     return flatten_docs(columns, rows, rows_total=len(docs))

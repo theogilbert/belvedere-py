@@ -127,6 +127,7 @@ class ConnectionCache:
                         index=desc["index"],
                         fields=[IndexKeyField(**f) for f in desc.get("fields", [])],
                         unique=desc.get("unique", False),
+                        entity=desc.get("entity"),
                         condition=desc.get("condition"),
                     )
                 else:

@@ -17,7 +17,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.neo4j import Neo4jDriver
-from belvedere.protocol import WriteResult, ExploreItem, ReadResult
+from belvedere.protocol import ExploreItem, IndexDescription, ReadResult, WriteResult
 
 pytestmark = pytest.mark.external
 
@@ -29,6 +29,18 @@ def _params() -> dict:
         "password": os.environ.get("NEO4J_PASSWORD", ""),
         "database": os.environ.get("NEO4J_DATABASE", "neo4j"),
     }
+
+
+async def _drop_user_indexes(driver: Neo4jDriver) -> None:
+    """Drop all non-LOOKUP indexes (and their owning constraints) before each test."""
+    result = await driver.execute(
+        "SHOW INDEXES YIELD name, type WHERE type <> 'LOOKUP' RETURN name", []
+    )
+    if isinstance(result, ReadResult):
+        for row in result.rows:
+            name = row[0]
+            await driver.execute(f"DROP CONSTRAINT `{name}` IF EXISTS", [])
+            await driver.execute(f"DROP INDEX `{name}` IF EXISTS", [])
 
 
 @pytest.fixture
@@ -44,10 +56,12 @@ async def driver() -> AsyncGenerator[Neo4jDriver, None]:
 
 @pytest.fixture(autouse=True)
 async def clean_db(driver: Neo4jDriver) -> AsyncGenerator[None, None]:
-    """Wipe all nodes and relationships before each test."""
+    """Wipe all nodes, relationships, and user-defined indexes before each test."""
     await driver.execute("MATCH (n) DETACH DELETE n", [])
+    await _drop_user_indexes(driver)
     yield
     await driver.execute("MATCH (n) DETACH DELETE n", [])
+    await _drop_user_indexes(driver)
 
 
 class TestExecute:
@@ -191,3 +205,50 @@ class TestExploreDescribe:
         assert await driver.explore_describe([]) is None
         assert await driver.explore_describe(["entities"]) is None
         assert await driver.explore_describe(["entities", "User"]) is None
+
+
+class TestExploreDescribeIndex:
+    async def test_range_index_fields_and_direction(self, driver: Neo4jDriver) -> None:
+        await driver.execute("CREATE INDEX test_idx FOR (n:User) ON (n.name)", [])
+        desc = await driver.explore_describe(["indexes", "test_idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.index == "test_idx"
+        assert desc.entity == "User"
+        assert len(desc.fields) == 1
+        assert desc.fields[0].name == "name"
+        assert desc.fields[0].direction == "RANGE"
+
+    async def test_unique_index(self, driver: Neo4jDriver) -> None:
+        await driver.execute(
+            "CREATE CONSTRAINT test_idx_unique FOR (n:User) REQUIRE n.email IS UNIQUE",
+            [],
+        )
+        desc = await driver.explore_describe(["indexes", "test_idx_unique"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.unique is True
+
+    async def test_non_unique_index(self, driver: Neo4jDriver) -> None:
+        await driver.execute("CREATE INDEX test_idx FOR (n:User) ON (n.name)", [])
+        desc = await driver.explore_describe(["indexes", "test_idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.unique is False
+
+    async def test_composite_index_field_order(self, driver: Neo4jDriver) -> None:
+        await driver.execute(
+            "CREATE INDEX test_idx_composite FOR (n:User) ON (n.last, n.first)", []
+        )
+        desc = await driver.explore_describe(["indexes", "test_idx_composite"])
+        assert isinstance(desc, IndexDescription)
+        assert [f.name for f in desc.fields] == ["last", "first"]
+
+    async def test_lookup_index_has_no_fields(self, driver: Neo4jDriver) -> None:
+        items = await driver.explore_list(["indexes"])
+        lookup = next((i for i in items if "lookup" in i.name.lower()), None)
+        if lookup is None:
+            pytest.skip("no LOOKUP index found")
+        desc = await driver.explore_describe(["indexes", lookup.name])
+        assert isinstance(desc, IndexDescription)
+        assert desc.fields == []
+
+    async def test_unknown_index_returns_none(self, driver: Neo4jDriver) -> None:
+        assert await driver.explore_describe(["indexes", "no_such_idx"]) is None

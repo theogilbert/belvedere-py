@@ -3,11 +3,12 @@
 from typing import TYPE_CHECKING, Any, LiteralString
 
 from ..protocol import (
-    WriteResult,
-    ExploreItem,
-    ReadResult,
-    TableDescription,
     DriverParam,
+    ExploreItem,
+    IndexDescription,
+    IndexKeyField,
+    ReadResult,
+    WriteResult,
 )
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError
@@ -83,7 +84,9 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 └── indexes        → index name
 ```
 
-`explore.describe` always returns `None` (no fixed schema).
+`explore.describe` is supported on `["indexes", index_name]` paths and returns an
+`IndexDescription` with the indexed properties (direction = index type, e.g. `RANGE`,
+`TEXT`, `POINT`) and `unique`.
 """
 
     def __init__(self, params: dict[str, Any], driver: "neo4j.AsyncDriver") -> None:
@@ -216,8 +219,34 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
             case _:
                 return []
 
-    async def explore_describe(self, path: list[str]) -> TableDescription | None:
-        return None
+    async def explore_describe(self, path: list[str]) -> IndexDescription | None:
+        match path:
+            case ["indexes", index_name]:
+                spec = await self._index_info(index_name)
+                if spec is None:
+                    return None
+                labels_or_types: list[str] = spec["labelsOrTypes"] or []
+                return IndexDescription(
+                    index=index_name,
+                    fields=[
+                        IndexKeyField(name=prop, direction=spec["type"])
+                        for prop in (spec["properties"] or [])
+                    ],
+                    unique=spec["owningConstraint"] is not None,
+                    entity=", ".join(labels_or_types) if labels_or_types else None,
+                )
+            case _:
+                return None
+
+    async def _index_info(self, index_name: str) -> dict | None:
+        db = self.params.get("database", "neo4j")
+        async with self._driver.session(database=db) as session:
+            result = await session.run(
+                "SHOW INDEXES YIELD name, type, properties, labelsOrTypes, owningConstraint "
+                "RETURN name, type, properties, labelsOrTypes, owningConstraint"
+            )
+            rows = await result.data()
+        return next((r for r in rows if r["name"] == index_name), None)
 
     async def _query_column(self, query: LiteralString, key: str) -> list[str]:
         db = self.params.get("database", "neo4j")

@@ -122,6 +122,8 @@ class IndexDescription:
     """Ordered list of key fields."""
     unique: bool = False
     """Whether the index enforces uniqueness."""
+    entity: str | None = None
+    """Label, table, or collection the index operates on; None when implicit from the explore path."""
     condition: str | None = None
     """Partial/filtered index predicate in the driver's native syntax; None if the index covers all documents."""
     type: str = "index"

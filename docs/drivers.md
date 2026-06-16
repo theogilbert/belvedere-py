@@ -135,7 +135,10 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 └── indexes        → index name
 ```
 
-`explore.describe` always returns `None` (no fixed schema).
+`explore.describe` is supported on `["indexes", index_name]` paths and returns an
+`IndexDescription` with the indexed properties, `unique`, and `entity` (the node label or
+relationship type the index operates on). The `direction` field on each `IndexKeyField`
+holds the Neo4j index type (`RANGE`, `TEXT`, `POINT`, …).
 
 ---
 

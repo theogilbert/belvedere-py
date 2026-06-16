@@ -14,7 +14,7 @@ from belvedere.dispatcher import (
 from belvedere.drivers.base import ConnectionLostError
 from belvedere.protocol import (
     ColumnInfo,
-    DMLResult,
+    WriteResult,
     ExploreItem,
     ReadResult,
     TableDescription,
@@ -223,7 +223,7 @@ class TestExecute:
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
-        driver.execute.return_value = DMLResult(rows_affected=3)
+        driver.execute.return_value = WriteResult(rows_affected=3)
         result = await disp.dispatch(
             "execute",
             {"connection_id": conn_id, "query": "DELETE FROM t"},

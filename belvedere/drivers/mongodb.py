@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from ..protocol import (
-    DMLResult,
+    WriteResult,
     DriverParam,
     ExploreItem,
     ReadResult,
@@ -174,7 +174,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
     async def disconnect(self) -> None:
         await self._client.close()
 
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         """Run a MongoDB command expressed as a JSON string.
 
         Args:
@@ -245,38 +245,38 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         cursor = await col.aggregate(cmd.pop("pipeline", []))
         return _docs_to_result(await cursor.to_list())
 
-    async def _insert_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _insert_one(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
         col = db[cmd.pop("insertOne")]
         await col.insert_one(cmd.pop("document", {}))
-        return DMLResult(rows_affected=1)
+        return WriteResult(rows_affected=1)
 
-    async def _insert_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _insert_many(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
         col = db[cmd.pop("insertMany")]
         docs = cmd.pop("documents", [])
         if not docs:
-            return DMLResult(rows_affected=0)
+            return WriteResult(rows_affected=0)
         result = await col.insert_many(docs)
-        return DMLResult(rows_affected=len(result.inserted_ids))
+        return WriteResult(rows_affected=len(result.inserted_ids))
 
-    async def _update_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _update_one(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
         col = db[cmd.pop("updateOne")]
         result = await col.update_one(cmd.pop("filter", {}), cmd.pop("update", {}))
-        return DMLResult(rows_affected=result.modified_count)
+        return WriteResult(rows_affected=result.modified_count)
 
-    async def _update_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _update_many(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
         col = db[cmd.pop("updateMany")]
         result = await col.update_many(cmd.pop("filter", {}), cmd.pop("update", {}))
-        return DMLResult(rows_affected=result.modified_count)
+        return WriteResult(rows_affected=result.modified_count)
 
-    async def _delete_one(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _delete_one(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
         col = db[cmd.pop("deleteOne")]
         result = await col.delete_one(cmd.pop("filter", {}))
-        return DMLResult(rows_affected=result.deleted_count)
+        return WriteResult(rows_affected=result.deleted_count)
 
-    async def _delete_many(self, db: Any, cmd: dict[str, Any]) -> DMLResult:
+    async def _delete_many(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
         col = db[cmd.pop("deleteMany")]
         result = await col.delete_many(cmd.pop("filter", {}))
-        return DMLResult(rows_affected=result.deleted_count)
+        return WriteResult(rows_affected=result.deleted_count)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:

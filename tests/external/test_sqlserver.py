@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.sqlserver import SQLServerDriver
-from belvedere.protocol import DMLResult, ReadResult, TableDescription
+from belvedere.protocol import WriteResult, ReadResult, TableDescription
 
 pytestmark = pytest.mark.external
 
@@ -83,7 +83,7 @@ class TestExecute:
         result = await driver.execute(
             f"INSERT INTO dbo.{table} VALUES (?, ?)", [1, "hello"]
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
 
     async def test_should_return_rows_affected_for_delete(
@@ -93,7 +93,7 @@ class TestExecute:
         await driver.execute(f"INSERT INTO dbo.{table} VALUES (?)", [1])
         await driver.execute(f"INSERT INTO dbo.{table} VALUES (?)", [2])
         result = await driver.execute(f"DELETE FROM dbo.{table}", [])
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 2
 
     async def test_should_persist_inserts_within_connection(

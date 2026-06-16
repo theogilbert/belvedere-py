@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, Any, LiteralString
 
 from ..protocol import (
-    DMLResult,
+    WriteResult,
     ExploreItem,
     ReadResult,
     TableDescription,
@@ -124,7 +124,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
     async def disconnect(self) -> None:
         await self._driver.close()
 
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         """Run a Cypher statement. Positional bind values map to ``$0``, ``$1``, …
 
         Args:
@@ -157,7 +157,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
                     + c.relationships_deleted
                     + c.properties_set
                 )
-                return DMLResult(rows_affected=affected)
+                return WriteResult(rows_affected=affected)
         except Exception as exc:
             try:
                 import neo4j.exceptions as _exc

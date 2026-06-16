@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from ..protocol import (
     ColumnInfo,
-    DMLResult,
+    WriteResult,
     DriverParam,
     DriverParamChoice,
     ExploreItem,
@@ -149,7 +149,7 @@ from the index mapping (name, type).
     async def disconnect(self) -> None:
         await asyncio.get_running_loop().run_in_executor(None, self._client.close)
 
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         try:
             return await self._run(self._execute_sync, query)
         except Exception as exc:

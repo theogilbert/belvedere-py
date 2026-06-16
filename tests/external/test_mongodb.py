@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from belvedere.drivers.mongodb import MongoDriver
-from belvedere.protocol import DMLResult, ExploreItem, ReadResult
+from belvedere.protocol import WriteResult, ExploreItem, ReadResult
 
 pytestmark = pytest.mark.external
 
@@ -131,14 +131,14 @@ class TestExecuteDML:
         result = await driver.execute(
             _cmd(insertOne="users", document={"name": "Alice"}), []
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
 
     async def test_insert_many_returns_rows_affected(self, driver: MongoDriver) -> None:
         result = await driver.execute(
             _cmd(insertMany="users", documents=[{"name": "Alice"}, {"name": "Bob"}]), []
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 2
 
     async def test_update_one_returns_rows_affected(self, driver: MongoDriver) -> None:
@@ -154,7 +154,7 @@ class TestExecuteDML:
             ),
             [],
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
 
     async def test_update_many_returns_rows_affected(self, driver: MongoDriver) -> None:
@@ -170,7 +170,7 @@ class TestExecuteDML:
             ),
             [],
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 2
 
     async def test_delete_one_returns_rows_affected(self, driver: MongoDriver) -> None:
@@ -181,7 +181,7 @@ class TestExecuteDML:
         result = await driver.execute(
             _cmd(deleteOne="users", filter={"name": "Alice"}), []
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
 
     async def test_delete_many_returns_rows_affected(self, driver: MongoDriver) -> None:
@@ -192,7 +192,7 @@ class TestExecuteDML:
         result = await driver.execute(
             _cmd(deleteMany="users", filter={"role": "admin"}), []
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 2
 
 

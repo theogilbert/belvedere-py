@@ -1,7 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import Any, Self
 
-from ..protocol import DMLResult, DriverParam, ExploreItem, ReadResult, TableDescription
+from ..protocol import (
+    WriteResult,
+    DriverParam,
+    ExploreItem,
+    ReadResult,
+    TableDescription,
+)
 
 
 class DriverError(Exception):
@@ -49,7 +55,7 @@ class BaseDriver(ABC):
         ...
 
     @abstractmethod
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         """Run a database query and return the result.
 
         Args:

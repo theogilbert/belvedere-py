@@ -19,7 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.oracle import OracleDriver
-from belvedere.protocol import DMLResult, ReadResult, TableDescription
+from belvedere.protocol import WriteResult, ReadResult, TableDescription
 
 pytestmark = pytest.mark.external
 
@@ -101,7 +101,7 @@ class TestExecute:
         result = await driver.execute(
             f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [1, "hello"]
         )
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
 
     async def test_should_return_dml_result_for_delete(
@@ -111,7 +111,7 @@ class TestExecute:
         await driver.execute(f"INSERT INTO {schema}.{table} VALUES (:1)", [1])
         await driver.execute(f"INSERT INTO {schema}.{table} VALUES (:1)", [2])
         result = await driver.execute(f"DELETE FROM {schema}.{table}", [])
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 2
 
     async def test_should_persist_inserts_within_connection(

@@ -17,7 +17,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.neo4j import Neo4jDriver
-from belvedere.protocol import DMLResult, ExploreItem, ReadResult
+from belvedere.protocol import WriteResult, ExploreItem, ReadResult
 
 pytestmark = pytest.mark.external
 
@@ -66,7 +66,7 @@ class TestExecute:
         self, driver: Neo4jDriver
     ) -> None:
         result = await driver.execute("CREATE (n:User {name: 'Alice'})", [])
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected > 0
 
     async def test_should_return_dml_result_for_delete(
@@ -74,7 +74,7 @@ class TestExecute:
     ) -> None:
         await driver.execute("CREATE (n:User {name: 'Alice'})", [])
         result = await driver.execute("MATCH (n:User) DELETE n", [])
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected > 0
 
     async def test_should_serialize_node_to_dict(self, driver: Neo4jDriver) -> None:

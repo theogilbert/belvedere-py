@@ -3,7 +3,7 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.sqlite import SQLiteDriver
-from belvedere.protocol import DMLResult, ExploreItem, ReadResult
+from belvedere.protocol import WriteResult, ExploreItem, ReadResult
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ class TestExecute:
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         result = await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
 
     async def test_should_return_rows_affected_for_update(
@@ -35,7 +35,7 @@ class TestExecute:
         await driver.execute("INSERT INTO t VALUES (1, 'a')", [])
         await driver.execute("INSERT INTO t VALUES (2, 'b')", [])
         result = await driver.execute("UPDATE t SET val = 'x'", [])
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 2
 
     async def test_should_return_rows_affected_for_delete(
@@ -45,7 +45,7 @@ class TestExecute:
         await driver.execute("INSERT INTO t VALUES (1)", [])
         await driver.execute("INSERT INTO t VALUES (2)", [])
         result = await driver.execute("DELETE FROM t WHERE id = 1", [])
-        assert isinstance(result, DMLResult)
+        assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
 
     async def test_should_persist_inserts_within_connection(

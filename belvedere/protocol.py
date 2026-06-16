@@ -113,8 +113,8 @@ class ReadResult:
 
 
 @dataclass
-class DMLResult:
-    """Result of a DML statement (INSERT, UPDATE, DELETE)."""
+class WriteResult:
+    """Result of a write query."""
 
     rows_affected: int
     """Number of rows inserted, updated, or deleted."""

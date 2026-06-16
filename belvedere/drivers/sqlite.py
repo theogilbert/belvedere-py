@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 
 from ..protocol import (
     ColumnInfo,
-    DMLResult,
+    WriteResult,
     ExploreItem,
     ReadResult,
     TableDescription,
@@ -94,7 +94,7 @@ metadata (name, type, nullability, primary key flag).
     async def disconnect(self) -> None:
         await self._run(self._conn.close)
 
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         """Run a SQL statement.
 
         Args:
@@ -106,14 +106,14 @@ metadata (name, type, nullability, primary key flag).
         """
         return await self._run(self._execute_sync, query, binds)
 
-    def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | DMLResult:
+    def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | WriteResult:
 
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
             rows: list[list[Any]] = [list(r) for r in cur.fetchall()]
             return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
-        return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
+        return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         """List child nodes at the given path in the SQLite object tree.

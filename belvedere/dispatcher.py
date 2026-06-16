@@ -7,7 +7,7 @@ from typing import Any
 from .drivers import get_driver, get_driver_help, list_drivers
 from .drivers.base import BaseDriver, ConnectionLostError
 from .explore_cache import ConnectionCache, cache_file
-from .protocol import DMLResult, Method, ProgressCallback
+from .protocol import WriteResult, Method, ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ class Dispatcher:
             await conn.driver.reconnect()
             await send_progress("executing", "Retrying query…")
             result = await conn.driver.execute(query, binds)
-        if isinstance(result, DMLResult):
+        if isinstance(result, WriteResult):
             return {"rows_affected": result.rows_affected}
         return {
             "columns": result.columns,

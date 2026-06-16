@@ -4,7 +4,7 @@ from typing import Any
 
 from ..protocol import (
     ColumnInfo,
-    DMLResult,
+    WriteResult,
     DriverParam,
     ExploreItem,
     ReadResult,
@@ -155,7 +155,7 @@ column metadata (name, type, nullability, primary key flag, default).
     async def disconnect(self) -> None:
         await self._conn.close()
 
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | DMLResult:
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         """Run a SQL statement. Positional bind values map to ``:1``, ``:2``, … in the query.
 
         Args:
@@ -163,7 +163,7 @@ column metadata (name, type, nullability, primary key flag, default).
             binds: Positional bind parameters (referenced as ``:1``, ``:2``, … in the query).
 
         Returns:
-            ReadResult for queries that return rows, DMLResult otherwise.
+            ReadResult for queries that return rows, WriteResult otherwise.
 
         Raises:
             ConnectionLostError: If the connection was lost during execution.
@@ -175,7 +175,7 @@ column metadata (name, type, nullability, primary key flag, default).
                 columns = [d[0] for d in cur.description]
                 rows: list[list[Any]] = [list(r) for r in await cur.fetchall()]
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
-            return DMLResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
+            return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             import oracledb

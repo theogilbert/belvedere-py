@@ -30,6 +30,9 @@ class ElasticsearchDriver(BaseDriver):
         client: Open Elasticsearch client. Use :meth:`create` instead of constructing directly.
     """
 
+    LABEL = "Elasticsearch"
+    PACKAGE = "elasticsearch"
+
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type="string", label="Host"),
         DriverParam(key="port", type="integer", label="Port", default=9200),

@@ -69,6 +69,9 @@ class OracleDriver(BaseDriver):
         has_oracle_maintained: True when connected to Oracle 12c+.
     """
 
+    LABEL = "Oracle"
+    PACKAGE = "oracledb"
+
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type="string", label="Host"),
         DriverParam(key="port", type="integer", label="Port", default=1521),

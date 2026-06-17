@@ -45,6 +45,9 @@ class Neo4jDriver(BaseDriver):
         driver: Open AsyncDriver instance. Use :meth:`create` instead of constructing directly.
     """
 
+    LABEL = "Neo4j"
+    PACKAGE = "neo4j"
+
     PARAMS: list[DriverParam] = [
         DriverParam(
             key="uri", type="string", label="Bolt URI", default="bolt://localhost:7687"

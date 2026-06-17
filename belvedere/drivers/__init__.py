@@ -1,147 +1,65 @@
+import importlib
+from dataclasses import dataclass
+
 from .base import BaseDriver
 from ..protocol import Driver
 
 
+@dataclass(frozen=True)
+class RegisteredDriver:
+    module: str
+    class_name: str
+
+
+_REGISTRY: list[RegisteredDriver] = [
+    RegisteredDriver(module="sqlite", class_name="SQLiteDriver"),
+    RegisteredDriver(module="sqlserver", class_name="SQLServerDriver"),
+    RegisteredDriver(module="neo4j", class_name="Neo4jDriver"),
+    RegisteredDriver(module="oracle", class_name="OracleDriver"),
+    RegisteredDriver(module="mongodb", class_name="MongoDriver"),
+    RegisteredDriver(module="elasticsearch", class_name="ElasticsearchDriver"),
+]
+
+
 def get_driver_help(name: str) -> str:
     """Return the HELP string for a named driver without importing its optional package."""
-    match name.lower():
-        case "sqlite":
-            from .sqlite import SQLiteDriver
-
-            return SQLiteDriver.HELP
-        case "sqlserver":
-            from .sqlserver import SQLServerDriver
-
-            return SQLServerDriver.HELP
-        case "neo4j":
-            from .neo4j import Neo4jDriver
-
-            return Neo4jDriver.HELP
-        case "oracle":
-            from .oracle import OracleDriver
-
-            return OracleDriver.HELP
-        case "mongodb":
-            from .mongodb import MongoDriver
-
-            return MongoDriver.HELP
-        case "elasticsearch":
-            from .elasticsearch import ElasticsearchDriver
-
-            return ElasticsearchDriver.HELP
-        case _:
-            raise ValueError(f"Unknown driver: {name!r}")
+    return _load_class(_find(name)).HELP
 
 
 def get_driver(name: str) -> type[BaseDriver]:
-    match name.lower():
-        case "sqlite":
-            from .sqlite import SQLiteDriver
-
-            return SQLiteDriver
-        case "sqlserver":
-            try:
-                import mssql_python  # noqa: F401
-            except ImportError:
-                raise ValueError(
-                    "mssql-python not installed — run: pip install mssql-python"
-                )
-            from .sqlserver import SQLServerDriver
-
-            return SQLServerDriver
-        case "neo4j":
-            try:
-                import neo4j  # noqa: F401
-            except ImportError:
-                raise ValueError("neo4j not installed — run: pip install neo4j")
-            from .neo4j import Neo4jDriver
-
-            return Neo4jDriver
-        case "oracle":
-            try:
-                import oracledb  # noqa: F401
-            except ImportError:
-                raise ValueError("oracledb not installed — run: pip install oracledb")
-            from .oracle import OracleDriver
-
-            return OracleDriver
-        case "mongodb":
-            try:
-                import pymongo  # noqa: F401
-            except ImportError:
-                raise ValueError("pymongo not installed — run: pip install pymongo")
-            from .mongodb import MongoDriver
-
-            return MongoDriver
-        case "elasticsearch":
-            try:
-                import elasticsearch  # noqa: F401
-            except ImportError:
-                raise ValueError(
-                    "elasticsearch not installed — run: pip install elasticsearch"
-                )
-            from .elasticsearch import ElasticsearchDriver
-
-            return ElasticsearchDriver
-        case _:
-            raise ValueError(f"Unknown driver: {name!r}")
+    cls = _load_class(_find(name))
+    if cls.PACKAGE:
+        try:
+            importlib.import_module(cls.PACKAGE)
+        except ImportError:
+            raise ValueError(f"{cls.PACKAGE} not installed")
+    return cls
 
 
 def list_drivers() -> list[Driver]:
     """Return capabilities for every driver available in the current environment."""
-    from .sqlite import SQLiteDriver
+    result = []
+    for entry in _REGISTRY:
+        cls = _load_class(entry)
+        if cls.PACKAGE:
+            try:
+                importlib.import_module(cls.PACKAGE)
+            except ImportError:
+                continue
+        result.append(Driver(driver=entry.module, label=cls.LABEL, params=cls.PARAMS))
+    return result
 
-    techs = [Driver(driver="sqlite", label="SQLite", params=SQLiteDriver.PARAMS)]
-    try:
-        import mssql_python  # noqa: F401
-        from .sqlserver import SQLServerDriver
 
-        techs.append(
-            Driver(
-                driver="sqlserver", label="SQL Server", params=SQLServerDriver.PARAMS
-            )
-        )
-    except ImportError:
-        pass
-    try:
-        import neo4j  # noqa: F401
-        from .neo4j import Neo4jDriver
+def _find(name: str) -> RegisteredDriver:
+    for entry in _REGISTRY:
+        if entry.module == name.lower():
+            return entry
+    raise ValueError(f"Unknown driver: {name!r}")
 
-        techs.append(Driver(driver="neo4j", label="Neo4j", params=Neo4jDriver.PARAMS))
-    except ImportError:
-        pass
-    try:
-        import oracledb  # noqa: F401
-        from .oracle import OracleDriver
 
-        techs.append(
-            Driver(driver="oracle", label="Oracle", params=OracleDriver.PARAMS)
-        )
-    except ImportError:
-        pass
-    try:
-        import pymongo  # noqa: F401
-        from .mongodb import MongoDriver
-
-        techs.append(
-            Driver(driver="mongodb", label="MongoDB", params=MongoDriver.PARAMS)
-        )
-    except ImportError:
-        pass
-    try:
-        import elasticsearch  # noqa: F401
-        from .elasticsearch import ElasticsearchDriver
-
-        techs.append(
-            Driver(
-                driver="elasticsearch",
-                label="Elasticsearch",
-                params=ElasticsearchDriver.PARAMS,
-            )
-        )
-    except ImportError:
-        pass
-    return techs
+def _load_class(entry: RegisteredDriver) -> type[BaseDriver]:
+    mod = importlib.import_module(f".{entry.module}", package=__package__)
+    return getattr(mod, entry.class_name)  # type: ignore[return-value]
 
 
 SENSITIVE_PARAM_KEYS: frozenset[str] = frozenset(

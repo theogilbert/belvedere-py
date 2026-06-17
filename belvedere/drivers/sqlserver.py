@@ -32,6 +32,9 @@ class SQLServerDriver(BaseDriver):
         conn: Open mssql_python connection. Use :meth:`create` instead of constructing directly.
     """
 
+    LABEL = "SQL Server"
+    PACKAGE = "mssql_python"
+
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type="string", label="Host"),
         DriverParam(key="port", type="integer", label="Port", default=1433),

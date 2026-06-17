@@ -26,6 +26,8 @@ class SQLiteDriver(BaseDriver):
         conn: Open sqlite3 connection. Use :meth:`create` instead of constructing directly.
     """
 
+    LABEL = "SQLite"
+
     PARAMS: list[DriverParam] = [
         DriverParam(key="database", type="string", label="Database file path"),
     ]

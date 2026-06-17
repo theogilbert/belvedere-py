@@ -26,8 +26,17 @@ class BaseDriver(ABC):
         params: Raw connect request fields (e.g. ``{"driver": "sqlite", "database": "..."}``).
     """
 
+    LABEL: str = ""
+    """Human-readable display name declared by each driver subclass."""
+
+    PACKAGE: str | None = None
+    """Top-level package to import-check before use; None means always available."""
+
     PARAMS: list[DriverParam] = []
     """Connection parameters declared by each driver subclass."""
+
+    HELP: str = ""
+    """Markdown help text declared by each driver subclass."""
 
     def __init__(self, params: dict[str, Any]) -> None:
         self.params = params

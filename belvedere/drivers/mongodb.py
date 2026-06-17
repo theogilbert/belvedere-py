@@ -78,6 +78,9 @@ class MongoDriver(BaseDriver):
         client: Open AsyncMongoClient. Use :meth:`create` instead of constructing directly.
     """
 
+    LABEL = "MongoDB"
+    PACKAGE = "pymongo"
+
     PARAMS: list[DriverParam] = [
         DriverParam(
             key="uri",

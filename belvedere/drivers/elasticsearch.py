@@ -1,22 +1,22 @@
 """Elasticsearch driver — requires: pip install elasticsearch aiohttp"""
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+import elasticsearch
 
 from ..protocol import (
     ColumnInfo,
-    WriteResult,
     DriverParam,
     DriverParamChoice,
     ExploreItem,
+    ParamType,
     ReadResult,
     TableDescription,
+    WriteResult,
 )
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError
-
-if TYPE_CHECKING:
-    import elasticsearch
 
 _DEFAULT_SEARCH_SIZE = 1000
 
@@ -34,15 +34,21 @@ class ElasticsearchDriver(BaseDriver):
     PACKAGE = "elasticsearch"
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="host", type="string", label="Host"),
-        DriverParam(key="port", type="integer", label="Port", default=9200),
-        DriverParam(key="username", type="string", label="Username", required=False),
+        DriverParam(key="host", type=ParamType.STRING, label="Host"),
+        DriverParam(key="port", type=ParamType.INTEGER, label="Port", default=9200),
         DriverParam(
-            key="password", type="string", label="Password", secret=True, required=False
+            key="username", type=ParamType.STRING, label="Username", required=False
+        ),
+        DriverParam(
+            key="password",
+            type=ParamType.STRING,
+            label="Password",
+            secret=True,
+            required=False,
         ),
         DriverParam(
             key="query_mode",
-            type="enum",
+            type=ParamType.ENUM,
             label="Query Mode",
             choices=[
                 DriverParamChoice(value="lucene", label="Lucene"),
@@ -109,7 +115,7 @@ from the index mapping (name, type).
 """
 
     def __init__(
-        self, params: dict[str, Any], client: "elasticsearch.AsyncElasticsearch"
+        self, params: dict[str, Any], client: elasticsearch.AsyncElasticsearch
     ) -> None:
         super().__init__(params)
         self._client = client
@@ -117,18 +123,10 @@ from the index mapping (name, type).
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "ElasticsearchDriver":
-        try:
-            import elasticsearch  # noqa: F401
-        except ImportError:
-            raise RuntimeError(
-                "elasticsearch not installed — run: pip install elasticsearch aiohttp"
-            )
         return cls(params, cls._open(params))
 
     @staticmethod
-    def _open(params: dict[str, Any]) -> "elasticsearch.AsyncElasticsearch":
-        import elasticsearch
-
+    def _open(params: dict[str, Any]) -> elasticsearch.AsyncElasticsearch:
         host = params.get("host", "localhost")
         port = int(params.get("port", 9200))
         kwargs: dict[str, Any] = {"hosts": [f"http://{host}:{port}"]}
@@ -152,8 +150,6 @@ from the index mapping (name, type).
             self._ever_connected = True
             return result
         except Exception as exc:
-            import elasticsearch
-
             if isinstance(exc, elasticsearch.ConnectionError):
                 if self._ever_connected:
                     raise ConnectionLostError(str(exc)) from exc

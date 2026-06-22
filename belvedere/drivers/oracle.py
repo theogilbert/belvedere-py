@@ -2,13 +2,16 @@
 
 from typing import Any
 
+import oracledb
+
 from ..protocol import (
     ColumnInfo,
-    WriteResult,
     DriverParam,
     ExploreItem,
+    ParamType,
     ReadResult,
     TableDescription,
+    WriteResult,
 )
 from .base import BaseDriver, ConnectionLostError, DriverError
 
@@ -73,11 +76,13 @@ class OracleDriver(BaseDriver):
     PACKAGE = "oracledb"
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="host", type="string", label="Host"),
-        DriverParam(key="port", type="integer", label="Port", default=1521),
-        DriverParam(key="service_name", type="string", label="Service Name"),
-        DriverParam(key="user", type="string", label="User"),
-        DriverParam(key="password", type="string", label="Password", secret=True),
+        DriverParam(key="host", type=ParamType.STRING, label="Host"),
+        DriverParam(key="port", type=ParamType.INTEGER, label="Port", default=1521),
+        DriverParam(key="service_name", type=ParamType.STRING, label="Service Name"),
+        DriverParam(key="user", type=ParamType.STRING, label="User"),
+        DriverParam(
+            key="password", type=ParamType.STRING, label="Password", secret=True
+        ),
     ]
 
     HELP: str = """\
@@ -124,16 +129,11 @@ column metadata (name, type, nullability, primary key flag, default).
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "OracleDriver":
-        try:
-            import oracledb  # noqa: F401
-        except ImportError:
-            raise RuntimeError("oracledb not installed — run: pip install oracledb")
         conn, has_oracle_maintained = await cls._open(params)
         return cls(params, conn, has_oracle_maintained)
 
     @staticmethod
     async def _open(params: dict[str, Any]) -> tuple[Any, bool]:
-        import oracledb
 
         try:
             conn = await oracledb.connect_async(
@@ -181,8 +181,6 @@ column metadata (name, type, nullability, primary key flag, default).
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
-            import oracledb
-
             if isinstance(exc, oracledb.DatabaseError):
                 raise DriverError(str(exc)) from exc
             raise
@@ -316,10 +314,5 @@ column metadata (name, type, nullability, primary key flag, default).
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:
-    try:
-        import oracledb
-
-        if isinstance(exc, (oracledb.OperationalError, oracledb.InterfaceError)):
-            raise ConnectionLostError(str(exc)) from exc
-    except ImportError:
-        pass
+    if isinstance(exc, (oracledb.OperationalError, oracledb.InterfaceError)):
+        raise ConnectionLostError(str(exc)) from exc

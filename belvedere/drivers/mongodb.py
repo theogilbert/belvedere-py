@@ -2,21 +2,22 @@
 
 import json
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+import pymongo
+import pymongo.errors
 
 from ..protocol import (
     DriverParam,
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    ParamType,
     ReadResult,
     WriteResult,
 )
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError
-
-if TYPE_CHECKING:
-    import pymongo
 
 _DEFAULT_FIND_LIMIT = 1000
 
@@ -46,13 +47,19 @@ class MongoDriver(BaseDriver):
     PARAMS: list[DriverParam] = [
         DriverParam(
             key="uri",
-            type="string",
+            type=ParamType.STRING,
             label="Connection URI",
             default="mongodb://localhost:27017",
         ),
-        DriverParam(key="username", type="string", label="Username", required=False),
         DriverParam(
-            key="password", type="string", label="Password", required=False, secret=True
+            key="username", type=ParamType.STRING, label="Username", required=False
+        ),
+        DriverParam(
+            key="password",
+            type=ParamType.STRING,
+            label="Password",
+            required=False,
+            secret=True,
         ),
     ]
 
@@ -115,17 +122,13 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
 """
 
     def __init__(
-        self, params: dict[str, Any], client: "pymongo.AsyncMongoClient"
+        self, params: dict[str, Any], client: pymongo.AsyncMongoClient
     ) -> None:
         super().__init__(params)
         self._client = client
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "MongoDriver":
-        try:
-            from pymongo import AsyncMongoClient  # noqa: F401
-        except ImportError:
-            raise RuntimeError("pymongo not installed — run: pip install pymongo")
         return cls(params, await _make_mongo_client(params))
 
     async def reconnect(self) -> None:
@@ -344,15 +347,13 @@ def _serialize(value: Any) -> Any:
     return value
 
 
-async def _make_mongo_client(params: dict[str, Any]) -> "pymongo.AsyncMongoClient":
-    from pymongo import AsyncMongoClient
-
+async def _make_mongo_client(params: dict[str, Any]) -> pymongo.AsyncMongoClient:
     kwargs: dict[str, Any] = {}
     if params.get("username"):
         kwargs["username"] = params["username"]
     if params.get("password"):
         kwargs["password"] = params["password"]
-    client = AsyncMongoClient(params["uri"], **kwargs)
+    client = pymongo.AsyncMongoClient(params["uri"], **kwargs)
     try:
         # pymongo is lazy — force a connection to verify credentials
         await client.admin.command("ping")
@@ -363,10 +364,12 @@ async def _make_mongo_client(params: dict[str, Any]) -> "pymongo.AsyncMongoClien
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:
-    try:
-        from pymongo.errors import AutoReconnect, ConnectionFailure, NetworkTimeout
-
-        if isinstance(exc, (AutoReconnect, ConnectionFailure, NetworkTimeout)):
-            raise ConnectionLostError(str(exc)) from exc
-    except ImportError:
-        pass
+    if isinstance(
+        exc,
+        (
+            pymongo.errors.AutoReconnect,
+            pymongo.errors.ConnectionFailure,
+            pymongo.errors.NetworkTimeout,
+        ),
+    ):
+        raise ConnectionLostError(str(exc)) from exc

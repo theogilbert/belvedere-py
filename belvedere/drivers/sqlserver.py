@@ -2,21 +2,21 @@
 
 import asyncio
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
+
+import mssql_python
 
 from ..protocol import (
     ColumnInfo,
-    WriteResult,
     DriverParam,
     DriverParamChoice,
     ExploreItem,
+    ParamType,
     ReadResult,
     TableDescription,
+    WriteResult,
 )
 from .base import BaseDriver, ConnectionLostError, DriverError
-
-if TYPE_CHECKING:
-    import mssql_python
 
 T = TypeVar("T")
 
@@ -36,20 +36,22 @@ class SQLServerDriver(BaseDriver):
     PACKAGE = "mssql_python"
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="host", type="string", label="Host"),
-        DriverParam(key="port", type="integer", label="Port", default=1433),
-        DriverParam(key="database", type="string", label="Database"),
-        DriverParam(key="user", type="string", label="User"),
+        DriverParam(key="host", type=ParamType.STRING, label="Host"),
+        DriverParam(key="port", type=ParamType.INTEGER, label="Port", default=1433),
+        DriverParam(key="database", type=ParamType.STRING, label="Database"),
+        DriverParam(key="user", type=ParamType.STRING, label="User"),
         DriverParam(
             key="applicationIntent",
-            type="enum",
+            type=ParamType.ENUM,
             label="Application Intent",
             choices=[
                 DriverParamChoice(value="READ_WRITE", label="READ_WRITE"),
                 DriverParamChoice(value="READ_ONLY", label="READ_ONLY"),
             ],
         ),
-        DriverParam(key="password", type="string", label="Password", secret=True),
+        DriverParam(
+            key="password", type=ParamType.STRING, label="Password", secret=True
+        ),
     ]
 
     HELP: str = """\
@@ -112,9 +114,7 @@ column metadata (name, type, nullability, default).
         await self._run(self._conn.close)
 
     @staticmethod
-    async def _open(params: dict[str, Any]) -> "mssql_python.Connection":
-        import mssql_python
-
+    async def _open(params: dict[str, Any]) -> mssql_python.Connection:
         intent = params.get("applicationIntent", "")
         loop = asyncio.get_running_loop()
         try:
@@ -149,8 +149,6 @@ column metadata (name, type, nullability, default).
         try:
             return await self._run(self._execute_sync, query, binds)
         except Exception as exc:
-            import mssql_python
-
             if isinstance(
                 exc, (mssql_python.OperationalError, mssql_python.InterfaceError)
             ):

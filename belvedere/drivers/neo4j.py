@@ -1,20 +1,21 @@
 """Neo4j driver — requires: pip install neo4j"""
 
-from typing import TYPE_CHECKING, Any, LiteralString
+from typing import Any, LiteralString
+
+import neo4j
+import neo4j.exceptions
 
 from ..protocol import (
     DriverParam,
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    ParamType,
     ReadResult,
     WriteResult,
 )
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError
-
-if TYPE_CHECKING:
-    import neo4j
 
 
 class Neo4jDriver(BaseDriver):
@@ -30,11 +31,18 @@ class Neo4jDriver(BaseDriver):
 
     PARAMS: list[DriverParam] = [
         DriverParam(
-            key="uri", type="string", label="Bolt URI", default="bolt://localhost:7687"
+            key="uri",
+            type=ParamType.STRING,
+            label="Bolt URI",
+            default="bolt://localhost:7687",
         ),
-        DriverParam(key="user", type="string", label="User", default="neo4j"),
-        DriverParam(key="password", type="string", label="Password", secret=True),
-        DriverParam(key="database", type="string", label="Database", default="neo4j"),
+        DriverParam(key="user", type=ParamType.STRING, label="User", default="neo4j"),
+        DriverParam(
+            key="password", type=ParamType.STRING, label="Password", secret=True
+        ),
+        DriverParam(
+            key="database", type=ParamType.STRING, label="Database", default="neo4j"
+        ),
     ]
 
     HELP: str = """\
@@ -72,16 +80,12 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 `TEXT`, `POINT`) and `unique`.
 """
 
-    def __init__(self, params: dict[str, Any], driver: "neo4j.AsyncDriver") -> None:
+    def __init__(self, params: dict[str, Any], driver: neo4j.AsyncDriver) -> None:
         super().__init__(params)
         self._driver = driver
 
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "Neo4jDriver":
-        try:
-            import neo4j  # noqa: F401
-        except ImportError:
-            raise RuntimeError("neo4j not installed — run: pip install neo4j")
         return cls(params, await _make_neo4j_driver(params))
 
     async def reconnect(self) -> None:
@@ -126,13 +130,11 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
                 )
                 return WriteResult(rows_affected=affected)
         except Exception as exc:
-            try:
-                import neo4j.exceptions as _exc
-
-                if isinstance(exc, (_exc.ServiceUnavailable, _exc.SessionExpired)):
-                    raise ConnectionLostError(str(exc)) from exc
-            except ImportError:
-                pass
+            if isinstance(
+                exc,
+                (neo4j.exceptions.ServiceUnavailable, neo4j.exceptions.SessionExpired),
+            ):
+                raise ConnectionLostError(str(exc)) from exc
             raise DriverError(str(exc)) from exc
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
@@ -239,17 +241,12 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 
 def _serialize(value: Any) -> Any:
     """Recursively convert neo4j graph objects to plain Python values."""
-    try:
-        from neo4j.graph import Node, Relationship, Path
-
-        if isinstance(value, Node):
-            return {"_labels": sorted(value.labels), **dict(value)}
-        if isinstance(value, Relationship):
-            return {"_type": value.type, **dict(value)}
-        if isinstance(value, Path):
-            return [_serialize(n) for n in value.nodes]
-    except ImportError:
-        pass
+    if isinstance(value, neo4j.graph.Node):
+        return {"_labels": sorted(value.labels), **dict(value)}
+    if isinstance(value, neo4j.graph.Relationship):
+        return {"_type": value.type, **dict(value)}
+    if isinstance(value, neo4j.graph.Path):
+        return [_serialize(n) for n in value.nodes]
     if isinstance(value, list):
         return [_serialize(v) for v in value]
     if isinstance(value, dict):
@@ -257,11 +254,9 @@ def _serialize(value: Any) -> Any:
     return value
 
 
-async def _make_neo4j_driver(params: dict[str, Any]) -> "neo4j.AsyncDriver":
-    import neo4j as _neo4j
-
+async def _make_neo4j_driver(params: dict[str, Any]) -> neo4j.AsyncDriver:
     auth = (params.get("user", "neo4j"), params.get("password", ""))
-    driver = _neo4j.AsyncGraphDatabase.driver(params["uri"], auth=auth)
+    driver = neo4j.AsyncGraphDatabase.driver(params["uri"], auth=auth)
     try:
         await driver.verify_connectivity()
     except Exception as exc:

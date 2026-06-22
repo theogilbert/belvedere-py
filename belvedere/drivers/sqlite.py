@@ -9,6 +9,7 @@ from ..protocol import (
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    ParamType,
     ReadResult,
     TableDescription,
     WriteResult,
@@ -29,7 +30,7 @@ class SQLiteDriver(BaseDriver):
     LABEL = "SQLite"
 
     PARAMS: list[DriverParam] = [
-        DriverParam(key="database", type="string", label="Database file path"),
+        DriverParam(key="database", type=ParamType.STRING, label="Database file path"),
     ]
 
     HELP: str = """\

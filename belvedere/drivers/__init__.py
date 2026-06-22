@@ -1,8 +1,11 @@
 import importlib
+import logging
 from dataclasses import dataclass
 
 from .base import BaseDriver
 from ..protocol import Driver
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,25 +30,21 @@ def get_driver_help(name: str) -> str:
 
 
 def get_driver(name: str) -> type[BaseDriver]:
-    cls = _load_class(_find(name))
-    if cls.PACKAGE:
-        try:
-            importlib.import_module(cls.PACKAGE)
-        except ImportError:
-            raise ValueError(f"{cls.PACKAGE} not installed")
-    return cls
+    try:
+        return _load_class(_find(name))
+    except ImportError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def list_drivers() -> list[Driver]:
     """Return capabilities for every driver available in the current environment."""
     result = []
     for entry in _REGISTRY:
-        cls = _load_class(entry)
-        if cls.PACKAGE:
-            try:
-                importlib.import_module(cls.PACKAGE)
-            except ImportError:
-                continue
+        try:
+            cls = _load_class(entry)
+        except ImportError:
+            logger.info("Driver %r unavailable: package not installed", entry.module)
+            continue
         result.append(Driver(driver=entry.module, label=cls.LABEL, params=cls.PARAMS))
     return result
 

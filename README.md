@@ -13,7 +13,9 @@ This server can be used by compatible clients (e.g. [belvedere.nvim](https://git
 
 ```bash
 pip install belvedere-py
-# or with SQL Server support:
+# with all driver dependencies:
+pip install "belvedere-py[all]"
+# or with a specific driver only, e.g. SQL Server:
 pip install "belvedere-py[mssql]"
 ```
 

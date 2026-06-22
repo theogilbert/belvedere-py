@@ -135,7 +135,8 @@ SELECT * FROM 'glob/**/*.parquet'
             case []:
                 rows = self._conn.execute(
                     "SELECT schema_name FROM information_schema.schemata"
-                    " WHERE schema_name NOT IN ('information_schema', 'pg_catalog')"
+                    " WHERE catalog_name = current_catalog()"
+                    " AND schema_name NOT IN ('information_schema', 'pg_catalog')"
                     " ORDER BY schema_name"
                 ).fetchall()
                 return [

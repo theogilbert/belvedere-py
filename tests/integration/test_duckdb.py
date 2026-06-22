@@ -85,6 +85,13 @@ class TestExploreList:
         assert "information_schema" not in names
         assert "pg_catalog" not in names
 
+    async def test_should_not_return_duplicate_schemas(
+        self, driver: DuckDBDriver
+    ) -> None:
+        items = await driver.explore_list([])
+        names = [i.name for i in items]
+        assert len(names) == len(set(names))
+
     async def test_should_list_tables_in_schema(self, driver: DuckDBDriver) -> None:
         await driver.execute("CREATE TABLE users (id INTEGER)", [])
         items = await driver.explore_list(["main"])

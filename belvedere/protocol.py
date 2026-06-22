@@ -132,7 +132,7 @@ class IndexDescription:
 
 @dataclass
 class ReadResult:
-    """Result of a SELECT query."""
+    """Result of a read-only query."""
 
     columns: list[str]
     """Column names in order."""
@@ -160,14 +160,22 @@ class DriverParamChoice:
     """Human-readable display name shown in the UI."""
 
 
+class ParamType(StrEnum):
+    """Represent the possible types a driver parameter can have."""
+
+    STRING = "string"
+    INTEGER = "integer"
+    ENUM = "enum"
+
+
 @dataclass
 class DriverParam:
     """A single connection parameter announced by a driver."""
 
     key: str
     """Parameter key sent in ``connect.params``."""
-    type: str
-    """Value type — ``"string"``, ``"integer"``, or ``"enum"``."""
+    type: ParamType
+    """The type of values accepted for this parameter."""
     label: str
     """Human-readable label for UI display."""
     required: bool = True
@@ -177,7 +185,7 @@ class DriverParam:
     choices: list[DriverParamChoice] | None = None
     """Allowed options for ``"enum"`` params."""
     secret: bool = False
-    """Mask input in the UI; value is never persisted to disk."""
+    """Mask input in the UI; value is never persisted to disk by this server."""
 
 
 @dataclass

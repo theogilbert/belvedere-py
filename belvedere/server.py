@@ -25,14 +25,6 @@ _LOG_CAP = 512
 logger = logging.getLogger(__name__)
 
 
-def _truncate(text: str) -> str:
-    return text[:_LOG_CAP] + "…" if len(text) > _LOG_CAP else text
-
-
-def _redact(params: dict[str, Any]) -> dict[str, Any]:
-    return {k: "***" if k in SENSITIVE_PARAM_KEYS else v for k, v in params.items()}
-
-
 class Server:
     """Stdio JSON server — reads requests from stdin, writes responses to out.
 
@@ -115,3 +107,11 @@ class Server:
             logger.debug(f"Sent {_truncate(data.decode(errors='replace').rstrip())}")
             self._out.write(data)
             self._out.flush()
+
+
+def _truncate(text: str) -> str:
+    return text[:_LOG_CAP] + "…" if len(text) > _LOG_CAP else text
+
+
+def _redact(params: dict[str, Any]) -> dict[str, Any]:
+    return {k: "***" if k in SENSITIVE_PARAM_KEYS else v for k, v in params.items()}

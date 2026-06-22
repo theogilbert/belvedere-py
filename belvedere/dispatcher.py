@@ -99,6 +99,25 @@ class Dispatcher:
         else:
             return await handler(None, None, params, send_progress)
 
+    def _route(self, method: str) -> Callable[..., Awaitable[dict[str, Any]]]:
+        match method:
+            case Method.CAPABILITIES:
+                return self._handle_capabilities
+            case Method.DRIVER_HELP:
+                return self._handle_driver_help
+            case Method.CONNECT:
+                return self._handle_connect
+            case Method.DISCONNECT:
+                return self._handle_disconnect
+            case Method.EXECUTE:
+                return self._handle_execute
+            case Method.EXPLORE_LIST:
+                return self._handle_explore_list
+            case Method.EXPLORE_DESCRIBE:
+                return self._handle_explore_describe
+            case _:
+                raise DispatchError(f"Unknown method: {method!r}")
+
     async def _handle_capabilities(
         self,
         _conn: None,
@@ -224,25 +243,6 @@ class Dispatcher:
         if desc is not None:
             cache.set_describe(path, desc)
         return {"details": desc}
-
-    def _route(self, method: str) -> Callable[..., Awaitable[dict[str, Any]]]:
-        match method:
-            case Method.CAPABILITIES:
-                return self._handle_capabilities
-            case Method.DRIVER_HELP:
-                return self._handle_driver_help
-            case Method.CONNECT:
-                return self._handle_connect
-            case Method.DISCONNECT:
-                return self._handle_disconnect
-            case Method.EXECUTE:
-                return self._handle_execute
-            case Method.EXPLORE_LIST:
-                return self._handle_explore_list
-            case Method.EXPLORE_DESCRIBE:
-                return self._handle_explore_describe
-            case _:
-                raise DispatchError(f"Unknown method: {method!r}")
 
     def _require_param(self, params: dict[str, Any], key: str) -> Any:
         if key not in params:

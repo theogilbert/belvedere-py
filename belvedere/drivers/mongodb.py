@@ -21,14 +21,6 @@ if TYPE_CHECKING:
 _DEFAULT_FIND_LIMIT = 1000
 
 
-def _index_direction(direction: Any) -> str:
-    if direction == 1:
-        return "asc"
-    if direction == -1:
-        return "desc"
-    return str(direction)
-
-
 class _Op(StrEnum):
     FIND = "find"
     AGGREGATE = "aggregate"
@@ -38,36 +30,6 @@ class _Op(StrEnum):
     UPDATE_MANY = "updateMany"
     DELETE_ONE = "deleteOne"
     DELETE_MANY = "deleteMany"
-
-
-def _serialize(value: Any) -> Any:
-    """Recursively convert BSON types to plain Python values."""
-    try:
-        from bson import Decimal128, ObjectId
-
-        if isinstance(value, ObjectId):
-            return str(value)
-        if isinstance(value, Decimal128):
-            return str(value)
-    except ImportError:
-        pass
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {k: _serialize(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_serialize(v) for v in value]
-    return value
-
-
-def _docs_to_result(docs: list[dict[str, Any]]) -> ReadResult:
-    if not docs:
-        return ReadResult(columns=[], rows=[], rows_total=0)
-    serialized = [{k: _serialize(v) for k, v in doc.items()} for doc in docs]
-    # dict.fromkeys deduplicates while preserving first-seen order (set would not)
-    columns: list[str] = list(dict.fromkeys(k for doc in serialized for k in doc))
-    rows = [[doc.get(col) for col in columns] for doc in serialized]
-    return flatten_docs(columns, rows, rows_total=len(docs))
 
 
 class MongoDriver(BaseDriver):
@@ -342,6 +304,44 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
 
     async def _list_indexes(self, db_name: str, collection_name: str) -> list[str]:
         return sorted(await self._client[db_name][collection_name].index_information())
+
+
+def _index_direction(direction: Any) -> str:
+    if direction == 1:
+        return "asc"
+    if direction == -1:
+        return "desc"
+    return str(direction)
+
+
+def _docs_to_result(docs: list[dict[str, Any]]) -> ReadResult:
+    if not docs:
+        return ReadResult(columns=[], rows=[], rows_total=0)
+    serialized = [{k: _serialize(v) for k, v in doc.items()} for doc in docs]
+    # dict.fromkeys deduplicates while preserving first-seen order (set would not)
+    columns: list[str] = list(dict.fromkeys(k for doc in serialized for k in doc))
+    rows = [[doc.get(col) for col in columns] for doc in serialized]
+    return flatten_docs(columns, rows, rows_total=len(docs))
+
+
+def _serialize(value: Any) -> Any:
+    """Recursively convert BSON types to plain Python values."""
+    try:
+        from bson import Decimal128, ObjectId
+
+        if isinstance(value, ObjectId):
+            return str(value)
+        if isinstance(value, Decimal128):
+            return str(value)
+    except ImportError:
+        pass
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _serialize(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_serialize(v) for v in value]
+    return value
 
 
 async def _make_mongo_client(params: dict[str, Any]) -> "pymongo.AsyncMongoClient":

@@ -17,26 +17,6 @@ if TYPE_CHECKING:
     import neo4j
 
 
-def _serialize(value: Any) -> Any:
-    """Recursively convert neo4j graph objects to plain Python values."""
-    try:
-        from neo4j.graph import Node, Relationship, Path
-
-        if isinstance(value, Node):
-            return {"_labels": sorted(value.labels), **dict(value)}
-        if isinstance(value, Relationship):
-            return {"_type": value.type, **dict(value)}
-        if isinstance(value, Path):
-            return [_serialize(n) for n in value.nodes]
-    except ImportError:
-        pass
-    if isinstance(value, list):
-        return [_serialize(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _serialize(v) for k, v in value.items()}
-    return value
-
-
 class Neo4jDriver(BaseDriver):
     """Neo4j driver backed by the official neo4j async Python client.
 
@@ -255,6 +235,26 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
                 " RETURN DISTINCT prop ORDER BY prop"
             )
             return [r["prop"] for r in await result.data()]
+
+
+def _serialize(value: Any) -> Any:
+    """Recursively convert neo4j graph objects to plain Python values."""
+    try:
+        from neo4j.graph import Node, Relationship, Path
+
+        if isinstance(value, Node):
+            return {"_labels": sorted(value.labels), **dict(value)}
+        if isinstance(value, Relationship):
+            return {"_type": value.type, **dict(value)}
+        if isinstance(value, Path):
+            return [_serialize(n) for n in value.nodes]
+    except ImportError:
+        pass
+    if isinstance(value, list):
+        return [_serialize(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _serialize(v) for k, v in value.items()}
+    return value
 
 
 async def _make_neo4j_driver(params: dict[str, Any]) -> "neo4j.AsyncDriver":

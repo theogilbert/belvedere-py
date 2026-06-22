@@ -3,28 +3,6 @@ from typing import Any
 from .protocol import ReadResult
 
 
-def _to_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return "{" + ", ".join(str(v) for v in value) + "}"
-    return str(value)
-
-
-def _flatten(prefix: str, value: Any) -> list[tuple[str, Any]]:
-    if isinstance(value, dict):
-        pairs: list[tuple[str, Any]] = []
-        for k, v in value.items():
-            pairs.extend(_flatten(f"{prefix}.{k}", v))
-        return pairs
-    if isinstance(value, list) and any(isinstance(v, dict) for v in value):
-        pairs = []
-        for i, v in enumerate(value):
-            pairs.extend(_flatten(f"{prefix}[{i}]", v))
-        return pairs
-    return [(prefix, value)]
-
-
 def flatten_docs(
     columns: list[str], rows: list[list[Any]], rows_total: int | None = None
 ) -> ReadResult:
@@ -64,3 +42,25 @@ def flatten_docs(
         rows=result_rows,
         rows_total=rows_total if rows_total is not None else len(result_rows),
     )
+
+
+def _to_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return "{" + ", ".join(str(v) for v in value) + "}"
+    return str(value)
+
+
+def _flatten(prefix: str, value: Any) -> list[tuple[str, Any]]:
+    if isinstance(value, dict):
+        pairs: list[tuple[str, Any]] = []
+        for k, v in value.items():
+            pairs.extend(_flatten(f"{prefix}.{k}", v))
+        return pairs
+    if isinstance(value, list) and any(isinstance(v, dict) for v in value):
+        pairs = []
+        for i, v in enumerate(value):
+            pairs.extend(_flatten(f"{prefix}[{i}]", v))
+        return pairs
+    return [(prefix, value)]

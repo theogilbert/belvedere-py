@@ -1,0 +1,228 @@
+from collections.abc import AsyncGenerator
+
+import pytest
+
+from belvedere.drivers.duckdb import DuckDBDriver
+from belvedere.protocol import (
+    ExploreItem,
+    IndexDescription,
+    ReadResult,
+    TableDescription,
+    WriteResult,
+)
+
+
+@pytest.fixture
+async def driver() -> AsyncGenerator[DuckDBDriver, None]:
+    d = await DuckDBDriver.create({"database": ":memory:"})
+    yield d
+    await d.disconnect()
+
+
+class TestExecute:
+    async def test_should_return_columns_and_rows(self, driver: DuckDBDriver) -> None:
+        result = await driver.execute("SELECT 1 AS n, 'a' AS s", [])
+        assert isinstance(result, ReadResult)
+        assert result.columns == ["n", "s"]
+        assert result.rows == [[1, "a"]]
+
+    async def test_should_return_rows_affected_for_insert(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        result = await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+    async def test_should_return_rows_affected_for_update(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("INSERT INTO t VALUES (1, 'a')", [])
+        await driver.execute("INSERT INTO t VALUES (2, 'b')", [])
+        result = await driver.execute("UPDATE t SET val = 'x'", [])
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 2
+
+    async def test_should_return_rows_affected_for_delete(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        await driver.execute("INSERT INTO t VALUES (1)", [])
+        await driver.execute("INSERT INTO t VALUES (2)", [])
+        result = await driver.execute("DELETE FROM t WHERE id = 1", [])
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+    async def test_should_persist_inserts_within_connection(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "hello"])
+        result = await driver.execute("SELECT * FROM t", [])
+        assert isinstance(result, ReadResult)
+        assert result.columns == ["id", "val"]
+        assert result.rows == [[1, "hello"]]
+
+    async def test_should_query_parquet_via_sql(self, driver: DuckDBDriver) -> None:
+        result = await driver.execute(
+            "SELECT 42 AS answer FROM (SELECT 1) t WHERE 1 = 1", []
+        )
+        assert isinstance(result, ReadResult)
+        assert result.columns == ["answer"]
+        assert result.rows == [[42]]
+
+
+class TestExploreList:
+    async def test_should_list_main_schema_at_root(self, driver: DuckDBDriver) -> None:
+        items = await driver.explore_list([])
+        assert ExploreItem(name="main", type="schema", expandable=True) in items
+
+    async def test_should_not_include_system_schemas(
+        self, driver: DuckDBDriver
+    ) -> None:
+        names = {i.name for i in await driver.explore_list([])}
+        assert "information_schema" not in names
+        assert "pg_catalog" not in names
+
+    async def test_should_list_tables_in_schema(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE users (id INTEGER)", [])
+        items = await driver.explore_list(["main"])
+        assert ExploreItem(name="users", type="table", expandable=True) in items
+
+    async def test_should_list_views_in_schema(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        await driver.execute("CREATE VIEW v AS SELECT * FROM t", [])
+        items = await driver.explore_list(["main"])
+        names = {i.name for i in items}
+        assert "v" in names
+        view = next(i for i in items if i.name == "v")
+        assert view.type == "view"
+
+    async def test_should_return_groups_for_table(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        items = await driver.explore_list(["main", "t"])
+        assert {i.name for i in items} == {"columns", "indices", "foreign_keys"}
+        assert all(i.type == "group" and i.expandable for i in items)
+
+    async def test_should_list_columns_in_definition_order(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        items = await driver.explore_list(["main", "t", "columns"])
+        assert [i.name for i in items] == ["id", "val"]
+        assert all(not i.expandable for i in items)
+
+    async def test_should_list_index_by_name(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx_val ON t(val)", [])
+        items = await driver.explore_list(["main", "t", "indices"])
+        assert any(i.name == "idx_val" for i in items)
+        assert all(not i.expandable for i in items)
+
+    async def test_should_return_empty_indices_when_none_exist(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert await driver.explore_list(["main", "t", "indices"]) == []
+
+    async def test_should_list_foreign_key_reference(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        items = await driver.explore_list(["main", "child", "foreign_keys"])
+        assert len(items) == 1
+        assert items[0].name == "parent_id → parent.id"
+        assert items[0].type == "foreign_key"
+        assert not items[0].expandable
+
+    async def test_should_return_empty_foreign_keys_when_none_exist(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert await driver.explore_list(["main", "t", "foreign_keys"]) == []
+
+    async def test_should_return_empty_for_unknown_path(
+        self, driver: DuckDBDriver
+    ) -> None:
+        assert await driver.explore_list(["a", "b", "c", "d"]) == []
+
+
+class TestExploreDescribe:
+    async def test_should_return_column_names_and_types(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert desc is not None
+        assert isinstance(desc, TableDescription)
+        assert desc.table == "t"
+        assert desc.schema == "main"
+        assert [c.name for c in desc.columns] == ["id", "val"]
+
+    async def test_should_return_nullable_flag(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert desc is not None
+        assert isinstance(desc, TableDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["a"].nullable is False
+        assert by_name["b"].nullable is True
+
+    async def test_should_return_pk_flag(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert desc is not None
+        assert isinstance(desc, TableDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["id"].pk is True
+        assert by_name["val"].pk is False
+
+    async def test_should_return_none_for_invalid_path(
+        self, driver: DuckDBDriver
+    ) -> None:
+        assert await driver.explore_describe([]) is None
+        assert await driver.explore_describe(["main"]) is None
+
+
+class TestExploreDescribeIndex:
+    async def test_basic_index_fields_and_direction(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["main", "t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.index == "idx"
+        assert len(desc.fields) == 1
+        assert desc.fields[0].name == "val"
+
+    async def test_unique_index(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, email TEXT)", [])
+        await driver.execute("CREATE UNIQUE INDEX idx ON t(email)", [])
+        desc = await driver.explore_describe(["main", "t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.unique is True
+
+    async def test_non_unique_index(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["main", "t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert desc.unique is False
+
+    async def test_multi_column_index(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, first TEXT, last TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(last, first)", [])
+        desc = await driver.explore_describe(["main", "t", "indices", "idx"])
+        assert isinstance(desc, IndexDescription)
+        assert [f.name for f in desc.fields] == ["last", "first"]
+
+    async def test_unknown_index_returns_none(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert (
+            await driver.explore_describe(["main", "t", "indices", "no_such_idx"])
+            is None
+        )

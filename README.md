@@ -36,6 +36,7 @@ belvedere [--log] [-v] [--max-concurrency N]
 | Driver | Dependency | Install |
 |--------|------------|---------|
 | `sqlite` | stdlib | — |
+| `duckdb` | `duckdb` | `pip install "belvedere-py[duckdb]"` |
 | `sqlserver` | `mssql-python` | `pip install "belvedere-py[mssql]"` |
 | `neo4j` | `neo4j` | `pip install neo4j` |
 | `oracle` | `oracledb` | `pip install oracledb` |

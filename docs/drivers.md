@@ -35,6 +35,39 @@ SELECT * FROM users WHERE age > ?
 
 ---
 
+## DuckDB
+
+**Install:** `pip install 'belvedere-py[duckdb]'`
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `database` | no | `:memory:` | File path or `:memory:` |
+
+**Queries:** Standard SQL. Positional bind parameters use `?` placeholders.
+
+```sql
+SELECT * FROM read_parquet('/path/to/file.parquet')
+SELECT * FROM read_csv('/path/to/file.csv', header = true)
+SELECT * FROM 'glob/**/*.parquet'
+```
+
+**Explore tree:**
+
+```
+(root)
+└── <schema>
+    └── <table|view>
+        ├── columns       → name, type
+        ├── indices       → index name
+        └── foreign_keys  → "col → ref_table.ref_col"
+```
+
+`explore.describe` is supported on:
+- `[schema, table]` — returns full column metadata (name, type, nullability, primary key flag)
+- `[schema, table, "indices", index_name]` — returns an `IndexDescription` with key fields (name + direction), `unique`, `entity` (table name), and `condition` (the SQL WHERE clause for partial indexes)
+
+---
+
 ## SQL Server
 
 **Install:** `pip install mssql-python`

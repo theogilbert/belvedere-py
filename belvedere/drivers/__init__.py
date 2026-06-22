@@ -16,6 +16,7 @@ class RegisteredDriver:
 
 _REGISTRY: list[RegisteredDriver] = [
     RegisteredDriver(module="sqlite", class_name="SQLiteDriver"),
+    RegisteredDriver(module="duckdb", class_name="DuckDBDriver"),
     RegisteredDriver(module="sqlserver", class_name="SQLServerDriver"),
     RegisteredDriver(module="neo4j", class_name="Neo4jDriver"),
     RegisteredDriver(module="oracle", class_name="OracleDriver"),

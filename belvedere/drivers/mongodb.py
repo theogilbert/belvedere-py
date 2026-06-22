@@ -161,44 +161,14 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "MongoDriver":
         try:
-            from pymongo import AsyncMongoClient
+            from pymongo import AsyncMongoClient  # noqa: F401
         except ImportError:
             raise RuntimeError("pymongo not installed — run: pip install pymongo")
-
-        kwargs: dict[str, Any] = {}
-        if params.get("username"):
-            kwargs["username"] = params["username"]
-        if params.get("password"):
-            kwargs["password"] = params["password"]
-        client = AsyncMongoClient(
-            params.get("uri", "mongodb://localhost:27017"), **kwargs
-        )
-        try:
-            # pymongo is lazy - force a connection to the db
-            await client.admin.command("ping")
-        except Exception as exc:
-            await client.close()
-            raise DriverError(str(exc)) from exc
-        return cls(params, client)
+        return cls(params, await _make_mongo_client(params))
 
     async def reconnect(self) -> None:
         await self._client.close()
-        from pymongo import AsyncMongoClient
-
-        kwargs: dict[str, Any] = {}
-        if self.params.get("username"):
-            kwargs["username"] = self.params["username"]
-        if self.params.get("password"):
-            kwargs["password"] = self.params["password"]
-        self._client = AsyncMongoClient(
-            self.params.get("uri", "mongodb://localhost:27017"), **kwargs
-        )
-        try:
-            # pymongo is lazy - force a connection to the db
-            await self._client.admin.command("ping")
-        except Exception as exc:
-            await self._client.close()
-            raise DriverError(str(exc)) from exc
+        self._client = await _make_mongo_client(self.params)
 
     async def disconnect(self) -> None:
         await self._client.close()
@@ -372,6 +342,24 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
 
     async def _list_indexes(self, db_name: str, collection_name: str) -> list[str]:
         return sorted(await self._client[db_name][collection_name].index_information())
+
+
+async def _make_mongo_client(params: dict[str, Any]) -> "pymongo.AsyncMongoClient":
+    from pymongo import AsyncMongoClient
+
+    kwargs: dict[str, Any] = {}
+    if params.get("username"):
+        kwargs["username"] = params["username"]
+    if params.get("password"):
+        kwargs["password"] = params["password"]
+    client = AsyncMongoClient(params["uri"], **kwargs)
+    try:
+        # pymongo is lazy — force a connection to verify credentials
+        await client.admin.command("ping")
+    except Exception as exc:
+        await client.close()
+        raise DriverError(str(exc)) from exc
+    return client
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:

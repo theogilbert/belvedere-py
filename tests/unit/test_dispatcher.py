@@ -5,7 +5,6 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from belvedere.dispatcher import (
-    CacheStore,
     Connection,
     DispatchError,
     Dispatcher,
@@ -51,32 +50,6 @@ class TestConnection:
         gate.set()
         await asyncio.gather(t1, t2)
         assert order == ["start:a", "end:a", "start:b", "end:b"]
-
-
-class TestCacheStore:
-    def test_open_creates_cache_accessible_by_conn_id(
-        self, tmp_path: pathlib.Path
-    ) -> None:
-        store = CacheStore(tmp_path)
-        store.open("1", {"driver": "sqlite"})
-        assert store["1"] is not None
-
-    def test_close_removes_cache(self, tmp_path: pathlib.Path) -> None:
-        store = CacheStore(tmp_path)
-        store.open("1", {"driver": "sqlite"})
-        store.close("1")
-        with pytest.raises(KeyError):
-            _ = store["1"]
-
-    def test_close_is_noop_for_unknown_conn(self, tmp_path: pathlib.Path) -> None:
-        store = CacheStore(tmp_path)
-        store.close("unknown")  # must not raise
-
-    def test_cache_files_are_scoped_to_cache_dir(self, tmp_path: pathlib.Path) -> None:
-        store = CacheStore(tmp_path)
-        store.open("1", {"driver": "sqlite", "database": "a.db"})
-        store.open("2", {"driver": "sqlite", "database": "b.db"})
-        assert store["1"] is not store["2"]
 
 
 class TestIdleTimer:

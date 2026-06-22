@@ -3,10 +3,11 @@ import json
 import logging
 import pathlib
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Self
 
 from belvedere.drivers import SENSITIVE_PARAM_KEYS
 
+from .drivers.base import BaseDriver, ReadResult, WriteResult
 from .protocol import (
     ColumnInfo,
     ExploreItem,
@@ -16,6 +17,51 @@ from .protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class CachingDriver(BaseDriver):
+    """BaseDriver decorator that intercepts explore calls for caching."""
+
+    def __init__(self, inner: BaseDriver, cache: "ConnectionCache") -> None:
+        super().__init__({})
+        self._inner = inner
+        self._cache = cache
+
+    @classmethod
+    async def create(cls, params: dict[str, Any]) -> Self:
+        raise NotImplementedError
+
+    async def reconnect(self) -> None:
+        await self._inner.reconnect()
+
+    async def disconnect(self) -> None:
+        await self._inner.disconnect()
+
+    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
+        return await self._inner.execute(query, binds)
+
+    async def explore_list(self, path: list[str]) -> list[ExploreItem]:
+        items = self._cache.get_list(path)
+        if items is None:
+            items = await self._inner.explore_list(path)
+            self._cache.set_list(path, items)
+        else:
+            logger.debug(f"explore.list cache hit for path {path}")
+        return items
+
+    async def explore_describe(
+        self, path: list[str]
+    ) -> TableDescription | IndexDescription | None:
+        if self._cache.has_describe(path):
+            logger.debug(f"explore.describe cache hit for path {path}")
+            return self._cache.get_describe(path)
+        desc = await self._inner.explore_describe(path)
+        if desc is not None:
+            self._cache.set_describe(path, desc)
+        return desc
+
+    def reset_cache(self) -> None:
+        self._cache.reset()
 
 
 def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:

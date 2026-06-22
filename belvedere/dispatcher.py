@@ -32,8 +32,8 @@ class Connection:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         """Limits concurrent access to max_concurrency requests."""
 
-    def reset_cache(self) -> None:
-        self.driver.reset_cache()
+    def reset_cache(self, path: list[str]) -> None:
+        self.driver.reset_cache(path)
 
     async def close(self) -> None:
         if self._idle_timer:

@@ -99,7 +99,7 @@ class TestResetCache:
         self, driver: CachingDriver, inner: AsyncMock
     ) -> None:
         await driver.explore_list([])
-        driver.reset_cache()
+        driver.reset_cache([])
         await driver.explore_list([])
         assert inner.explore_list.await_count == 2
 
@@ -107,9 +107,40 @@ class TestResetCache:
         self, driver: CachingDriver, inner: AsyncMock
     ) -> None:
         await driver.explore_describe(["s", "t"])
-        driver.reset_cache()
+        driver.reset_cache([])
         await driver.explore_describe(["s", "t"])
         assert inner.explore_describe.await_count == 2
+
+    async def test_reset_with_path_clears_subtree(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_list.side_effect = [
+            [ExploreItem(name="a", type="schema", expandable=True)],
+            [ExploreItem(name="b", type="table", expandable=False)],
+            [ExploreItem(name="a2", type="schema", expandable=True)],
+            [ExploreItem(name="b2", type="table", expandable=False)],
+        ]
+        await driver.explore_list(["s"])
+        await driver.explore_list(["s", "t"])
+        driver.reset_cache(["s"])
+        # both ["s"] and ["s", "t"] should be re-fetched
+        await driver.explore_list(["s"])
+        await driver.explore_list(["s", "t"])
+        assert inner.explore_list.await_count == 4
+
+    async def test_reset_with_path_leaves_siblings_intact(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_list.side_effect = [
+            [ExploreItem(name="s", type="schema", expandable=True)],
+            [ExploreItem(name="other", type="schema", expandable=True)],
+        ]
+        await driver.explore_list(["s"])
+        await driver.explore_list(["other"])
+        driver.reset_cache(["s"])
+        # ["other"] was not under ["s"], so it should still be cached
+        await driver.explore_list(["other"])
+        assert inner.explore_list.await_count == 2
 
 
 class TestDelegation:

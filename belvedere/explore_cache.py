@@ -60,8 +60,8 @@ class CachingDriver(BaseDriver):
             self._cache.set_describe(path, desc)
         return desc
 
-    def reset_cache(self) -> None:
-        self._cache.reset()
+    def reset_cache(self, path: list[str]) -> None:
+        self._cache.reset(path)
 
 
 def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:
@@ -103,11 +103,23 @@ class ConnectionCache:
         """In-memory cache mapping path tuples to their explore.describe results."""
         self._load()
 
-    def reset(self) -> None:
-        """Clear all cached results and delete the disk file."""
-        self._list.clear()
-        self._describe.clear()
-        self._path.unlink(missing_ok=True)
+    def reset(self, path: list[str]) -> None:
+        """Clear cached results at or below path, then persist or delete the disk file.
+
+        Args:
+            path: Path prefix to reset. Entries whose keys start with this prefix
+                (including the prefix itself) are removed. An empty list resets
+                the entire cache.
+        """
+        prefix = tuple(path)
+        n = len(prefix)
+        for d in (self._list, self._describe):
+            for k in [k for k in d if k[:n] == prefix]:
+                del d[k]
+        if self._list or self._describe:
+            self._persist()
+        else:
+            self._path.unlink(missing_ok=True)
 
     def get_list(self, path: list[str]) -> list[ExploreItem] | None:
         """Return cached explore.list results for path, or None on a miss.

@@ -104,9 +104,9 @@ class Server:
     async def _send(self, msg: Response) -> None:
         data = encode(msg)
         async with self._lock:
-            logger.debug(f"Sent {_truncate(data.decode(errors='replace').rstrip())}")
             self._out.write(data)
             self._out.flush()
+            logger.debug(f"Sent {_truncate(data.decode(errors='replace').rstrip())}")
 
 
 def _truncate(text: str) -> str:

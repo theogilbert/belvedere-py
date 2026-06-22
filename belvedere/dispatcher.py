@@ -39,6 +39,7 @@ _Handler = Callable[
     [Connection | None, ConnectionCache | None, dict[str, Any], ProgressCallback],
     Awaitable[dict[str, Any]],
 ]
+"""Function which handles a request to produce the content of a response."""
 
 _DEFAULT_IDLE_TIMEOUT = 600.0
 _CONNECTION_REQUIRED = frozenset(
@@ -67,7 +68,7 @@ class Dispatcher:
         """Monotonic counter used to generate unique connection IDs."""
 
     async def dispatch(
-        self, method: str, params: dict[str, Any], send_progress: ProgressCallback
+        self, method: Method, params: dict[str, Any], send_progress: ProgressCallback
     ) -> dict[str, Any]:
         """Dispatch a method call to its handler, serialized per connection.
 
@@ -99,7 +100,7 @@ class Dispatcher:
         else:
             return await handler(None, None, params, send_progress)
 
-    def _route(self, method: str) -> Callable[..., Awaitable[dict[str, Any]]]:
+    def _route(self, method: Method) -> Callable[..., Awaitable[dict[str, Any]]]:
         match method:
             case Method.CAPABILITIES:
                 return self._handle_capabilities

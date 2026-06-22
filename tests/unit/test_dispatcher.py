@@ -16,6 +16,7 @@ from belvedere.protocol import (
     ColumnInfo,
     DriverParam,
     ExploreItem,
+    Method,
     ParamType,
     ReadResult,
     TableDescription,
@@ -153,22 +154,24 @@ async def connected(
     with patch(
         "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
     ):
-        result = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+        result = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock"}, noop_progress
+        )
     return dispatcher, result["connection_id"], mock_driver
 
 
 class TestCapabilities:
     async def test_should_return_server_name(self, dispatcher: Dispatcher) -> None:
-        result = await dispatcher.dispatch("capabilities", {}, noop_progress)
+        result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
         assert result["server"] == "belvedere"
 
     async def test_should_always_include_sqlite(self, dispatcher: Dispatcher) -> None:
-        result = await dispatcher.dispatch("capabilities", {}, noop_progress)
+        result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
         drivers = [t.driver for t in result["drivers"]]
         assert "sqlite" in drivers
 
     async def test_params_have_required_fields(self, dispatcher: Dispatcher) -> None:
-        result = await dispatcher.dispatch("capabilities", {}, noop_progress)
+        result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
         for tech in result["drivers"]:
             assert len(tech.params) > 0
             for p in tech.params:
@@ -180,7 +183,7 @@ class TestCapabilities:
 class TestDriverHelp:
     async def test_should_return_markdown_content(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(
-            "driver.help", {"driver": "sqlite"}, noop_progress
+            Method.DRIVER_HELP, {"driver": "sqlite"}, noop_progress
         )
         assert "content" in result
         assert "SQLite" in result["content"]
@@ -190,14 +193,14 @@ class TestDriverHelp:
     ) -> None:
         with pytest.raises(DispatchError, match="Unknown driver"):
             await dispatcher.dispatch(
-                "driver.help", {"driver": "no_such"}, noop_progress
+                Method.DRIVER_HELP, {"driver": "no_such"}, noop_progress
             )
 
     async def test_should_raise_when_driver_param_missing(
         self, dispatcher: Dispatcher
     ) -> None:
         with pytest.raises(DispatchError, match="Missing required param"):
-            await dispatcher.dispatch("driver.help", {}, noop_progress)
+            await dispatcher.dispatch(Method.DRIVER_HELP, {}, noop_progress)
 
 
 class TestConnect:
@@ -215,7 +218,9 @@ class TestConnect:
         )
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             with pytest.raises(DispatchError, match="Host"):
-                await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+                await dispatcher.dispatch(
+                    Method.CONNECT, {"driver": "mock"}, noop_progress
+                )
 
     async def test_raises_when_required_param_is_empty_string(
         self, dispatcher: Dispatcher
@@ -226,7 +231,7 @@ class TestConnect:
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             with pytest.raises(DispatchError, match="Host"):
                 await dispatcher.dispatch(
-                    "connect", {"driver": "mock", "host": ""}, noop_progress
+                    Method.CONNECT, {"driver": "mock", "host": ""}, noop_progress
                 )
 
     async def test_succeeds_when_all_required_params_are_provided(
@@ -237,7 +242,7 @@ class TestConnect:
         )
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             result = await dispatcher.dispatch(
-                "connect", {"driver": "mock", "host": "localhost"}, noop_progress
+                Method.CONNECT, {"driver": "mock", "host": "localhost"}, noop_progress
             )
         assert "connection_id" in result
 
@@ -251,7 +256,7 @@ class TestConnect:
         )
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             result = await dispatcher.dispatch(
-                "connect", {"driver": "mock"}, noop_progress
+                Method.CONNECT, {"driver": "mock"}, noop_progress
             )
         assert "connection_id" in result
 
@@ -261,7 +266,7 @@ class TestDispatch:
         self, dispatcher: Dispatcher
     ) -> None:
         with pytest.raises(DispatchError, match="Unknown method"):
-            await dispatcher.dispatch("no_such", {}, noop_progress)
+            await dispatcher.dispatch("no_such", {}, noop_progress)  # type: ignore
 
 
 class TestExecute:
@@ -273,7 +278,9 @@ class TestExecute:
             columns=["id"], rows=[[1], [2]], rows_total=2
         )
         result = await disp.dispatch(
-            "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
+            Method.EXECUTE,
+            {"connection_id": conn_id, "query": "SELECT 1"},
+            noop_progress,
         )
         assert result == {"columns": ["id"], "rows": [[1], [2]], "rows_total": 2}
 
@@ -283,7 +290,7 @@ class TestExecute:
         disp, conn_id, driver = connected
         driver.execute.return_value = WriteResult(rows_affected=3)
         result = await disp.dispatch(
-            "execute",
+            Method.EXECUTE,
             {"connection_id": conn_id, "query": "DELETE FROM t"},
             noop_progress,
         )
@@ -294,7 +301,9 @@ class TestExecute:
     ) -> None:
         with pytest.raises(DispatchError):
             await dispatcher.dispatch(
-                "execute", {"connection_id": "x", "query": "SELECT 1"}, noop_progress
+                Method.EXECUTE,
+                {"connection_id": "x", "query": "SELECT 1"},
+                noop_progress,
             )
 
     async def test_should_reconnect_and_retry_when_connection_is_lost(
@@ -311,7 +320,7 @@ class TestExecute:
             progress_calls.append((status, message))
 
         result = await disp.dispatch(
-            "execute", {"connection_id": conn_id, "query": "SELECT 1"}, capture
+            Method.EXECUTE, {"connection_id": conn_id, "query": "SELECT 1"}, capture
         )
         assert result == {"columns": ["n"], "rows": [[42]], "rows_total": 1}
         assert driver.reconnect.await_count == 1
@@ -324,7 +333,7 @@ class TestDisconnect:
     ) -> None:
         disp, conn_id, _ = connected
         result = await disp.dispatch(
-            "disconnect", {"connection_id": conn_id}, noop_progress
+            Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
         )
         assert result == {"ok": True}
 
@@ -332,7 +341,7 @@ class TestDisconnect:
         self, dispatcher: Dispatcher
     ) -> None:
         result = await dispatcher.dispatch(
-            "disconnect", {"connection_id": "x"}, noop_progress
+            Method.DISCONNECT, {"connection_id": "x"}, noop_progress
         )
         assert result == {"ok": True}
 
@@ -346,7 +355,7 @@ class TestExploreList:
             ExploreItem(name="t", type="table", expandable=True)
         ]
         result = await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         assert result == {
             "items": [ExploreItem(name="t", type="table", expandable=True)]
@@ -357,10 +366,10 @@ class TestExploreList:
     ) -> None:
         disp, conn_id, driver = connected
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         driver.explore_list.assert_awaited_once()
 
@@ -369,10 +378,12 @@ class TestExploreList:
     ) -> None:
         disp, conn_id, driver = connected
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": ["dbo"]}, noop_progress
+            Method.EXPLORE_LIST,
+            {"connection_id": conn_id, "path": ["dbo"]},
+            noop_progress,
         )
         assert driver.explore_list.await_count == 2
 
@@ -381,10 +392,10 @@ class TestExploreList:
     ) -> None:
         disp, conn_id, driver = connected
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         await disp.dispatch(
-            "explore.list",
+            Method.EXPLORE_LIST,
             {"connection_id": conn_id, "path": [], "reset_cache": True},
             noop_progress,
         )
@@ -395,19 +406,23 @@ class TestExploreList:
     ) -> None:
         disp, conn_id, driver = connected
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": ["dbo"]}, noop_progress
+            Method.EXPLORE_LIST,
+            {"connection_id": conn_id, "path": ["dbo"]},
+            noop_progress,
         )
         # reset on one path clears all; both paths re-fetched
         await disp.dispatch(
-            "explore.list",
+            Method.EXPLORE_LIST,
             {"connection_id": conn_id, "path": [], "reset_cache": True},
             noop_progress,
         )
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": ["dbo"]}, noop_progress
+            Method.EXPLORE_LIST,
+            {"connection_id": conn_id, "path": ["dbo"]},
+            noop_progress,
         )
         assert (
             driver.explore_list.await_count == 4
@@ -419,23 +434,27 @@ class TestExploreList:
         with patch(
             "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
-            r1 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
-            r2 = await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+            r1 = await dispatcher.dispatch(
+                Method.CONNECT, {"driver": "mock"}, noop_progress
+            )
+            r2 = await dispatcher.dispatch(
+                Method.CONNECT, {"driver": "mock"}, noop_progress
+            )
         conn_a, conn_b = r1["connection_id"], r2["connection_id"]
         await dispatcher.dispatch(
-            "explore.list", {"connection_id": conn_a, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_a, "path": []}, noop_progress
         )
         await dispatcher.dispatch(
-            "explore.list", {"connection_id": conn_b, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_b, "path": []}, noop_progress
         )
         # resetting conn_a does not affect conn_b's cache
         await dispatcher.dispatch(
-            "explore.list",
+            Method.EXPLORE_LIST,
             {"connection_id": conn_a, "path": [], "reset_cache": True},
             noop_progress,
         )
         await dispatcher.dispatch(
-            "explore.list", {"connection_id": conn_b, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_b, "path": []}, noop_progress
         )
         assert (
             mock_driver.explore_list.await_count == 3
@@ -452,7 +471,9 @@ class TestExploreDescribe:
         )
         driver.explore_describe.return_value = td
         result = await disp.dispatch(
-            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
         )
         assert result == {"details": td}
 
@@ -464,10 +485,14 @@ class TestExploreDescribe:
             table="t", columns=[ColumnInfo(name="id", type="INTEGER")]
         )
         await disp.dispatch(
-            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
         )
         await disp.dispatch(
-            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
         )
         driver.explore_describe.assert_awaited_once()
 
@@ -476,10 +501,12 @@ class TestExploreDescribe:
     ) -> None:
         disp, conn_id, driver = connected
         await disp.dispatch(
-            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
         )
         await disp.dispatch(
-            "explore.describe",
+            Method.EXPLORE_DESCRIBE,
             {"connection_id": conn_id, "path": ["t"], "reset_cache": True},
             noop_progress,
         )
@@ -490,16 +517,16 @@ class TestExploreDescribe:
     ) -> None:
         disp, conn_id, driver = connected
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         # resetting via explore.describe also clears explore.list cache
         await disp.dispatch(
-            "explore.describe",
+            Method.EXPLORE_DESCRIBE,
             {"connection_id": conn_id, "path": ["t"], "reset_cache": True},
             noop_progress,
         )
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         assert driver.explore_list.await_count == 2
 
@@ -509,10 +536,14 @@ class TestExploreDescribe:
         disp, conn_id, driver = connected
         driver.explore_describe.return_value = None
         await disp.dispatch(
-            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
         )
         await disp.dispatch(
-            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
         )
         assert driver.explore_describe.await_count == 2
 
@@ -522,7 +553,9 @@ class TestExploreDescribe:
         disp, conn_id, driver = connected
         driver.explore_describe.return_value = None
         result = await disp.dispatch(
-            "explore.describe", {"connection_id": conn_id, "path": ["t"]}, noop_progress
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
         )
         assert result == {"details": None}
 
@@ -533,7 +566,7 @@ class TestConcurrency:
             "belvedere.dispatcher.get_driver", return_value=_driver_class(driver)
         ):
             result = await dispatcher.dispatch(
-                "connect", {"driver": "mock"}, noop_progress
+                Method.CONNECT, {"driver": "mock"}, noop_progress
             )
         return result["connection_id"]
 
@@ -557,14 +590,14 @@ class TestConcurrency:
 
         t1 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute",
+                Method.EXECUTE,
                 {"connection_id": conn_id, "query": "SELECT 1"},
                 noop_progress,
             )
         )
         t2 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute",
+                Method.EXECUTE,
                 {"connection_id": conn_id, "query": "SELECT 2"},
                 noop_progress,
             )
@@ -602,12 +635,16 @@ class TestConcurrency:
 
         t1 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_a, "query": "SELECT 1"}, noop_progress
+                Method.EXECUTE,
+                {"connection_id": conn_a, "query": "SELECT 1"},
+                noop_progress,
             )
         )
         t2 = asyncio.create_task(
             dispatcher.dispatch(
-                "execute", {"connection_id": conn_b, "query": "SELECT 2"}, noop_progress
+                Method.EXECUTE,
+                {"connection_id": conn_b, "query": "SELECT 2"},
+                noop_progress,
             )
         )
         await asyncio.sleep(0)  # let both tasks proceed
@@ -624,14 +661,14 @@ class TestIdleTimeout:
             "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             r = await dispatcher.dispatch(
-                "connect", {"driver": "mock", "idle_timeout": 0.05}, noop_progress
+                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
             )
         conn_id = r["connection_id"]
         await asyncio.sleep(0.15)
         mock_driver.disconnect.assert_awaited_once()
         with pytest.raises(DispatchError):
             await dispatcher.dispatch(
-                "execute",
+                Method.EXECUTE,
                 {"connection_id": conn_id, "query": "SELECT 1"},
                 noop_progress,
             )
@@ -643,12 +680,14 @@ class TestIdleTimeout:
             "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             r = await dispatcher.dispatch(
-                "connect", {"driver": "mock", "idle_timeout": 0.1}, noop_progress
+                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
             )
         conn_id = r["connection_id"]
         await asyncio.sleep(0.07)
         await dispatcher.dispatch(
-            "execute", {"connection_id": conn_id, "query": "SELECT 1"}, noop_progress
+            Method.EXECUTE,
+            {"connection_id": conn_id, "query": "SELECT 1"},
+            noop_progress,
         )
         await asyncio.sleep(0.07)
         mock_driver.disconnect.assert_not_awaited()
@@ -661,7 +700,7 @@ class TestIdleTimeout:
         with patch(
             "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
-            await dispatcher.dispatch("connect", {"driver": "mock"}, noop_progress)
+            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
         await asyncio.sleep(0.1)
         mock_driver.disconnect.assert_not_awaited()
 
@@ -672,11 +711,11 @@ class TestIdleTimeout:
             "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
             r = await dispatcher.dispatch(
-                "connect", {"driver": "mock", "idle_timeout": 0.1}, noop_progress
+                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
             )
         conn_id = r["connection_id"]
         await dispatcher.dispatch(
-            "disconnect", {"connection_id": conn_id}, noop_progress
+            Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
         )
         mock_driver.disconnect.assert_awaited_once()
         await asyncio.sleep(0.15)

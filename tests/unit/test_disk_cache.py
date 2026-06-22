@@ -5,7 +5,7 @@ import pytest
 
 from belvedere.dispatcher import Dispatcher
 from belvedere.explore_cache import cache_file
-from belvedere.protocol import ExploreItem, TableDescription
+from belvedere.protocol import ExploreItem, Method, TableDescription
 
 
 async def noop_progress(status: str, message: str) -> None:
@@ -28,7 +28,7 @@ def _driver_class(driver: AsyncMock) -> AsyncMock:
 
 async def connect(dispatcher: Dispatcher, driver: AsyncMock, params: dict) -> str:
     with patch("belvedere.dispatcher.get_driver", return_value=_driver_class(driver)):
-        result = await dispatcher.dispatch("connect", params, noop_progress)
+        result = await dispatcher.dispatch(Method.CONNECT, params, noop_progress)
     return result["connection_id"]
 
 
@@ -42,7 +42,7 @@ class TestDiskCache:
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         assert any(tmp_path.iterdir())
 
@@ -53,15 +53,17 @@ class TestDiskCache:
         disp1 = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp1, mock_driver, PARAMS)
         await disp1.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
-        await disp1.dispatch("disconnect", {"connection_id": conn_id}, noop_progress)
+        await disp1.dispatch(
+            Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
+        )
 
         # second session: cache loaded from disk, driver not called again
         disp2 = Dispatcher(cache_dir=tmp_path)
         conn_id2 = await connect(disp2, mock_driver, PARAMS)
         await disp2.dispatch(
-            "explore.list", {"connection_id": conn_id2, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id2, "path": []}, noop_progress
         )
 
         mock_driver.explore_list.assert_awaited_once()
@@ -72,14 +74,14 @@ class TestDiskCache:
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
 
         cache_path = cache_file(PARAMS, tmp_path)
         assert cache_path.exists()
 
         await disp.dispatch(
-            "explore.list",
+            Method.EXPLORE_LIST,
             {"connection_id": conn_id, "path": [], "reset_cache": True},
             noop_progress,
         )
@@ -96,23 +98,25 @@ class TestDiskCache:
         disp1 = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp1, mock_driver, PARAMS)
         await disp1.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
 
         # reset and return new data
         mock_driver.explore_list.return_value = [fresh_item]
         await disp1.dispatch(
-            "explore.list",
+            Method.EXPLORE_LIST,
             {"connection_id": conn_id, "path": [], "reset_cache": True},
             noop_progress,
         )
-        await disp1.dispatch("disconnect", {"connection_id": conn_id}, noop_progress)
+        await disp1.dispatch(
+            Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
+        )
 
         # second session: should load the post-reset data, not the original
         disp2 = Dispatcher(cache_dir=tmp_path)
         conn_id2 = await connect(disp2, mock_driver, PARAMS)
         result = await disp2.dispatch(
-            "explore.list", {"connection_id": conn_id2, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id2, "path": []}, noop_progress
         )
 
         assert result["items"] == [fresh_item]
@@ -127,7 +131,7 @@ class TestDiskCache:
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
         mock_driver.explore_list.assert_awaited_once()
 
@@ -138,7 +142,7 @@ class TestDiskCache:
         disp = Dispatcher(cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, params)
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_id, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
 
         cache_path = cache_file(params, tmp_path)
@@ -163,10 +167,10 @@ class TestDiskCache:
         conn_b = await connect(disp, driver_b, params_b)
 
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_a, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_a, "path": []}, noop_progress
         )
         await disp.dispatch(
-            "explore.list", {"connection_id": conn_b, "path": []}, noop_progress
+            Method.EXPLORE_LIST, {"connection_id": conn_b, "path": []}, noop_progress
         )
 
         assert cache_file(params_a, tmp_path) != cache_file(params_b, tmp_path)

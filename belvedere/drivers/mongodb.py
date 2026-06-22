@@ -42,7 +42,6 @@ class MongoDriver(BaseDriver):
     """
 
     LABEL = "MongoDB"
-    PACKAGE = "pymongo"
 
     PARAMS: list[DriverParam] = [
         DriverParam(

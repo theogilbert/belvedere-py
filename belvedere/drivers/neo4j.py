@@ -27,7 +27,6 @@ class Neo4jDriver(BaseDriver):
     """
 
     LABEL = "Neo4j"
-    PACKAGE = "neo4j"
 
     PARAMS: list[DriverParam] = [
         DriverParam(

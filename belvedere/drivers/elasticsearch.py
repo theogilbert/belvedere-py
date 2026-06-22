@@ -31,7 +31,6 @@ class ElasticsearchDriver(BaseDriver):
     """
 
     LABEL = "Elasticsearch"
-    PACKAGE = "elasticsearch"
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

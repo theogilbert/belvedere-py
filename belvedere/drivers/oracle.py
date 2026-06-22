@@ -73,7 +73,6 @@ class OracleDriver(BaseDriver):
     """
 
     LABEL = "Oracle"
-    PACKAGE = "oracledb"
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

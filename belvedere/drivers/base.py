@@ -29,9 +29,6 @@ class BaseDriver(ABC):
     LABEL: str = ""
     """Human-readable display name declared by each driver subclass."""
 
-    PACKAGE: str | None = None
-    """Top-level package to import-check before use; None means always available."""
-
     PARAMS: list[DriverParam] = []
     """Connection parameters declared by each driver subclass."""
 

@@ -33,7 +33,6 @@ class SQLServerDriver(BaseDriver):
     """
 
     LABEL = "SQL Server"
-    PACKAGE = "mssql_python"
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

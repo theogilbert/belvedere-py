@@ -265,8 +265,9 @@ def decode(line: bytes) -> Request:
     if not isinstance(data, dict):
         raise DecodeError(f"Request must be a JSON object, got {type(data).__name__}")
 
-    raw_id = data.get("id")
-    req_id = raw_id if isinstance(raw_id, int) else None
+    req_id = data.get("id")
+    if not isinstance(req_id, int):
+        raise DecodeError(f"Invalid request ID: {req_id!r}. Must be an integer.")
 
     try:
         data["method"] = Method(data.pop("method"))

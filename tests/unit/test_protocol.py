@@ -23,9 +23,13 @@ class TestDecode:
         with pytest.raises(DecodeError):
             decode(b"not json\n")
 
-    def test_should_raise_when_params_field_is_missing(self) -> None:
+    def test_should_raise_when_id_field_is_missing(self) -> None:
         with pytest.raises(DecodeError):
-            decode(b'{"id":1, "method": "connect"}\n')
+            decode(b'{"method": "connect", "params": {}}\n')
+
+    def test_should_raise_when_id_field_is_invalid(self) -> None:
+        with pytest.raises(DecodeError):
+            decode(b'{"id": "foo", "method": "connect", "params": {}}\n')
 
     def test_should_raise_when_method_field_is_missing(self) -> None:
         with pytest.raises(DecodeError):
@@ -34,6 +38,10 @@ class TestDecode:
     def test_should_raise_when_method_field_is_invalid(self) -> None:
         with pytest.raises(DecodeError):
             decode(b'{"id":1, "method": "invalid", "params": {}}\n')
+
+    def test_should_raise_when_params_field_is_missing(self) -> None:
+        with pytest.raises(DecodeError):
+            decode(b'{"id":1, "method": "connect"}\n')
 
     def test_should_raise_when_params_is_not_an_object(self) -> None:
         with pytest.raises(DecodeError, match="params must be a JSON object"):

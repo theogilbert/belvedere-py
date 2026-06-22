@@ -383,6 +383,22 @@ class TestExploreList:
             driver.explore_list.await_count == 4
         )  # 2 initial + re-fetch [] + re-fetch ["dbo"]
 
+    async def test_should_reconnect_and_retry_when_connection_is_lost(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_list.side_effect = [
+            ConnectionLostError(),
+            [ExploreItem(name="t", type="table", expandable=True)],
+        ]
+        result = await disp.dispatch(
+            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
+        )
+        assert result == {
+            "items": [ExploreItem(name="t", type="table", expandable=True)]
+        }
+        assert driver.reconnect.await_count == 1
+
     async def test_should_keep_separate_caches_per_connection(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
@@ -513,6 +529,22 @@ class TestExploreDescribe:
             noop_progress,
         )
         assert result == {"details": None}
+
+    async def test_should_reconnect_and_retry_when_connection_is_lost(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        td = TableDescription(
+            table="t", columns=[ColumnInfo(name="id", type="INTEGER")]
+        )
+        driver.explore_describe.side_effect = [ConnectionLostError(), td]
+        result = await disp.dispatch(
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
+        )
+        assert result == {"details": td}
+        assert driver.reconnect.await_count == 1
 
 
 class TestConcurrency:

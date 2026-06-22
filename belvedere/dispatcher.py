@@ -221,13 +221,9 @@ class Dispatcher:
     ) -> dict[str, Any]:
         query: str = self._require_param(params, "query")
         binds: list[Any] = params.get("params") or []
-        try:
-            result = await conn.driver.execute(query, binds)
-        except ConnectionLostError:
-            await send_progress("reconnecting", "Connection lost — reconnecting…")
-            await conn.driver.reconnect()
-            await send_progress("executing", "Retrying query…")
-            result = await conn.driver.execute(query, binds)
+        result = await self._reconnect_and_retry(
+            conn, lambda: conn.driver.execute(query, binds), send_progress
+        )
         if isinstance(result, WriteResult):
             return {"rows_affected": result.rows_affected}
         return {
@@ -240,25 +236,42 @@ class Dispatcher:
         self,
         conn: Connection,
         params: dict[str, Any],
-        _send_progress: ProgressCallback,
+        send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         path: list[str] = params.get("path") or []
         if params.get("reset_cache"):
-            conn.reset_cache()
-        items = await conn.driver.explore_list(path)
+            conn.reset_cache(path)
+        items = await self._reconnect_and_retry(
+            conn, lambda: conn.driver.explore_list(path), send_progress
+        )
         return {"items": items}
 
     async def _handle_explore_describe(
         self,
         conn: Connection,
         params: dict[str, Any],
-        _send_progress: ProgressCallback,
+        send_progress: ProgressCallback,
     ) -> dict[str, Any]:
         path: list[str] = params.get("path") or []
         if params.get("reset_cache"):
-            conn.reset_cache()
-        desc = await conn.driver.explore_describe(path)
+            conn.reset_cache(path)
+        desc = await self._reconnect_and_retry(
+            conn, lambda: conn.driver.explore_describe(path), send_progress
+        )
         return {"details": desc}
+
+    async def _reconnect_and_retry(
+        self,
+        conn: Connection,
+        coro_fn: Callable[[], Awaitable[Any]],
+        send_progress: ProgressCallback,
+    ) -> Any:
+        try:
+            return await coro_fn()
+        except ConnectionLostError:
+            await send_progress("reconnecting", "Connection lost — reconnecting…")
+            await conn.driver.reconnect()
+            return await coro_fn()
 
     def _require_conn(self, params: dict[str, Any]) -> Connection:
         conn_id = params.get("connection_id") or ""

@@ -99,33 +99,14 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
     @classmethod
     async def create(cls, params: dict[str, Any]) -> "Neo4jDriver":
         try:
-            import neo4j as _neo4j
+            import neo4j  # noqa: F401
         except ImportError:
             raise RuntimeError("neo4j not installed — run: pip install neo4j")
-        driver = _neo4j.AsyncGraphDatabase.driver(
-            params.get("uri", "bolt://localhost:7687"),
-            auth=(params.get("user", "neo4j"), params.get("password", "")),
-        )
-        try:
-            await driver.verify_connectivity()
-        except Exception as exc:
-            await driver.close()
-            raise DriverError(str(exc)) from exc
-        return cls(params, driver)
+        return cls(params, await _make_neo4j_driver(params))
 
     async def reconnect(self) -> None:
         await self._driver.close()
-        import neo4j as _neo4j
-
-        self._driver = _neo4j.AsyncGraphDatabase.driver(
-            self.params.get("uri", "bolt://localhost:7687"),
-            auth=(self.params.get("user", "neo4j"), self.params.get("password", "")),
-        )
-        try:
-            await self._driver.verify_connectivity()
-        except Exception as exc:
-            await self._driver.close()
-            raise DriverError(str(exc)) from exc
+        self._driver = await _make_neo4j_driver(self.params)
 
     async def disconnect(self) -> None:
         await self._driver.close()
@@ -274,3 +255,16 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
                 " RETURN DISTINCT prop ORDER BY prop"
             )
             return [r["prop"] for r in await result.data()]
+
+
+async def _make_neo4j_driver(params: dict[str, Any]) -> "neo4j.AsyncDriver":
+    import neo4j as _neo4j
+
+    auth = (params.get("user", "neo4j"), params.get("password", ""))
+    driver = _neo4j.AsyncGraphDatabase.driver(params["uri"], auth=auth)
+    try:
+        await driver.verify_connectivity()
+    except Exception as exc:
+        await driver.close()
+        raise DriverError(str(exc)) from exc
+    return driver

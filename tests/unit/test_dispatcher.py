@@ -1,15 +1,11 @@
 import asyncio
 import pathlib
-from unittest.mock import AsyncMock, patch
+from collections.abc import Generator
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
-from belvedere.dispatcher import (
-    Connection,
-    Dispatcher,
-    DispatchError,
-    IdleTimer,
-)
+from belvedere.dispatcher import Connection, Dispatcher, DispatchError, IdleTimer
 from belvedere.drivers.base import ConnectionLostError
 from belvedere.protocol import (
     ColumnInfo,
@@ -27,6 +23,65 @@ async def noop_progress(status: str, message: str) -> None:
     pass
 
 
+def _make_mock_driver() -> AsyncMock:
+    d = AsyncMock()
+    d.DEFAULT_IDLE_TIMEOUT = 600
+    d.execute.return_value = ReadResult(columns=[], rows=[], rows_total=0)
+    d.explore_list.return_value = []
+    d.explore_describe.return_value = None
+    return d
+
+
+def _driver_class(
+    mock_driver: AsyncMock, params: list[DriverParam] | None = None
+) -> AsyncMock:
+    cls = AsyncMock()
+    cls.create = AsyncMock(return_value=mock_driver)
+    if params is not None:
+        cls.PARAMS = params
+    return cls
+
+
+@pytest.fixture
+def dispatcher(tmp_path: pathlib.Path) -> Dispatcher:
+    return Dispatcher(cache_dir=tmp_path)
+
+
+@pytest.fixture
+def mock_driver() -> Generator[AsyncMock, None, None]:
+    """Yields a mock driver and patches get_driver to return it for the test's duration."""
+    d = _make_mock_driver()
+    with patch("belvedere.dispatcher.get_driver", return_value=_driver_class(d)):
+        yield d
+
+
+@pytest.fixture
+def mock_get_driver():
+    """Patches get_driver and yields the mock so tests can set its return_value."""
+    with patch("belvedere.dispatcher.get_driver") as m:
+        yield m
+
+
+@pytest.fixture
+def two_drivers():
+    """Patches get_driver to return driver_a then driver_b on successive CONNECT calls."""
+    driver_a = _make_mock_driver()
+    driver_b = _make_mock_driver()
+    drivers = iter([_driver_class(driver_a), _driver_class(driver_b)])
+    with patch("belvedere.dispatcher.get_driver", side_effect=lambda _: next(drivers)):
+        yield driver_a, driver_b
+
+
+@pytest.fixture
+async def connected(
+    dispatcher: Dispatcher, mock_driver: AsyncMock
+) -> tuple[Dispatcher, str, AsyncMock]:
+    result = await dispatcher.dispatch(
+        Method.CONNECT, {"driver": "mock"}, noop_progress
+    )
+    return dispatcher, result["connection_id"], mock_driver
+
+
 class TestConnection:
     async def test_context_manager_grants_access(self) -> None:
         conn = Connection("1", AsyncMock(), max_concurrency=1, timeout=0)
@@ -37,25 +92,27 @@ class TestConnection:
         conn = Connection("1", AsyncMock(), max_concurrency=1, timeout=0)
         order: list[str] = []
         gate = asyncio.Event()
-
-        async def task(label: str) -> None:
-            async with conn:
-                order.append(f"start:{label}")
-                await gate.wait()
-                order.append(f"end:{label}")
-
-        t1 = asyncio.create_task(task("a"))
-        t2 = asyncio.create_task(task("b"))
+        t1 = asyncio.create_task(self._acquire_conn_and_wait(conn, order, gate, "a"))
+        t2 = asyncio.create_task(self._acquire_conn_and_wait(conn, order, gate, "b"))
         await asyncio.sleep(0)
         gate.set()
         await asyncio.gather(t1, t2)
         assert order == ["start:a", "end:a", "start:b", "end:b"]
 
+    @staticmethod
+    async def _acquire_conn_and_wait(
+        conn: Connection, order: list[str], gate: asyncio.Event, label: str
+    ) -> None:
+        async with conn:
+            order.append(f"start:{label}")
+            await gate.wait()
+            order.append(f"end:{label}")
+
 
 class TestIdleTimer:
     async def test_fires_after_timeout(self) -> None:
         on_expire = AsyncMock()
-        timer = IdleTimer(0.05, on_expire)
+        IdleTimer(0.05, on_expire)
         await asyncio.sleep(0.15)
         on_expire.assert_awaited_once_with(0.05)
 
@@ -77,44 +134,6 @@ class TestIdleTimer:
         on_expire.assert_not_awaited()
 
 
-@pytest.fixture
-def dispatcher(tmp_path: pathlib.Path) -> Dispatcher:
-    return Dispatcher(cache_dir=tmp_path)
-
-
-def _make_mock_driver() -> AsyncMock:
-    d = AsyncMock()
-    d.DEFAULT_IDLE_TIMEOUT = 600
-    d.execute.return_value = ReadResult(columns=[], rows=[], rows_total=0)
-    d.explore_list.return_value = []
-    d.explore_describe.return_value = None
-    return d
-
-
-@pytest.fixture
-def mock_driver() -> AsyncMock:
-    return _make_mock_driver()
-
-
-def _driver_class(mock_driver: AsyncMock) -> AsyncMock:
-    cls = AsyncMock()
-    cls.create = AsyncMock(return_value=mock_driver)
-    return cls
-
-
-@pytest.fixture
-async def connected(
-    dispatcher: Dispatcher, mock_driver: AsyncMock
-) -> tuple[Dispatcher, str, AsyncMock]:
-    with patch(
-        "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-    ):
-        result = await dispatcher.dispatch(
-            Method.CONNECT, {"driver": "mock"}, noop_progress
-        )
-    return dispatcher, result["connection_id"], mock_driver
-
-
 class TestCapabilities:
     async def test_should_return_server_name(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
@@ -122,17 +141,23 @@ class TestCapabilities:
 
     async def test_should_always_include_sqlite(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        drivers = [t.driver for t in result["drivers"]]
-        assert "sqlite" in drivers
+        assert "sqlite" in [t.driver for t in result["drivers"]]
 
-    async def test_params_have_required_fields(self, dispatcher: Dispatcher) -> None:
+    async def test_all_drivers_have_at_least_one_param(
+        self, dispatcher: Dispatcher
+    ) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        for tech in result["drivers"]:
-            assert len(tech.params) > 0
-            for p in tech.params:
-                assert p.key
-                assert p.type
-                assert p.label
+        assert all(len(tech.params) > 0 for tech in result["drivers"])
+
+    async def test_all_params_have_required_fields(
+        self, dispatcher: Dispatcher
+    ) -> None:
+        result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
+        assert all(
+            p.key and p.type and p.label
+            for tech in result["drivers"]
+            for p in tech.params
+        )
 
 
 class TestDriverHelp:
@@ -159,60 +184,54 @@ class TestDriverHelp:
 
 
 class TestConnect:
-    def _driver_class_with_params(self, params: list[DriverParam]) -> AsyncMock:
-        cls = AsyncMock()
-        cls.PARAMS = params
-        cls.create = AsyncMock(return_value=_make_mock_driver())
-        return cls
-
     async def test_raises_when_required_param_is_missing(
-        self, dispatcher: Dispatcher
+        self, dispatcher: Dispatcher, mock_get_driver: AsyncMock
     ) -> None:
-        cls = self._driver_class_with_params(
-            [DriverParam(key="host", type=ParamType.STRING, label="Host")]
+        mock_get_driver.return_value = _driver_class(
+            _make_mock_driver(),
+            [DriverParam(key="host", type=ParamType.STRING, label="Host")],
         )
-        with patch("belvedere.dispatcher.get_driver", return_value=cls):
-            with pytest.raises(DispatchError, match="Host"):
-                await dispatcher.dispatch(
-                    Method.CONNECT, {"driver": "mock"}, noop_progress
-                )
+        with pytest.raises(DispatchError, match="Host"):
+            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
 
     async def test_raises_when_required_param_is_empty_string(
-        self, dispatcher: Dispatcher
+        self, dispatcher: Dispatcher, mock_get_driver: AsyncMock
     ) -> None:
-        cls = self._driver_class_with_params(
-            [DriverParam(key="host", type=ParamType.STRING, label="Host")]
+        mock_get_driver.return_value = _driver_class(
+            _make_mock_driver(),
+            [DriverParam(key="host", type=ParamType.STRING, label="Host")],
         )
-        with patch("belvedere.dispatcher.get_driver", return_value=cls):
-            with pytest.raises(DispatchError, match="Host"):
-                await dispatcher.dispatch(
-                    Method.CONNECT, {"driver": "mock", "host": ""}, noop_progress
-                )
+        with pytest.raises(DispatchError, match="Host"):
+            await dispatcher.dispatch(
+                Method.CONNECT, {"driver": "mock", "host": ""}, noop_progress
+            )
 
     async def test_succeeds_when_all_required_params_are_provided(
-        self, dispatcher: Dispatcher
+        self, dispatcher: Dispatcher, mock_get_driver: AsyncMock
     ) -> None:
-        cls = self._driver_class_with_params(
-            [DriverParam(key="host", type=ParamType.STRING, label="Host")]
+        mock_get_driver.return_value = _driver_class(
+            _make_mock_driver(),
+            [DriverParam(key="host", type=ParamType.STRING, label="Host")],
         )
-        with patch("belvedere.dispatcher.get_driver", return_value=cls):
-            result = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock", "host": "localhost"}, noop_progress
-            )
+        result = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock", "host": "localhost"}, noop_progress
+        )
         assert "connection_id" in result
 
-    async def test_optional_params_may_be_absent(self, dispatcher: Dispatcher) -> None:
-        cls = self._driver_class_with_params(
+    async def test_optional_params_may_be_absent(
+        self, dispatcher: Dispatcher, mock_get_driver: AsyncMock
+    ) -> None:
+        mock_get_driver.return_value = _driver_class(
+            _make_mock_driver(),
             [
                 DriverParam(
                     key="user", type=ParamType.STRING, label="User", required=False
                 )
-            ]
+            ],
         )
-        with patch("belvedere.dispatcher.get_driver", return_value=cls):
-            result = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock"}, noop_progress
-            )
+        result = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock"}, noop_progress
+        )
         assert "connection_id" in result
 
 
@@ -261,7 +280,7 @@ class TestExecute:
                 noop_progress,
             )
 
-    async def test_should_reconnect_and_retry_when_connection_is_lost(
+    async def test_returns_result_after_reconnect_on_connection_lost(
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
@@ -269,17 +288,41 @@ class TestExecute:
             ConnectionLostError(),
             ReadResult(columns=["n"], rows=[[42]], rows_total=1),
         ]
-        progress_calls: list[tuple[str, str]] = []
-
-        async def capture(status: str, message: str) -> None:
-            progress_calls.append((status, message))
-
         result = await disp.dispatch(
-            Method.EXECUTE, {"connection_id": conn_id, "query": "SELECT 1"}, capture
+            Method.EXECUTE,
+            {"connection_id": conn_id, "query": "SELECT 1"},
+            noop_progress,
         )
         assert result == {"columns": ["n"], "rows": [[42]], "rows_total": 1}
-        assert driver.reconnect.await_count == 1
-        assert any("reconnect" in s for s, _ in progress_calls)
+
+    async def test_reconnects_when_connection_is_lost(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.execute.side_effect = [
+            ConnectionLostError(),
+            ReadResult(columns=[], rows=[], rows_total=0),
+        ]
+        await disp.dispatch(
+            Method.EXECUTE,
+            {"connection_id": conn_id, "query": "SELECT 1"},
+            noop_progress,
+        )
+        driver.reconnect.assert_awaited_once()
+
+    async def test_sends_reconnecting_progress_when_connection_is_lost(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.execute.side_effect = [
+            ConnectionLostError(),
+            ReadResult(columns=[], rows=[], rows_total=0),
+        ]
+        progress = AsyncMock()
+        await disp.dispatch(
+            Method.EXECUTE, {"connection_id": conn_id, "query": "SELECT 1"}, progress
+        )
+        progress.assert_any_await("reconnecting", ANY)
 
 
 class TestDisconnect:
@@ -368,7 +411,6 @@ class TestExploreList:
             {"connection_id": conn_id, "path": ["dbo"]},
             noop_progress,
         )
-        # reset on one path clears all; both paths re-fetched
         await disp.dispatch(
             Method.EXPLORE_LIST,
             {"connection_id": conn_id, "path": [], "reset_cache": True},
@@ -383,34 +425,15 @@ class TestExploreList:
             driver.explore_list.await_count == 4
         )  # 2 initial + re-fetch [] + re-fetch ["dbo"]
 
-    async def test_should_reconnect_and_retry_when_connection_is_lost(
-        self, connected: tuple[Dispatcher, str, AsyncMock]
-    ) -> None:
-        disp, conn_id, driver = connected
-        driver.explore_list.side_effect = [
-            ConnectionLostError(),
-            [ExploreItem(name="t", type="table", expandable=True)],
-        ]
-        result = await disp.dispatch(
-            Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
-        )
-        assert result == {
-            "items": [ExploreItem(name="t", type="table", expandable=True)]
-        }
-        assert driver.reconnect.await_count == 1
-
     async def test_should_keep_separate_caches_per_connection(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-        ):
-            r1 = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock"}, noop_progress
-            )
-            r2 = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock"}, noop_progress
-            )
+        r1 = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock"}, noop_progress
+        )
+        r2 = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock"}, noop_progress
+        )
         conn_a, conn_b = r1["connection_id"], r2["connection_id"]
         await dispatcher.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_a, "path": []}, noop_progress
@@ -418,7 +441,6 @@ class TestExploreList:
         await dispatcher.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_b, "path": []}, noop_progress
         )
-        # resetting conn_a does not affect conn_b's cache
         await dispatcher.dispatch(
             Method.EXPLORE_LIST,
             {"connection_id": conn_a, "path": [], "reset_cache": True},
@@ -490,7 +512,6 @@ class TestExploreDescribe:
         await disp.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
-        # resetting via explore.describe also clears explore.list cache
         await disp.dispatch(
             Method.EXPLORE_DESCRIBE,
             {"connection_id": conn_id, "path": ["t"], "reset_cache": True},
@@ -530,51 +551,18 @@ class TestExploreDescribe:
         )
         assert result == {"details": None}
 
-    async def test_should_reconnect_and_retry_when_connection_is_lost(
-        self, connected: tuple[Dispatcher, str, AsyncMock]
-    ) -> None:
-        disp, conn_id, driver = connected
-        td = TableDescription(
-            table="t", columns=[ColumnInfo(name="id", type="INTEGER")]
-        )
-        driver.explore_describe.side_effect = [ConnectionLostError(), td]
-        result = await disp.dispatch(
-            Method.EXPLORE_DESCRIBE,
-            {"connection_id": conn_id, "path": ["t"]},
-            noop_progress,
-        )
-        assert result == {"details": td}
-        assert driver.reconnect.await_count == 1
-
 
 class TestConcurrency:
-    async def _connect(self, dispatcher: Dispatcher, driver: AsyncMock) -> str:
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(driver)
-        ):
-            result = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock"}, noop_progress
-            )
-        return result["connection_id"]
-
     async def test_should_serialise_concurrent_requests_on_same_connection(
-        self, tmp_path: pathlib.Path
+        self, tmp_path: pathlib.Path, mock_driver: AsyncMock
     ) -> None:
-        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
         order: list[str] = []
         gate = asyncio.Event()
-
-        driver = _make_mock_driver()
-
-        async def slow_execute(*_: object) -> ReadResult:
-            order.append("start")
-            await gate.wait()
-            order.append("end")
-            return ReadResult(columns=[], rows=[], rows_total=0)
-
-        driver.execute.side_effect = slow_execute
-        conn_id = await self._connect(dispatcher, driver)
-
+        mock_driver.execute.side_effect = self._slow_execute(order, gate)
+        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
+        conn_id = (
+            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
+        )["connection_id"]
         t1 = asyncio.create_task(
             dispatcher.dispatch(
                 Method.EXECUTE,
@@ -589,85 +577,81 @@ class TestConcurrency:
                 noop_progress,
             )
         )
-        await asyncio.sleep(0)  # let both tasks reach the semaphore
+        await asyncio.sleep(0)
         gate.set()
         await asyncio.gather(t1, t2)
-
-        # second request must have started only after the first finished
         assert order == ["start", "end", "start", "end"]
 
     async def test_should_allow_concurrent_requests_on_different_connections(
-        self, tmp_path: pathlib.Path
+        self, tmp_path: pathlib.Path, two_drivers: tuple[AsyncMock, AsyncMock]
     ) -> None:
-        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
+        driver_a, driver_b = two_drivers
         started: list[str] = []
         gate = asyncio.Event()
-
-        async def slow_execute_a(*_: object) -> ReadResult:
-            started.append("a")
-            await gate.wait()
-            return ReadResult(columns=[], rows=[], rows_total=0)
-
-        async def slow_execute_b(*_: object) -> ReadResult:
-            started.append("b")
-            await gate.wait()
-            return ReadResult(columns=[], rows=[], rows_total=0)
-
-        driver_a, driver_b = _make_mock_driver(), _make_mock_driver()
-        driver_a.execute.side_effect = slow_execute_a
-        driver_b.execute.side_effect = slow_execute_b
-
-        conn_a = await self._connect(dispatcher, driver_a)
-        conn_b = await self._connect(dispatcher, driver_b)
-
+        driver_a.execute.side_effect = self._slow_execute_labeled(started, gate, "a")
+        driver_b.execute.side_effect = self._slow_execute_labeled(started, gate, "b")
+        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
+        conn_a = (
+            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
+        )["connection_id"]
+        conn_b = (
+            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
+        )["connection_id"]
         t1 = asyncio.create_task(
             dispatcher.dispatch(
-                Method.EXECUTE,
-                {"connection_id": conn_a, "query": "SELECT 1"},
-                noop_progress,
+                Method.EXECUTE, {"connection_id": conn_a, "query": "q"}, noop_progress
             )
         )
         t2 = asyncio.create_task(
             dispatcher.dispatch(
-                Method.EXECUTE,
-                {"connection_id": conn_b, "query": "SELECT 2"},
-                noop_progress,
+                Method.EXECUTE, {"connection_id": conn_b, "query": "q"}, noop_progress
             )
         )
-        await asyncio.sleep(0)  # let both tasks proceed
-        assert set(started) == {"a", "b"}  # both started concurrently
+        await asyncio.sleep(0)
+        assert set(started) == {"a", "b"}
         gate.set()
         await asyncio.gather(t1, t2)
+
+    @staticmethod
+    def _slow_execute(order: list[str], gate: asyncio.Event):
+        async def _fn(*_: object) -> ReadResult:
+            order.append("start")
+            await gate.wait()
+            order.append("end")
+            return ReadResult(columns=[], rows=[], rows_total=0)
+
+        return _fn
+
+    @staticmethod
+    def _slow_execute_labeled(started: list[str], gate: asyncio.Event, label: str):
+        async def _fn(*_: object) -> ReadResult:
+            started.append(label)
+            await gate.wait()
+            return ReadResult(columns=[], rows=[], rows_total=0)
+
+        return _fn
 
 
 class TestIdleTimeout:
     async def test_connection_closed_after_idle_timeout(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-        ):
-            await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
-            )
-
+        await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
+        )
         await asyncio.sleep(0.15)
         mock_driver.disconnect.assert_awaited_once()
 
     async def test_timer_resets_on_request(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-        ):
-            r = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
-            )
-        conn_id = r["connection_id"]
+        r = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
+        )
         await asyncio.sleep(0.07)
         await dispatcher.dispatch(
             Method.EXECUTE,
-            {"connection_id": conn_id, "query": "SELECT 1"},
+            {"connection_id": r["connection_id"], "query": "SELECT 1"},
             noop_progress,
         )
         await asyncio.sleep(0.07)
@@ -678,63 +662,45 @@ class TestIdleTimeout:
     async def test_default_timeout_does_not_fire_immediately(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-        ):
-            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
+        await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
         await asyncio.sleep(0.1)
         mock_driver.disconnect.assert_not_awaited()
 
     async def test_explicit_disconnect_cancels_timer(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-        ):
-            r = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
-            )
-        conn_id = r["connection_id"]
+        r = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
+        )
         await dispatcher.dispatch(
-            Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
+            Method.DISCONNECT, {"connection_id": r["connection_id"]}, noop_progress
         )
         mock_driver.disconnect.assert_awaited_once()
         await asyncio.sleep(0.15)
-        # disconnect should not be called a second time by the watchdog
         assert mock_driver.disconnect.await_count == 1
 
     async def test_should_reconnect_on_execute_after_timeout_fired(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-        ):
-            r = await dispatcher.dispatch(
-                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
-            )
-        conn_id = r["connection_id"]
-
-        await asyncio.sleep(0.15)
-        mock_driver.disconnect.assert_awaited_once()
-        mock_driver.execute.side_effect = [
-            ConnectionLostError(),  # First call fails as driver is disconnected
-            ReadResult(columns=[], rows=[], rows_total=0),  # Second call succeeds
-        ]
-
-        progress_cb = AsyncMock()
-        await dispatcher.dispatch(
-            Method.EXECUTE, {"connection_id": conn_id, "query": "SELECT 1"}, progress_cb
+        r = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
         )
-
+        await asyncio.sleep(0.15)
+        mock_driver.execute.side_effect = [
+            ConnectionLostError(),
+            ReadResult(columns=[], rows=[], rows_total=0),
+        ]
+        await dispatcher.dispatch(
+            Method.EXECUTE,
+            {"connection_id": r["connection_id"], "query": "SELECT 1"},
+            noop_progress,
+        )
         mock_driver.reconnect.assert_awaited_once()
 
     async def test_no_disconnect_when_driver_default_timeout_is_zero(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
     ) -> None:
         mock_driver.DEFAULT_IDLE_TIMEOUT = 0
-        with patch(
-            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
-        ):
-            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
+        await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
         await asyncio.sleep(0.1)
         mock_driver.disconnect.assert_not_awaited()

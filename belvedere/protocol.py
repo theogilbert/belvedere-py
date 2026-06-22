@@ -16,13 +16,25 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+class Method(StrEnum):
+    """Supported request methods."""
+
+    CAPABILITIES = "capabilities"
+    DRIVER_HELP = "driver.help"
+    CONNECT = "connect"
+    DISCONNECT = "disconnect"
+    EXECUTE = "execute"
+    EXPLORE_LIST = "explore.list"
+    EXPLORE_DESCRIBE = "explore.describe"
+
+
 @dataclass
 class Request:
     """Incoming request from the client."""
 
     id: int
     """Caller-chosen identifier echoed in the response."""
-    method: str
+    method: Method
     """Method name (e.g. ``"execute"``, ``"connect"``)."""
     params: dict[str, Any]
     """Method-specific parameters."""
@@ -200,16 +212,6 @@ class Driver:
     """Connection parameters in display order."""
 
 
-class Method(StrEnum):
-    CAPABILITIES = "capabilities"
-    DRIVER_HELP = "driver.help"
-    CONNECT = "connect"
-    DISCONNECT = "disconnect"
-    EXECUTE = "execute"
-    EXPLORE_LIST = "explore.list"
-    EXPLORE_DESCRIBE = "explore.describe"
-
-
 Response = Result | Progress | ExploreItem
 
 
@@ -265,6 +267,11 @@ def decode(line: bytes) -> Request:
 
     raw_id = data.get("id")
     req_id = raw_id if isinstance(raw_id, int) else None
+
+    try:
+        data["method"] = Method(data.pop("method"))
+    except (ValueError, KeyError) as e:
+        raise DecodeError("Invalid or missing method in request", id=req_id) from e
 
     try:
         req = Request(**data)

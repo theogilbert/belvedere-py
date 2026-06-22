@@ -91,7 +91,7 @@ class Server:
         response: Result
         try:
             result = await self._dispatcher.dispatch(
-                msg.method or "", msg.params or {}, send_progress
+                msg.method, msg.params, send_progress
             )
             response = Result(id=msg.id, result=result, error=None)
         except (DispatchError, DriverError) as exc:

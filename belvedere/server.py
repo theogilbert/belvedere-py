@@ -68,22 +68,22 @@ class Server:
                 logger.info("Server exiting")
                 break
             try:
-                msg: Request = decode(line)
+                req: Request = decode(line)
                 logger.debug(
-                    f"Received {_truncate(json.dumps({'id': msg.id, 'method': msg.method, 'params': _redact(msg.params)}))}"
+                    f"Received {_truncate(json.dumps({'id': req.id, 'method': req.method, 'params': _redact(req.params)}))}"
                 )
-                asyncio.create_task(self._handle(msg))
+                asyncio.create_task(self._handle(req))
             except DecodeError as e:
                 logger.warning(f"Received invalid request: {e}")
                 asyncio.create_task(
                     self._send(Result(id=e.id, result=None, error=str(e)))
                 )
 
-    async def _handle(self, msg: Request) -> None:
+    async def _handle(self, req: Request) -> None:
         async def send_progress(status: str, message: str) -> None:
             await self._send(
                 Progress(
-                    id=msg.id,
+                    id=req.id,
                     progress=ProgressDetail(status=status, message=message),
                 )
             )
@@ -91,14 +91,14 @@ class Server:
         response: Result
         try:
             result = await self._dispatcher.dispatch(
-                msg.method, msg.params, send_progress
+                req.method, req.params, send_progress
             )
-            response = Result(id=msg.id, result=result, error=None)
+            response = Result(id=req.id, result=result, error=None)
         except (DispatchError, DriverError) as exc:
-            response = Result(id=msg.id, result=None, error=str(exc))
+            response = Result(id=req.id, result=None, error=str(exc))
         except Exception:
-            logger.exception(f"Unhandled error for request {msg.id}")
-            response = Result(id=msg.id, result=None, error="internal error")
+            logger.exception(f"Unhandled error for request {req.id}")
+            response = Result(id=req.id, result=None, error="internal error")
         await self._send(response)
 
     async def _send(self, msg: Response) -> None:

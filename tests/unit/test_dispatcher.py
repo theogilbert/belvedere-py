@@ -16,6 +16,7 @@ from belvedere.protocol import (
     ColumnInfo,
     DriverParam,
     ExploreItem,
+    ParamType,
     ReadResult,
     TableDescription,
     WriteResult,
@@ -210,7 +211,7 @@ class TestConnect:
         self, dispatcher: Dispatcher
     ) -> None:
         cls = self._driver_class_with_params(
-            [DriverParam(key="host", type="string", label="Host")]
+            [DriverParam(key="host", type=ParamType.STRING, label="Host")]
         )
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             with pytest.raises(DispatchError, match="Host"):
@@ -220,7 +221,7 @@ class TestConnect:
         self, dispatcher: Dispatcher
     ) -> None:
         cls = self._driver_class_with_params(
-            [DriverParam(key="host", type="string", label="Host")]
+            [DriverParam(key="host", type=ParamType.STRING, label="Host")]
         )
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             with pytest.raises(DispatchError, match="Host"):
@@ -232,7 +233,7 @@ class TestConnect:
         self, dispatcher: Dispatcher
     ) -> None:
         cls = self._driver_class_with_params(
-            [DriverParam(key="host", type="string", label="Host")]
+            [DriverParam(key="host", type=ParamType.STRING, label="Host")]
         )
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             result = await dispatcher.dispatch(
@@ -242,7 +243,11 @@ class TestConnect:
 
     async def test_optional_params_may_be_absent(self, dispatcher: Dispatcher) -> None:
         cls = self._driver_class_with_params(
-            [DriverParam(key="user", type="string", label="User", required=False)]
+            [
+                DriverParam(
+                    key="user", type=ParamType.STRING, label="User", required=False
+                )
+            ]
         )
         with patch("belvedere.dispatcher.get_driver", return_value=cls):
             result = await dispatcher.dispatch(

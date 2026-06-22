@@ -5,6 +5,8 @@ import pathlib
 from dataclasses import asdict
 from typing import Any
 
+from belvedere.drivers import SENSITIVE_PARAM_KEYS
+
 from .protocol import (
     ColumnInfo,
     ExploreItem,
@@ -14,8 +16,6 @@ from .protocol import (
 )
 
 logger = logging.getLogger(__name__)
-
-_SENSITIVE_PARAMS = frozenset({"password"})
 
 
 def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:
@@ -28,7 +28,7 @@ def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:
     Returns:
         Path of the form ``<cache_dir>/<driver>_<sha256[:12]>.json``.
     """
-    safe = {k: v for k, v in sorted(params.items()) if k not in _SENSITIVE_PARAMS}
+    safe = {k: v for k, v in sorted(params.items()) if k not in SENSITIVE_PARAM_KEYS}
     digest = hashlib.sha256(json.dumps(safe).encode()).hexdigest()[:12]
     driver = params.get("driver", "unknown")
     return cache_dir / f"{driver}_{digest}.json"
@@ -145,7 +145,9 @@ class ConnectionCache:
         try:
             data: dict[str, Any] = {
                 "_connection": {
-                    k: v for k, v in self._params.items() if k not in _SENSITIVE_PARAMS
+                    k: v
+                    for k, v in self._params.items()
+                    if k not in SENSITIVE_PARAM_KEYS
                 },
                 "list": {
                     json.dumps(list(key)): [asdict(item) for item in items]

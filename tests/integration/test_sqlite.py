@@ -3,7 +3,13 @@ from collections.abc import AsyncGenerator
 import pytest
 
 from belvedere.drivers.sqlite import SQLiteDriver
-from belvedere.protocol import ExploreItem, IndexDescription, ReadResult, WriteResult
+from belvedere.protocol import (
+    ExploreItem,
+    IndexDescription,
+    ReadResult,
+    TableDescription,
+    WriteResult,
+)
 
 
 @pytest.fixture
@@ -135,6 +141,7 @@ class TestExploreDescribe:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         desc = await driver.explore_describe(["t"])
         assert desc is not None
+        assert isinstance(desc, TableDescription)
         assert desc.table == "t"
         assert [c.name for c in desc.columns] == ["id", "val"]
         assert [c.type for c in desc.columns] == ["INTEGER", "TEXT"]
@@ -143,6 +150,7 @@ class TestExploreDescribe:
         await driver.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", [])
         desc = await driver.explore_describe(["t"])
         assert desc is not None
+        assert isinstance(desc, TableDescription)
         by_name = {c.name: c for c in desc.columns}
         assert by_name["a"].nullable is False
         assert by_name["b"].nullable is True
@@ -151,6 +159,7 @@ class TestExploreDescribe:
         await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
         desc = await driver.explore_describe(["t"])
         assert desc is not None
+        assert isinstance(desc, TableDescription)
         by_name = {c.name: c for c in desc.columns}
         assert by_name["id"].pk is True
         assert by_name["val"].pk is False

@@ -5,6 +5,7 @@ import pytest
 from belvedere.protocol import (
     DecodeError,
     ExploreItem,
+    Method,
     Progress,
     ProgressDetail,
     Request,
@@ -17,7 +18,7 @@ from belvedere.protocol import (
 class TestDecode:
     def test_should_return_request_dataclass_when_json_is_valid(self) -> None:
         msg = decode(b'{"id":1,"method":"connect","params":{"driver":"sqlite"}}\n')
-        assert msg == Request(id=1, method="connect", params={"driver": "sqlite"})
+        assert msg == Request(id=1, method=Method.CONNECT, params={"driver": "sqlite"})
 
     def test_should_raise_when_json_is_malformed(self) -> None:
         with pytest.raises(DecodeError):

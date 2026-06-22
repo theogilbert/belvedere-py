@@ -28,6 +28,8 @@ def flatten_docs(
                 flat[k] = v
         flat_rows.append(flat)
 
+    # We dont keep track of cols using single set to also preserve order, hence
+    # the list.
     all_cols: list[str] = []
     seen: set[str] = set()
     for flat in flat_rows:

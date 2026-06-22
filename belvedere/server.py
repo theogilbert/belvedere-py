@@ -26,12 +26,13 @@ logger = logging.getLogger(__name__)
 
 
 class Server:
-    """Stdio JSON server — reads requests from stdin, writes responses to out.
+    """Stdio JSON server — reads requests from stdin, writes responses to stdout.
 
     Args:
-        out: Binary stream to write responses to (typically ``sys.stdout.buffer``).
         cache_dir: Directory for persisting explore caches between sessions.
         max_concurrency: Maximum concurrent requests allowed per connection.
+        stdin: Binary stream to read requests from (typically ``sys.stdin.buffer``).
+        stdout: Binary stream to write responses to (typically ``sys.stdout.buffer``).
     """
 
     def __init__(

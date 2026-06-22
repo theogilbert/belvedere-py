@@ -15,27 +15,47 @@ logger = logging.getLogger(__name__)
 class Connection:
     """Bundles a driver and concurrency semaphore for one open connection."""
 
-    def __init__(self, id: str, driver: CachingDriver, max_concurrency: int) -> None:
+    def __init__(
+        self,
+        id: str,
+        driver: CachingDriver,
+        max_concurrency: int,
+        timeout: float,
+    ) -> None:
         self.id = id
         self.driver = driver
+
+        self._idle_timer: IdleTimer | None = None
+        """Idle timeout watchdog; None when idle timeout is disabled (timeout=0)."""
+        if timeout > 0:
+            self._idle_timer = IdleTimer(timeout, self._on_idle_expire)
         self._semaphore = asyncio.Semaphore(max_concurrency)
+        """Limits concurrent access to max_concurrency requests."""
 
     def reset_cache(self) -> None:
         self.driver.reset_cache()
 
+    async def close(self) -> None:
+        if self._idle_timer:
+            self._idle_timer.cancel()
+        await self.driver.disconnect()
+
     async def __aenter__(self) -> "Connection":
+        if self._idle_timer:
+            self._idle_timer.reset()
         await self._semaphore.acquire()
         return self
 
     async def __aexit__(self, *_: object) -> None:
         self._semaphore.release()
 
+    async def _on_idle_expire(self, timeout: float) -> None:
+        logger.info(f"Connection {self.id} idle for {timeout}s — closing")
+        await self.driver.disconnect()
+
 
 class DispatchError(Exception):
     """Raised for client-visible errors: unknown method/driver, bad connection id, missing param."""
-
-
-_DEFAULT_IDLE_TIMEOUT = 600.0
 
 
 class ConnectionStore:
@@ -48,41 +68,37 @@ class ConnectionStore:
 
     def __init__(self, cache_dir: pathlib.Path, max_concurrency: int) -> None:
         self._connections: dict[str, Connection] = {}
-        self._idle_timer = IdleTimer(self._on_idle_expire)
         self._max_concurrency = max_concurrency
         self._cache_dir = cache_dir
         self._next_id = 0
 
     def open(
-        self, driver: BaseDriver, params: dict[str, Any], timeout: float
+        self, driver: BaseDriver, params: dict[str, Any], timeout: float | None
     ) -> Connection:
         """Register a new connection with its cache and idle watchdog. Returns the connection."""
         conn_id = str(self._next_id)
         self._next_id += 1
         cache = ConnectionCache(params, cache_file(params, self._cache_dir))
-        conn = Connection(conn_id, CachingDriver(driver, cache), self._max_concurrency)
+        effective_timeout = (
+            timeout if timeout is not None else driver.DEFAULT_IDLE_TIMEOUT
+        )
+        conn = Connection(
+            conn_id,
+            CachingDriver(driver, cache),
+            self._max_concurrency,
+            effective_timeout,
+        )
         self._connections[conn_id] = conn
-        self._idle_timer.start(conn_id, timeout)
         return conn
 
     async def close(self, conn_id: str) -> None:
         """Disconnect and deregister a connection. No-op if not found."""
         conn = self._connections.pop(conn_id, None)
-        self._idle_timer.cancel(conn_id)
         if conn:
-            await conn.driver.disconnect()
+            await conn.close()
 
     def get(self, conn_id: str) -> Connection | None:
         return self._connections.get(conn_id)
-
-    def reset_idle(self, conn_id: str) -> None:
-        self._idle_timer.reset(conn_id)
-
-    async def _on_idle_expire(self, conn_id: str, timeout: float) -> None:
-        logger.info(f"Connection {conn_id!r} idle for {timeout}s — closing")
-        conn = self._connections.pop(conn_id, None)
-        if conn:
-            await conn.driver.disconnect()
 
 
 class Dispatcher:
@@ -124,7 +140,6 @@ class Dispatcher:
                 return await self._handle_disconnect(params, send_progress)
             case Method.EXECUTE | Method.EXPLORE_LIST | Method.EXPLORE_DESCRIBE:
                 conn = self._require_conn(params)
-                self._store.reset_idle(conn.id)
                 async with conn:
                     return await self._dispatch_conn(
                         conn, method, params, send_progress
@@ -183,7 +198,9 @@ class Dispatcher:
         if missing:
             raise DispatchError(f"Missing required parameter(s): {', '.join(missing)}")
         driver = await driver_cls.create(params)
-        timeout = float(params.get("idle_timeout", _DEFAULT_IDLE_TIMEOUT))
+
+        raw_timeout = params.get("idle_timeout")
+        timeout = float(raw_timeout) if raw_timeout is not None else None
         conn = self._store.open(driver, params, timeout)
         return {"connection_id": conn.id}
 
@@ -257,39 +274,32 @@ class Dispatcher:
 
 
 class IdleTimer:
-    """Manages per-connection idle timeout watchdogs."""
+    """Manages a connection's idle timeout watchdogs.
 
-    def __init__(self, on_expire: Callable[[str, float], Awaitable[None]]) -> None:
+    Args:
+        timeout: Number of seconds after which a connection should be closed.
+        on_expire: The operation to execute once the connection has been idle too long.
+    """
+
+    def __init__(
+        self, timeout: float, on_expire: Callable[[float], Awaitable[None]]
+    ) -> None:
         self._on_expire = on_expire
-        """Callback invoked when a connection's idle watchdog fires."""
-        self._timeouts: dict[str, float] = {}
-        """Registered timeout durations keyed by connection id."""
-        self._tasks: dict[str, asyncio.Task] = {}
-        """Active watchdog tasks keyed by connection id."""
+        """Callback invoked when the idle watchdog fires."""
+        self._timeout: float = timeout
+        """Registered timeout duration in seconds."""
+        self._task: asyncio.Task = asyncio.create_task(self._watchdog())
+        """Active watchdog task."""
 
-    def start(self, conn_id: str, timeout: float) -> None:
-        """Register conn_id and start its idle watchdog."""
-        self._timeouts[conn_id] = timeout
-        self._tasks[conn_id] = asyncio.create_task(self._watchdog(conn_id, timeout))
+    def reset(self) -> None:
+        """Restart the idle timer."""
+        self._task.cancel()
+        self._task = asyncio.create_task(self._watchdog())
 
-    def reset(self, conn_id: str) -> None:
-        """Restart the idle timer for conn_id, if registered."""
-        task = self._tasks.pop(conn_id, None)
-        if task:
-            task.cancel()
-        timeout = self._timeouts.get(conn_id)
-        if timeout is not None:
-            self._tasks[conn_id] = asyncio.create_task(self._watchdog(conn_id, timeout))
+    def cancel(self) -> None:
+        """Cancel the idle timer."""
+        self._task.cancel()
 
-    def cancel(self, conn_id: str) -> None:
-        """Cancel and remove the idle timer for conn_id."""
-        task = self._tasks.pop(conn_id, None)
-        if task:
-            task.cancel()
-        self._timeouts.pop(conn_id, None)
-
-    async def _watchdog(self, conn_id: str, timeout: float) -> None:
-        await asyncio.sleep(timeout)
-        self._tasks.pop(conn_id, None)
-        self._timeouts.pop(conn_id, None)
-        await self._on_expire(conn_id, timeout)
+    async def _watchdog(self) -> None:
+        await asyncio.sleep(self._timeout)
+        await self._on_expire(self._timeout)

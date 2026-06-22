@@ -1,13 +1,13 @@
 import asyncio
 import pathlib
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from belvedere.dispatcher import (
     Connection,
-    DispatchError,
     Dispatcher,
+    DispatchError,
     IdleTimer,
 )
 from belvedere.drivers.base import ConnectionLostError
@@ -29,12 +29,12 @@ async def noop_progress(status: str, message: str) -> None:
 
 class TestConnection:
     async def test_context_manager_grants_access(self) -> None:
-        conn = Connection("1", AsyncMock(), max_concurrency=1)
+        conn = Connection("1", AsyncMock(), max_concurrency=1, timeout=0)
         async with conn as c:
             assert c is conn
 
     async def test_limits_concurrency(self) -> None:
-        conn = Connection("1", AsyncMock(), max_concurrency=1)
+        conn = Connection("1", AsyncMock(), max_concurrency=1, timeout=0)
         order: list[str] = []
         gate = asyncio.Event()
 
@@ -53,51 +53,28 @@ class TestConnection:
 
 
 class TestIdleTimer:
-    async def test_calls_on_expire_after_timeout(self) -> None:
-        expired: list[tuple[str, float]] = []
-
-        async def on_expire(conn_id: str, timeout: float) -> None:
-            expired.append((conn_id, timeout))
-
-        timer = IdleTimer(on_expire)
-        timer.start("a", 0.05)
+    async def test_fires_after_timeout(self) -> None:
+        on_expire = AsyncMock()
+        timer = IdleTimer(0.05, on_expire)
         await asyncio.sleep(0.15)
-        assert expired == [("a", 0.05)]
+        on_expire.assert_awaited_once_with(0.05)
 
     async def test_reset_restarts_countdown(self) -> None:
-        expired: list[str] = []
-
-        async def on_expire(conn_id: str, timeout: float) -> None:
-            expired.append(conn_id)
-
-        timer = IdleTimer(on_expire)
-        timer.start("a", 0.1)
+        on_expire = AsyncMock()
+        timer = IdleTimer(0.1, on_expire)
         await asyncio.sleep(0.07)
-        timer.reset("a")
+        timer.reset()
         await asyncio.sleep(0.07)
-        assert expired == []
+        on_expire.assert_not_awaited()
         await asyncio.sleep(0.1)
-        assert expired == ["a"]
+        on_expire.assert_awaited_once()
 
     async def test_cancel_prevents_expiry(self) -> None:
-        expired: list[str] = []
-
-        async def on_expire(conn_id: str, timeout: float) -> None:
-            expired.append(conn_id)
-
-        timer = IdleTimer(on_expire)
-        timer.start("a", 0.05)
-        timer.cancel("a")
+        on_expire = AsyncMock()
+        timer = IdleTimer(0.05, on_expire)
+        timer.cancel()
         await asyncio.sleep(0.15)
-        assert expired == []
-
-    async def test_reset_is_noop_for_unknown_conn(self) -> None:
-        timer = IdleTimer(AsyncMock())
-        timer.reset("unknown")  # must not raise
-
-    async def test_cancel_is_noop_for_unknown_conn(self) -> None:
-        timer = IdleTimer(AsyncMock())
-        timer.cancel("unknown")  # must not raise
+        on_expire.assert_not_awaited()
 
 
 @pytest.fixture
@@ -105,13 +82,18 @@ def dispatcher(tmp_path: pathlib.Path) -> Dispatcher:
     return Dispatcher(cache_dir=tmp_path)
 
 
-@pytest.fixture
-def mock_driver() -> AsyncMock:
+def _make_mock_driver() -> AsyncMock:
     d = AsyncMock()
+    d.DEFAULT_IDLE_TIMEOUT = 600
     d.execute.return_value = ReadResult(columns=[], rows=[], rows_total=0)
     d.explore_list.return_value = []
     d.explore_describe.return_value = None
     return d
+
+
+@pytest.fixture
+def mock_driver() -> AsyncMock:
+    return _make_mock_driver()
 
 
 def _driver_class(mock_driver: AsyncMock) -> AsyncMock:
@@ -180,7 +162,7 @@ class TestConnect:
     def _driver_class_with_params(self, params: list[DriverParam]) -> AsyncMock:
         cls = AsyncMock()
         cls.PARAMS = params
-        cls.create = AsyncMock(return_value=AsyncMock())
+        cls.create = AsyncMock(return_value=_make_mock_driver())
         return cls
 
     async def test_raises_when_required_param_is_missing(
@@ -550,7 +532,7 @@ class TestConcurrency:
         order: list[str] = []
         gate = asyncio.Event()
 
-        driver = AsyncMock()
+        driver = _make_mock_driver()
 
         async def slow_execute(*_: object) -> ReadResult:
             order.append("start")
@@ -599,7 +581,7 @@ class TestConcurrency:
             await gate.wait()
             return ReadResult(columns=[], rows=[], rows_total=0)
 
-        driver_a, driver_b = AsyncMock(), AsyncMock()
+        driver_a, driver_b = _make_mock_driver(), _make_mock_driver()
         driver_a.execute.side_effect = slow_execute_a
         driver_b.execute.side_effect = slow_execute_b
 
@@ -633,18 +615,12 @@ class TestIdleTimeout:
         with patch(
             "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
         ):
-            r = await dispatcher.dispatch(
+            await dispatcher.dispatch(
                 Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
             )
-        conn_id = r["connection_id"]
+
         await asyncio.sleep(0.15)
         mock_driver.disconnect.assert_awaited_once()
-        with pytest.raises(DispatchError):
-            await dispatcher.dispatch(
-                Method.EXECUTE,
-                {"connection_id": conn_id, "query": "SELECT 1"},
-                noop_progress,
-            )
 
     async def test_timer_resets_on_request(
         self, dispatcher: Dispatcher, mock_driver: AsyncMock
@@ -694,3 +670,39 @@ class TestIdleTimeout:
         await asyncio.sleep(0.15)
         # disconnect should not be called a second time by the watchdog
         assert mock_driver.disconnect.await_count == 1
+
+    async def test_should_reconnect_on_execute_after_timeout_fired(
+        self, dispatcher: Dispatcher, mock_driver: AsyncMock
+    ) -> None:
+        with patch(
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+        ):
+            r = await dispatcher.dispatch(
+                Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
+            )
+        conn_id = r["connection_id"]
+
+        await asyncio.sleep(0.15)
+        mock_driver.disconnect.assert_awaited_once()
+        mock_driver.execute.side_effect = [
+            ConnectionLostError(),  # First call fails as driver is disconnected
+            ReadResult(columns=[], rows=[], rows_total=0),  # Second call succeeds
+        ]
+
+        progress_cb = AsyncMock()
+        await dispatcher.dispatch(
+            Method.EXECUTE, {"connection_id": conn_id, "query": "SELECT 1"}, progress_cb
+        )
+
+        mock_driver.reconnect.assert_awaited_once()
+
+    async def test_no_disconnect_when_driver_default_timeout_is_zero(
+        self, dispatcher: Dispatcher, mock_driver: AsyncMock
+    ) -> None:
+        mock_driver.DEFAULT_IDLE_TIMEOUT = 0
+        with patch(
+            "belvedere.dispatcher.get_driver", return_value=_driver_class(mock_driver)
+        ):
+            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
+        await asyncio.sleep(0.1)
+        mock_driver.disconnect.assert_not_awaited()

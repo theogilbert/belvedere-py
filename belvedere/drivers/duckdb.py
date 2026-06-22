@@ -1,7 +1,7 @@
 import asyncio
 import re
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 import duckdb
 
@@ -30,6 +30,8 @@ class DuckDBDriver(BaseDriver):
     """
 
     LABEL = "DuckDB"
+    DEFAULT_IDLE_TIMEOUT: ClassVar[float] = 0
+    """File-based driver; idle connections are never closed automatically."""
 
     PARAMS: list[DriverParam] = [
         DriverParam(

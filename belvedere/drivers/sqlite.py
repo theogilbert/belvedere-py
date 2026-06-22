@@ -1,7 +1,7 @@
 import asyncio
 import sqlite3
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 from ..protocol import (
     ColumnInfo,
@@ -28,6 +28,8 @@ class SQLiteDriver(BaseDriver):
     """
 
     LABEL = "SQLite"
+    DEFAULT_IDLE_TIMEOUT: ClassVar[float] = 0
+    """File-based driver; idle connections are never closed automatically."""
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="database", type=ParamType.STRING, label="Database file path"),

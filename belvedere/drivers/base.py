@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 
 from ..protocol import (
     DriverParam,
@@ -34,6 +34,13 @@ class BaseDriver(ABC):
 
     HELP: str = ""
     """Markdown help text declared by each driver subclass."""
+
+    DEFAULT_IDLE_TIMEOUT: ClassVar[float] = 600
+    """The default idle timeout for this driver.
+
+    Connections idle for longer than the specified time will be automatically closed.
+    The value can be set to 0 to disable closing the connection when idle too long.
+    """
 
     def __init__(self, params: dict[str, Any]) -> None:
         self.params = params

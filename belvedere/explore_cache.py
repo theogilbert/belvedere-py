@@ -108,14 +108,18 @@ class ConnectionCache:
 
         Args:
             path: Path prefix to reset. Entries whose keys start with this prefix
-                (including the prefix itself) are removed. An empty list resets
-                the entire cache.
+                (including the prefix itself) are removed, along with any ancestor
+                list entries (since their children may have changed). An empty list
+                resets the entire cache.
         """
         prefix = tuple(path)
         n = len(prefix)
         for d in (self._list, self._describe):
             for k in [k for k in d if k[:n] == prefix]:
                 del d[k]
+        # Evict list entries for all ancestor paths — their children may have changed.
+        for i in range(n):
+            self._list.pop(prefix[:i], None)
         if self._list or self._describe:
             self._persist()
         else:

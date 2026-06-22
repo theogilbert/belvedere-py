@@ -15,6 +15,7 @@ async def noop_progress(status: str, message: str) -> None:
 @pytest.fixture
 def mock_driver() -> AsyncMock:
     d = AsyncMock()
+    d.DEFAULT_IDLE_TIMEOUT = 0
     d.explore_list.return_value = [ExploreItem(name="t", type="table", expandable=True)]
     d.explore_describe.return_value = TableDescription(table="t", columns=[])
     return d
@@ -152,6 +153,8 @@ class TestDiskCache:
         self, tmp_path: pathlib.Path
     ) -> None:
         driver_a, driver_b = AsyncMock(), AsyncMock()
+        driver_a.DEFAULT_IDLE_TIMEOUT = 0
+        driver_b.DEFAULT_IDLE_TIMEOUT = 0
         driver_a.explore_list.return_value = [
             ExploreItem(name="a", type="table", expandable=True)
         ]

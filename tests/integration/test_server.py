@@ -143,6 +143,7 @@ class TestHandle:
         self, server: Server, out: io.BytesIO, mock_get_driver: MagicMock
     ) -> None:
         mock_driver = AsyncMock()
+        mock_driver.DEFAULT_IDLE_TIMEOUT = 0
         mock_driver.execute.side_effect = [
             ConnectionLostError(),
             ReadResult(columns=["n"], rows=[[1]], rows_total=1),

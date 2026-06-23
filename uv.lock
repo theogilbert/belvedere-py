@@ -129,6 +129,15 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+all = [
+    { name = "aiohttp" },
+    { name = "duckdb" },
+    { name = "elasticsearch" },
+    { name = "mssql-python" },
+    { name = "neo4j" },
+    { name = "oracledb" },
+    { name = "pymongo" },
+]
 duckdb = [
     { name = "duckdb" },
 ]
@@ -160,6 +169,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'elasticsearch'", specifier = ">=3.0" },
+    { name = "belvedere-py", extras = ["duckdb", "mssql", "neo4j", "oracle", "mongodb", "elasticsearch"], marker = "extra == 'all'" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
     { name = "elasticsearch", marker = "extra == 'elasticsearch'", specifier = ">=8.0,<9.0" },
     { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.8.0" },
@@ -167,7 +177,7 @@ requires-dist = [
     { name = "oracledb", marker = "extra == 'oracle'", specifier = ">=2.0" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.0" },
 ]
-provides-extras = ["duckdb", "mssql", "neo4j", "oracle", "mongodb", "elasticsearch"]
+provides-extras = ["duckdb", "mssql", "neo4j", "oracle", "mongodb", "elasticsearch", "all"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -49,7 +49,11 @@ class SQLServerDriver(BaseDriver):
             ],
         ),
         DriverParam(
-            key="password", type=ParamType.STRING, label="Password", secret=True
+            key="password",
+            type=ParamType.STRING,
+            label="Password",
+            secret=True,
+            required=False,
         ),
     ]
 

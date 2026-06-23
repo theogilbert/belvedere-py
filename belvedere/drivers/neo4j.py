@@ -37,7 +37,11 @@ class Neo4jDriver(BaseDriver):
         ),
         DriverParam(key="user", type=ParamType.STRING, label="User", default="neo4j"),
         DriverParam(
-            key="password", type=ParamType.STRING, label="Password", secret=True
+            key="password",
+            type=ParamType.STRING,
+            label="Password",
+            secret=True,
+            required=False,
         ),
         DriverParam(
             key="database", type=ParamType.STRING, label="Database", default="neo4j"

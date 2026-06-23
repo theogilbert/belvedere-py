@@ -80,7 +80,11 @@ class OracleDriver(BaseDriver):
         DriverParam(key="service_name", type=ParamType.STRING, label="Service Name"),
         DriverParam(key="user", type=ParamType.STRING, label="User"),
         DriverParam(
-            key="password", type=ParamType.STRING, label="Password", secret=True
+            key="password",
+            type=ParamType.STRING,
+            label="Password",
+            secret=True,
+            required=False,
         ),
     ]
 

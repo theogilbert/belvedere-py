@@ -10,8 +10,11 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, time
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +236,23 @@ def encode(msg: Response) -> bytes:
     Returns:
         UTF-8 encoded JSON line ending with ``\\n``.
     """
-    return (json.dumps(asdict(msg), separators=(",", ":")) + "\n").encode()
+
+    def _default(obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, time):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, UUID):
+            return str(obj)
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    return (
+        json.dumps(asdict(msg), separators=(",", ":"), default=_default) + "\n"
+    ).encode()
 
 
 class DecodeError(Exception):

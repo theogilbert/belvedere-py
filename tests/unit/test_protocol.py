@@ -1,4 +1,7 @@
 import json
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
+from uuid import UUID
 
 import pytest
 
@@ -83,3 +86,29 @@ class TestEncode:
 
     def test_output_ends_with_newline(self) -> None:
         assert encode(Result(id=1, result=None, error=None)).endswith(b"\n")
+
+    def test_should_serialise_uuid_as_string(self) -> None:
+        uid = UUID("12345678-1234-5678-1234-567812345678")
+        data = encode(Result(id=1, result=str(uid), error=None))
+        assert json.loads(data)["result"] == "12345678-1234-5678-1234-567812345678"
+
+    def test_should_serialise_datetime_as_iso_string(self) -> None:
+        dt = datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
+        data = encode(Result(id=1, result={"ts": dt}, error=None))
+        assert json.loads(data)["result"]["ts"] == "2024-03-15T10:30:00+00:00"
+
+    def test_should_serialise_date_as_iso_string(self) -> None:
+        data = encode(Result(id=1, result={"d": date(2024, 3, 15)}, error=None))
+        assert json.loads(data)["result"]["d"] == "2024-03-15"
+
+    def test_should_serialise_time_as_iso_string(self) -> None:
+        data = encode(Result(id=1, result={"t": time(10, 30, 0)}, error=None))
+        assert json.loads(data)["result"]["t"] == "10:30:00"
+
+    def test_should_serialise_decimal_as_float(self) -> None:
+        data = encode(Result(id=1, result={"v": Decimal("3.14")}, error=None))
+        assert json.loads(data)["result"]["v"] == pytest.approx(3.14)
+
+    def test_should_raise_for_unhandled_type(self) -> None:
+        with pytest.raises(TypeError, match="not JSON serializable"):
+            encode(Result(id=1, result={"v": object()}, error=None))

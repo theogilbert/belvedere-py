@@ -256,7 +256,12 @@ class TestExecute:
             {"connection_id": conn_id, "query": "SELECT 1"},
             noop_progress,
         )
-        assert result == {"columns": ["id"], "rows": [[1], [2]], "rows_total": 2}
+        assert result == {
+            "columns": ["id"],
+            "rows": [[1], [2]],
+            "rows_total": 2,
+            "duration_ms": ANY,
+        }
 
     async def test_should_return_rows_affected_for_dml(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -268,7 +273,19 @@ class TestExecute:
             {"connection_id": conn_id, "query": "DELETE FROM t"},
             noop_progress,
         )
-        assert result == {"rows_affected": 3}
+        assert result == {"rows_affected": 3, "duration_ms": ANY}
+
+    async def test_duration_ms_is_non_negative_number(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, _ = connected
+        result = await disp.dispatch(
+            Method.EXECUTE,
+            {"connection_id": conn_id, "query": "SELECT 1"},
+            noop_progress,
+        )
+        assert isinstance(result["duration_ms"], float)
+        assert result["duration_ms"] >= 0
 
     async def test_should_raise_when_connection_id_is_unknown(
         self, dispatcher: Dispatcher
@@ -293,7 +310,12 @@ class TestExecute:
             {"connection_id": conn_id, "query": "SELECT 1"},
             noop_progress,
         )
-        assert result == {"columns": ["n"], "rows": [[42]], "rows_total": 1}
+        assert result == {
+            "columns": ["n"],
+            "rows": [[42]],
+            "rows_total": 1,
+            "duration_ms": ANY,
+        }
 
     async def test_reconnects_when_connection_is_lost(
         self, connected: tuple[Dispatcher, str, AsyncMock]

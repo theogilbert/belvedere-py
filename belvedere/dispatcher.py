@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import pathlib
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -221,15 +222,18 @@ class Dispatcher:
     ) -> dict[str, Any]:
         query: str = self._require_param(params, "query")
         binds: list[Any] = params.get("params") or []
+        t0 = time.perf_counter()
         result = await self._reconnect_and_retry(
             conn, lambda: conn.driver.execute(query, binds), send_progress
         )
+        duration_ms = round((time.perf_counter() - t0) * 1000, 3)
         if isinstance(result, WriteResult):
-            return {"rows_affected": result.rows_affected}
+            return {"rows_affected": result.rows_affected, "duration_ms": duration_ms}
         return {
             "columns": result.columns,
             "rows": result.rows,
             "rows_total": result.rows_total,
+            "duration_ms": duration_ms,
         }
 
     async def _handle_explore_list(

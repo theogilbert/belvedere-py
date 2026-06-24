@@ -46,6 +46,16 @@ class ElasticsearchDriver(BaseDriver):
             required=False,
         ),
         DriverParam(
+            key="protocol",
+            type=ParamType.ENUM,
+            label="Protocol",
+            choices=[
+                DriverParamChoice(value="https", label="HTTPS"),
+                DriverParamChoice(value="http", label="HTTP"),
+            ],
+            default="https",
+        ),
+        DriverParam(
             key="query_mode",
             type=ParamType.ENUM,
             label="Query Mode",
@@ -68,6 +78,7 @@ class ElasticsearchDriver(BaseDriver):
 | `port` | no | `9200` | HTTP port |
 | `username` | no | — | Username |
 | `password` | no | — | Password (masked) |
+| `protocol` | no | `https` | Connection protocol: `https` or `http` |
 | `query_mode` | no | `lucene` | Query language: `lucene` or `dev_tools` |
 
 **Queries:** Prefix with the target index name (pattern or alias) and ` | `.
@@ -128,7 +139,8 @@ from the index mapping (name, type).
     def _open(params: dict[str, Any]) -> elasticsearch.AsyncElasticsearch:
         host = params.get("host", "localhost")
         port = int(params.get("port", 9200))
-        kwargs: dict[str, Any] = {"hosts": [f"http://{host}:{port}"]}
+        protocol = params.get("protocol", "https")
+        kwargs: dict[str, Any] = {"hosts": [f"{protocol}://{host}:{port}"]}
         username = params.get("username")
         password = params.get("password")
         if username and password:

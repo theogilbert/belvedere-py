@@ -7,7 +7,7 @@ import io
 import json
 import pathlib
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from pytest import MonkeyPatch
@@ -86,7 +86,12 @@ class TestHandle:
             params={"connection_id": conn_id, "query": "SELECT 42 AS n"},
         )
         assert r2["error"] is None
-        assert r2["result"] == {"columns": ["n"], "rows": [[42]], "rows_total": 1}
+        assert r2["result"] == {
+            "columns": ["n"],
+            "rows": [[42]],
+            "rows_total": 1,
+            "duration_ms": ANY,
+        }
 
     async def test_should_return_error_when_execute_is_called_after_disconnect(
         self, server: Server, out: io.BytesIO
@@ -164,4 +169,9 @@ class TestHandle:
         )
         msgs = all_responses(out)
         assert any("progress" in m for m in msgs)
-        assert msgs[-1]["result"] == {"columns": ["n"], "rows": [[1]], "rows_total": 1}
+        assert msgs[-1]["result"] == {
+            "columns": ["n"],
+            "rows": [[1]],
+            "rows_total": 1,
+            "duration_ms": ANY,
+        }

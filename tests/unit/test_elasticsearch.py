@@ -15,11 +15,9 @@ async def _hosts(params: dict) -> list[str]:
         return mock_cls.call_args.kwargs["hosts"]
 
 
-def _driver_with_transport(response: object) -> ElasticsearchDriver:
+def _driver_with_response(response: object) -> ElasticsearchDriver:
     client = MagicMock()
-    client.transport.perform_request = AsyncMock(
-        return_value=SimpleNamespace(body=response)
-    )
+    client.perform_request = AsyncMock(return_value=SimpleNamespace(body=response))
     return ElasticsearchDriver({"query_mode": "dev_tools"}, client)
 
 
@@ -40,7 +38,7 @@ class TestOpen:
 
 class TestExecuteDevToolsErrors:
     async def test_raises_on_error_response(self) -> None:
-        driver = _driver_with_transport(
+        driver = _driver_with_response(
             {
                 "error": {
                     "type": "security_exception",
@@ -53,6 +51,6 @@ class TestExecuteDevToolsErrors:
             await driver.execute("PUT /products\n{}", [])
 
     async def test_raises_on_string_error(self) -> None:
-        driver = _driver_with_transport({"error": "index_not_found", "status": 404})
+        driver = _driver_with_response({"error": "index_not_found", "status": 404})
         with pytest.raises(DriverError, match="index_not_found"):
             await driver.execute("GET /missing/_search", [])

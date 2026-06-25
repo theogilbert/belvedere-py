@@ -209,7 +209,7 @@ from the index mapping (name, type).
             if "_search" in path:
                 body.setdefault("size", _DEFAULT_SEARCH_SIZE)
             headers["Content-Type"] = "application/json"
-        raw = await self._client.transport.perform_request(
+        raw = await self._client.perform_request(
             method, path, body=body, headers=headers
         )
         resp = raw.body if hasattr(raw, "body") else raw

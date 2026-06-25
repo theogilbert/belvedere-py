@@ -112,6 +112,7 @@ class Dispatcher:
 
     def __init__(self, cache_dir: pathlib.Path, max_concurrency: int = 1) -> None:
         self._store = ConnectionStore(cache_dir, max_concurrency)
+        self._conn_handlers = self._build_conn_handlers()
 
     async def dispatch(
         self, method: Method, params: dict[str, Any], send_progress: ProgressCallback
@@ -139,38 +140,24 @@ class Dispatcher:
                 return await self._handle_connect(params, send_progress)
             case Method.DISCONNECT:
                 return await self._handle_disconnect(params, send_progress)
-            case (
-                Method.EXECUTE
-                | Method.EXPLORE_LIST
-                | Method.EXPLORE_DESCRIBE
-                | Method.EXPLORE_PREVIEW
-            ):
+            case _ if method in self._conn_handlers:
                 conn = self._require_conn(params)
                 async with conn:
-                    return await self._dispatch_conn(
-                        conn, method, params, send_progress
+                    return await self._conn_handlers[method](
+                        conn, params, send_progress
                     )
             case _:
                 raise DispatchError(f"Unknown method: {method!r}")
 
-    async def _dispatch_conn(
+    def _build_conn_handlers(
         self,
-        conn: Connection,
-        method: Method,
-        params: dict[str, Any],
-        send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
-        match method:
-            case Method.EXECUTE:
-                return await self._handle_execute(conn, params, send_progress)
-            case Method.EXPLORE_LIST:
-                return await self._handle_explore_list(conn, params, send_progress)
-            case Method.EXPLORE_DESCRIBE:
-                return await self._handle_explore_describe(conn, params, send_progress)
-            case Method.EXPLORE_PREVIEW:
-                return await self._handle_explore_preview(conn, params, send_progress)
-            case _:
-                raise AssertionError(f"unreachable: {method!r}")
+    ) -> dict[Method, Callable[..., Awaitable[dict[str, Any]]]]:
+        return {
+            Method.EXECUTE: self._handle_execute,
+            Method.EXPLORE_LIST: self._handle_explore_list,
+            Method.EXPLORE_DESCRIBE: self._handle_explore_describe,
+            Method.EXPLORE_PREVIEW: self._handle_explore_preview,
+        }
 
     async def _handle_capabilities(
         self,

@@ -36,6 +36,44 @@ class TestOpen:
         ]
 
 
+class TestParseBody:
+    def test_empty_body(self) -> None:
+        assert ElasticsearchDriver._parse_body("") == (None, None)
+
+    def test_single_json_object(self) -> None:
+        body, headers = ElasticsearchDriver._parse_body('{"query": {"match_all": {}}}')
+        assert body == {"query": {"match_all": {}}}
+        assert headers is not None
+        assert headers["Content-Type"] == "application/json"
+
+    def test_multiline_single_json_object(self) -> None:
+        body, headers = ElasticsearchDriver._parse_body(
+            '{\n  "query": {\n    "match_all": {}\n  }\n}'
+        )
+        assert body == {"query": {"match_all": {}}}
+        assert headers is not None
+        assert headers["Content-Type"] == "application/json"
+
+    def test_multiple_json_objects_returns_ndjson(self) -> None:
+        body, headers = ElasticsearchDriver._parse_body(
+            '{"index": {"_id": "1"}}\n{"name": "Widget"}'
+        )
+        assert body == b'{"index": {"_id": "1"}}\n{"name": "Widget"}\n'
+        assert headers is not None
+        assert headers["Content-Type"] == "application/x-ndjson"
+
+    def test_msearch_with_multiline_query_doc(self) -> None:
+        payload = '{}\n{\n  "query": {"match_all": {}},\n  "size": 5\n}'
+        body, headers = ElasticsearchDriver._parse_body(payload)
+        assert body == b'{}\n{"query": {"match_all": {}}, "size": 5}\n'
+        assert headers is not None
+        assert headers["Content-Type"] == "application/x-ndjson"
+
+    def test_invalid_json_raises(self) -> None:
+        with pytest.raises(DriverError, match="Invalid request body"):
+            ElasticsearchDriver._parse_body("not valid json")
+
+
 class TestExecuteDevToolsErrors:
     async def test_raises_on_error_response(self) -> None:
         driver = _driver_with_response(

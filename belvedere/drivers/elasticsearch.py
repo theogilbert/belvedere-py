@@ -203,12 +203,9 @@ from the index mapping (name, type).
             )
         method, path = tokens[0].upper(), tokens[1].strip()
         body_str = "\n".join(lines[1:]).strip()
-        body = json.loads(body_str) if body_str else None
-        headers: dict[str, str] | None = None
-        if body is not None:
-            if "_search" in path:
-                body.setdefault("size", _DEFAULT_SEARCH_SIZE)
-            headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        body, headers = self._parse_body(body_str)
+        if isinstance(body, dict) and "_search" in path:
+            body.setdefault("size", _DEFAULT_SEARCH_SIZE)
         raw = await self._client.perform_request(
             method, path, body=body, headers=headers
         )
@@ -226,6 +223,39 @@ from the index mapping (name, type).
         if isinstance(resp, dict):
             return flatten_docs(list(resp.keys()), [[resp[k] for k in resp]])  # ty: ignore[invalid-argument-type]
         return ReadResult(columns=["response"], rows=[[str(resp)]], rows_total=1)
+
+    @staticmethod
+    def _parse_body(
+        body_str: str,
+    ) -> tuple[dict[str, Any] | bytes | None, dict[str, str] | None]:
+        """Parse a Dev Tools request body into (body, headers).
+
+        Uses raw_decode to consume one JSON object at a time so multi-line
+        objects within a multi-doc payload (e.g. _msearch) are handled correctly.
+        One document → JSON body; multiple documents → NDJSON bytes.
+        """
+        if not body_str:
+            return None, None
+        decoder = json.JSONDecoder()
+        docs: list[Any] = []
+        s = body_str.strip()
+        while s:
+            try:
+                obj, idx = decoder.raw_decode(s)
+            except json.JSONDecodeError as exc:
+                raise DriverError(f"Invalid request body: {exc}") from exc
+            docs.append(obj)
+            s = s[idx:].strip()
+        if len(docs) == 1:
+            return docs[0], {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+        ndjson = "\n".join(json.dumps(doc) for doc in docs) + "\n"
+        return ndjson.encode(), {
+            "Content-Type": "application/x-ndjson",
+            "Accept": "application/json",
+        }
 
     def _hits_to_result(self, resp: Any) -> ReadResult:
         hits = resp["hits"]["hits"]

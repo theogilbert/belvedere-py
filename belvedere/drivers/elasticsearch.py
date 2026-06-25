@@ -204,11 +204,11 @@ from the index mapping (name, type).
         method, path = tokens[0].upper(), tokens[1].strip()
         body_str = "\n".join(lines[1:]).strip()
         body = json.loads(body_str) if body_str else None
-        headers: dict[str, str] = {}
+        headers: dict[str, str] | None = None
         if body is not None:
             if "_search" in path:
                 body.setdefault("size", _DEFAULT_SEARCH_SIZE)
-            headers["Content-Type"] = "application/json"
+            headers = {"Content-Type": "application/json", "Accept": "application/json"}
         raw = await self._client.perform_request(
             method, path, body=body, headers=headers
         )

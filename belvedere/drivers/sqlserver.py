@@ -62,14 +62,14 @@ class SQLServerDriver(BaseDriver):
 
 **Install:** `pip install mssql-python`
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `host` | no | `localhost` | Server hostname or IP |
-| `port` | no | `1433` | TCP port |
-| `database` | no | — | Database name |
-| `user` | no | — | Login name |
-| `password` | no | — | Password (masked) |
-| `applicationIntent` | no | — | `READ_WRITE` or `READ_ONLY` |
+| Parameter             | Required | Default     | Description                 |
+|-----------------------|----------|-------------|------------------------------|
+| `host`                | no       | `localhost` | Server hostname or IP        |
+| `port`                | no       | `1433`      | TCP port                     |
+| `database`            | no       | —           | Database name                |
+| `user`                | no       | —           | Login name                   |
+| `password`            | no       | —           | Password (masked)            |
+| `applicationIntent`   | no       | —           | `READ_WRITE` or `READ_ONLY`  |
 
 **Queries:** Standard T-SQL. Positional bind parameters use `?` placeholders.
 

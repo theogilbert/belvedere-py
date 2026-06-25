@@ -67,11 +67,11 @@ class MongoDriver(BaseDriver):
 
 **Install:** `pip install pymongo`
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `uri` | yes | Connection URI (embed credentials and `authSource` here if needed) |
-| `username` | no | Username (can also be embedded in the URI) |
-| `password` | no | Password (masked; can also be embedded in the URI) |
+| Parameter  | Required | Description                                                        |
+|------------|----------|--------------------------------------------------------------------|
+| `uri`      | yes      | Connection URI (embed credentials and `authSource` here if needed) |
+| `username` | no       | Username (can also be embedded in the URI)                         |
+| `password` | no       | Password (masked; can also be embedded in the URI)                 |
 
 **Queries:** JSON command objects. `"db"` is required and names the target
 database. The top-level operation key names the collection.

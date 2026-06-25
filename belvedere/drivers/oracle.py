@@ -93,13 +93,13 @@ class OracleDriver(BaseDriver):
 
 **Install:** `pip install oracledb` — thin mode, no Oracle Instant Client required.
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `host` | no | `localhost` | Server hostname or IP |
-| `port` | no | `1521` | Listener port |
-| `service_name` | no | `FREEPDB1` | Database service name |
-| `user` | no | — | Username |
-| `password` | no | — | Password (masked) |
+| Parameter      | Required | Default     | Description           |
+|----------------|----------|-------------|-----------------------|
+| `host`         | no       | `localhost` | Server hostname or IP |
+| `port`         | no       | `1521`      | Listener port         |
+| `service_name` | no       | `FREEPDB1`  | Database service name |
+| `user`         | no       | —           | Username              |
+| `password`     | no       | —           | Password (masked)     |
 
 **Queries:** Standard SQL. Positional bind parameters use `:1`, `:2`, … placeholders.
 

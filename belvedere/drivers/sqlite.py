@@ -40,9 +40,9 @@ class SQLiteDriver(BaseDriver):
 
 **Install:** none (stdlib)
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `database` | yes | — | File path or `:memory:` |
+| Parameter  | Required | Default | Description               |
+|------------|----------|---------|---------------------------|
+| `database` | yes      | —       | File path or `:memory:`   |
 
 **Queries:** Standard SQL. Positional bind parameters use `?` placeholders.
 

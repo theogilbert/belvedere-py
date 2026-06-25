@@ -72,14 +72,14 @@ class ElasticsearchDriver(BaseDriver):
 
 **Install:** `pip install elasticsearch aiohttp`
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `host` | no | `localhost` | Server hostname or IP |
-| `port` | no | `9200` | HTTP port |
-| `username` | no | — | Username |
-| `password` | no | — | Password (masked) |
-| `protocol` | no | `https` | Connection protocol: `https` or `http` |
-| `query_mode` | no | `lucene` | Query language: `lucene` or `dev_tools` |
+| Parameter    | Required | Default     | Description                             |
+|--------------|----------|-------------|------------------------------------------|
+| `host`       | no       | `localhost` | Server hostname or IP                   |
+| `port`       | no       | `9200`      | HTTP port                               |
+| `username`   | no       | —           | Username                                |
+| `password`   | no       | —           | Password (masked)                       |
+| `protocol`   | no       | `https`     | Connection protocol: `https` or `http`  |
+| `query_mode` | no       | `lucene`    | Query language: `lucene` or `dev_tools` |
 
 **Queries:** Prefix with the target index name (pattern or alias) and ` | `.
 

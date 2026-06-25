@@ -53,12 +53,12 @@ class Neo4jDriver(BaseDriver):
 
 **Install:** `pip install neo4j`
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `uri` | no | `bolt://localhost:7687` | Bolt URI |
-| `user` | no | `neo4j` | Username |
-| `password` | no | — | Password (masked) |
-| `database` | no | `neo4j` | Database name |
+| Parameter  | Required | Default                  | Description       |
+|------------|----------|--------------------------|-------------------|
+| `uri`      | no       | `bolt://localhost:7687`  | Bolt URI          |
+| `user`     | no       | `neo4j`                  | Username          |
+| `password` | no       | —                        | Password (masked) |
+| `database` | no       | `neo4j`                  | Database name     |
 
 **Queries:** Cypher. Positional bind parameters are referenced as `$0`, `$1`, …
 

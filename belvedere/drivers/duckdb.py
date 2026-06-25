@@ -48,9 +48,9 @@ class DuckDBDriver(BaseDriver):
 
 **Install:** `pip install 'belvedere-py[duckdb]'`
 
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `database` | no | `:memory:` | File path or `:memory:` |
+| Parameter  | Required | Default    | Description               |
+|------------|----------|------------|---------------------------|
+| `database` | no       | `:memory:` | File path or `:memory:`   |
 
 **Queries:** Standard SQL. Positional bind parameters use `?` placeholders.
 

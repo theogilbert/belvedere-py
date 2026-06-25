@@ -188,6 +188,19 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
             case _:
                 return []
 
+    async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        match path:
+            case ["entities", label]:
+                result = await self.execute(f"MATCH (n:`{label}`) RETURN n LIMIT 10", [])
+                return result if isinstance(result, ReadResult) else None
+            case ["relationships", rel_type]:
+                result = await self.execute(
+                    f"MATCH ()-[r:`{rel_type}`]->() RETURN r LIMIT 10", []
+                )
+                return result if isinstance(result, ReadResult) else None
+            case _:
+                return None
+
     async def explore_describe(self, path: list[str]) -> IndexDescription | None:
         match path:
             case ["indexes", index_name]:

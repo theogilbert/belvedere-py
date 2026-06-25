@@ -49,6 +49,9 @@ class CachingDriver(BaseDriver):
             logger.debug(f"explore.list cache hit for path {path}")
         return items
 
+    async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        return await self._inner.explore_preview(path)
+
     async def explore_describe(
         self, path: list[str]
     ) -> TableDescription | IndexDescription | None:

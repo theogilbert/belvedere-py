@@ -261,6 +261,14 @@ column metadata (name, type, nullability, default).
             case _:
                 return []
 
+    async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        match path:
+            case [schema, table]:
+                result = await self.execute(f"SELECT TOP 10 * FROM [{schema}].[{table}]", [])
+                return result if isinstance(result, ReadResult) else None
+            case _:
+                return None
+
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
         """Return column metadata for the table at the given path.
 

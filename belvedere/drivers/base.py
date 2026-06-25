@@ -96,6 +96,18 @@ class BaseDriver(ABC):
         """
         ...
 
+    async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        """Return a sample of rows for the node at the given path.
+
+        Args:
+            path: Ordered path segments identifying a table or collection node.
+
+        Returns:
+            Up to 10 rows as a ReadResult, or None if the node type does not
+            support row preview.
+        """
+        return None
+
     @abstractmethod
     async def explore_describe(
         self, path: list[str]

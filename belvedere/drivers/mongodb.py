@@ -271,6 +271,14 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
             case _:
                 return []
 
+    async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        match path:
+            case [db_name, collection_name]:
+                db = self._client[db_name]
+                return await self._find(db, {_Op.FIND: collection_name, "limit": 10})
+            case _:
+                return None
+
     async def explore_describe(self, path: list[str]) -> IndexDescription | None:
         match path:
             case [db_name, collection_name, "indexes", index_name]:

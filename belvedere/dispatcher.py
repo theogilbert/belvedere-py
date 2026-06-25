@@ -139,7 +139,7 @@ class Dispatcher:
                 return await self._handle_connect(params, send_progress)
             case Method.DISCONNECT:
                 return await self._handle_disconnect(params, send_progress)
-            case Method.EXECUTE | Method.EXPLORE_LIST | Method.EXPLORE_DESCRIBE:
+            case Method.EXECUTE | Method.EXPLORE_LIST | Method.EXPLORE_DESCRIBE | Method.EXPLORE_PREVIEW:
                 conn = self._require_conn(params)
                 async with conn:
                     return await self._dispatch_conn(
@@ -162,6 +162,8 @@ class Dispatcher:
                 return await self._handle_explore_list(conn, params, send_progress)
             case Method.EXPLORE_DESCRIBE:
                 return await self._handle_explore_describe(conn, params, send_progress)
+            case Method.EXPLORE_PREVIEW:
+                return await self._handle_explore_preview(conn, params, send_progress)
             case _:
                 raise AssertionError(f"unreachable: {method!r}")
 
@@ -263,6 +265,27 @@ class Dispatcher:
             conn, lambda: conn.driver.explore_describe(path), send_progress
         )
         return {"details": desc}
+
+    async def _handle_explore_preview(
+        self,
+        conn: Connection,
+        params: dict[str, Any],
+        send_progress: ProgressCallback,
+    ) -> dict[str, Any]:
+        path: list[str] = params.get("path") or []
+        t0 = time.perf_counter()
+        result = await self._reconnect_and_retry(
+            conn, lambda: conn.driver.explore_preview(path), send_progress
+        )
+        duration_ms = round((time.perf_counter() - t0) * 1000, 3)
+        if result is None:
+            return {"columns": None, "rows": None, "rows_total": None, "duration_ms": duration_ms}
+        return {
+            "columns": result.columns,
+            "rows": result.rows,
+            "rows_total": result.rows_total,
+            "duration_ms": duration_ms,
+        }
 
     async def _reconnect_and_retry(
         self,

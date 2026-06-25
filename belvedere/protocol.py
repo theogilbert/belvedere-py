@@ -29,6 +29,7 @@ class Method(StrEnum):
     EXECUTE = "execute"
     EXPLORE_LIST = "explore.list"
     EXPLORE_DESCRIBE = "explore.describe"
+    EXPLORE_PREVIEW = "explore.preview"
 
 
 @dataclass

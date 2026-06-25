@@ -271,6 +271,16 @@ column metadata (name, type, nullability, primary key flag, default).
             case _:
                 return []
 
+    async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        match path:
+            case [schema, table]:
+                result = await self.execute(
+                    f'SELECT * FROM "{schema}"."{table}" FETCH FIRST 10 ROWS ONLY', []
+                )
+                return result if isinstance(result, ReadResult) else None
+            case _:
+                return None
+
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
         match path:
             case [schema, table]:

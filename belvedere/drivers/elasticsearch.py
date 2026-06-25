@@ -213,6 +213,14 @@ from the index mapping (name, type).
             method, path, body=body, headers=headers
         )
         resp = raw.body if hasattr(raw, "body") else raw
+        if isinstance(resp, dict) and "error" in resp:
+            error = resp["error"]
+            status = resp.get("status", "error")
+            if isinstance(error, dict):
+                raise DriverError(
+                    f"Elasticsearch error ({status}): [{error.get('type', 'error')}] {error.get('reason', error)}"
+                )
+            raise DriverError(f"Elasticsearch error ({status}): {error}")
         if isinstance(resp, dict) and "hits" in resp:
             return self._hits_to_result(resp)
         if isinstance(resp, dict):

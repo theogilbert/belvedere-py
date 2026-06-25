@@ -246,6 +246,15 @@ SELECT * FROM 'glob/**/*.parquet'
                     [schema, table],
                 ).fetchall()
                 pk_cols: set[str] = set(pk_rows[0][0]) if pk_rows else set()
+                idx_rows = self._conn.execute(
+                    "SELECT index_name, sql FROM duckdb_indexes()"
+                    " WHERE schema_name = ? AND table_name = ?",
+                    [schema, table],
+                ).fetchall()
+                col_indexes: dict[str, list[str]] = {}
+                for idx_name, sql in idx_rows:
+                    for key_field in _parse_index_columns(sql):
+                        col_indexes.setdefault(key_field.name, []).append(idx_name)
                 return TableDescription(
                     table=table,
                     schema=schema,
@@ -255,6 +264,7 @@ SELECT * FROM 'glob/**/*.parquet'
                             type=r[1],
                             nullable=r[2] == "YES",
                             pk=r[0] in pk_cols,
+                            indexes=col_indexes.get(r[0], []),
                         )
                         for r in col_rows
                     ],

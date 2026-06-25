@@ -308,6 +308,18 @@ column metadata (name, type, nullability, primary key flag, default).
                 )
                 pk_cols = {r[0] for r in await cur.fetchall()}
 
+                await cur.execute(
+                    "SELECT aic.COLUMN_NAME, aic.INDEX_NAME"
+                    " FROM ALL_IND_COLUMNS aic"
+                    " JOIN ALL_INDEXES ai"
+                    "  ON aic.INDEX_OWNER = ai.OWNER AND aic.INDEX_NAME = ai.INDEX_NAME"
+                    " WHERE ai.TABLE_OWNER = :1 AND ai.TABLE_NAME = :2",
+                    [schema_up, table_up],
+                )
+                col_indexes: dict[str, list[str]] = {}
+                for col_name, idx_name in await cur.fetchall():
+                    col_indexes.setdefault(col_name, []).append(idx_name)
+
                 return TableDescription(
                     table=table_up,
                     schema=schema_up,
@@ -318,6 +330,7 @@ column metadata (name, type, nullability, primary key flag, default).
                             nullable=r[2] == "Y",
                             pk=r[0] in pk_cols,
                             default=r[3].strip() if r[3] is not None else None,
+                            indexes=col_indexes.get(r[0], []),
                         )
                         for r in col_rows
                     ],

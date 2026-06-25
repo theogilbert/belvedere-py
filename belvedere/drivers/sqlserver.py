@@ -294,14 +294,34 @@ column metadata (name, type, nullability, default).
                     " ORDER BY ORDINAL_POSITION",
                     (schema, table),
                 )
+                col_rows = cur.fetchall()  # ty: ignore[missing-argument]
+                cur.execute(
+                    "SELECT c.name, i.name"
+                    " FROM sys.indexes i"
+                    " JOIN sys.index_columns ic"
+                    "  ON i.object_id = ic.object_id AND i.index_id = ic.index_id"
+                    " JOIN sys.columns c"
+                    "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+                    " JOIN sys.objects o ON i.object_id = o.object_id"
+                    " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+                    " WHERE s.name = ? AND o.name = ? AND i.name IS NOT NULL",
+                    (schema, table),
+                )
+                col_indexes: dict[str, list[str]] = {}
+                for col_name, idx_name in cur.fetchall():  # ty: ignore[missing-argument]
+                    col_indexes.setdefault(col_name, []).append(idx_name)
                 return TableDescription(
                     table=table,
                     schema=schema,
                     columns=[
                         ColumnInfo(
-                            name=r[0], type=r[1], nullable=r[2] == "YES", default=r[3]
+                            name=r[0],
+                            type=r[1],
+                            nullable=r[2] == "YES",
+                            default=r[3],
+                            indexes=col_indexes.get(r[0], []),
                         )
-                        for r in cur.fetchall()  # ty: ignore[missing-argument]
+                        for r in col_rows
                     ],
                 )
             case _:

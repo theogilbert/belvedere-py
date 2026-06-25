@@ -189,6 +189,28 @@ class TestExploreDescribe:
         assert by_name["id"].pk is True
         assert by_name["val"].pk is False
 
+    async def test_should_return_index_names_for_indexed_columns(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert isinstance(desc, TableDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["val"].indexes == ["idx"]
+        assert by_name["id"].indexes == []
+        assert by_name["other"].indexes == []
+
+    async def test_should_return_multiple_index_names_for_multi_indexed_column(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx1 ON t(val)", [])
+        await driver.execute("CREATE INDEX idx2 ON t(val)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert isinstance(desc, TableDescription)
+        assert sorted(desc.columns[1].indexes) == ["idx1", "idx2"]
+
     async def test_should_return_none_for_invalid_path(
         self, driver: DuckDBDriver
     ) -> None:

@@ -9,7 +9,7 @@ Progress (server → client): {id: int, progress: {status: str, message: str}}
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import StrEnum
@@ -102,6 +102,8 @@ class ColumnInfo:
     """Whether the column is part of the primary key."""
     default: str | None = None
     """Default expression, or None if not set."""
+    indexes: list[str] = field(default_factory=list)
+    """Names of indexes that include this column."""
 
 
 @dataclass

@@ -207,11 +207,27 @@ metadata (name, type, nullability, primary key flag).
         match path:
             case [table]:
                 cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+                index_list = self._conn.execute(
+                    f"PRAGMA index_list({table})"
+                ).fetchall()
+                col_indexes: dict[str, list[str]] = {}
+                for idx_row in index_list:
+                    idx_name = idx_row[1]
+                    xinfo = self._conn.execute(
+                        f"PRAGMA index_xinfo({idx_name})"
+                    ).fetchall()
+                    for r in xinfo:
+                        if r[5]:  # key column (not implicit rowid)
+                            col_indexes.setdefault(r[2], []).append(idx_name)
                 return TableDescription(
                     table=table,
                     columns=[
                         ColumnInfo(
-                            name=r[1], type=r[2], nullable=not bool(r[3]), pk=bool(r[5])
+                            name=r[1],
+                            type=r[2],
+                            nullable=not bool(r[3]),
+                            pk=bool(r[5]),
+                            indexes=col_indexes.get(r[1], []),
                         )
                         for r in cols
                     ],

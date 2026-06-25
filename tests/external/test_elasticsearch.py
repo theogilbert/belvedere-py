@@ -27,6 +27,7 @@ def _params() -> dict:
     return {
         "host": os.environ.get("ELASTICSEARCH_HOST", "localhost"),
         "port": int(os.environ.get("ELASTICSEARCH_PORT", "9200")),
+        "protocol": os.environ.get("ELASTICSEARCH_PROTOCOL", "https"),
     }
 
 

@@ -211,7 +211,9 @@ SELECT * FROM 'glob/**/*.parquet'
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         match path:
             case [schema, table]:
-                result = await self.execute(f'SELECT * FROM "{schema}"."{table}" LIMIT 10', [])
+                result = await self.execute(
+                    f'SELECT * FROM "{schema}"."{table}" LIMIT 10', []
+                )
                 return result if isinstance(result, ReadResult) else None
             case _:
                 return None

@@ -139,7 +139,12 @@ class Dispatcher:
                 return await self._handle_connect(params, send_progress)
             case Method.DISCONNECT:
                 return await self._handle_disconnect(params, send_progress)
-            case Method.EXECUTE | Method.EXPLORE_LIST | Method.EXPLORE_DESCRIBE | Method.EXPLORE_PREVIEW:
+            case (
+                Method.EXECUTE
+                | Method.EXPLORE_LIST
+                | Method.EXPLORE_DESCRIBE
+                | Method.EXPLORE_PREVIEW
+            ):
                 conn = self._require_conn(params)
                 async with conn:
                     return await self._dispatch_conn(
@@ -279,7 +284,12 @@ class Dispatcher:
         )
         duration_ms = round((time.perf_counter() - t0) * 1000, 3)
         if result is None:
-            return {"columns": None, "rows": None, "rows_total": None, "duration_ms": duration_ms}
+            return {
+                "columns": None,
+                "rows": None,
+                "rows_total": None,
+                "duration_ms": duration_ms,
+            }
         return {
             "columns": result.columns,
             "rows": result.rows,

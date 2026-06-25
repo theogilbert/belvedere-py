@@ -264,7 +264,9 @@ column metadata (name, type, nullability, default).
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         match path:
             case [schema, table]:
-                result = await self.execute(f"SELECT TOP 10 * FROM [{schema}].[{table}]", [])
+                result = await self.execute(
+                    f"SELECT TOP 10 * FROM [{schema}].[{table}]", []
+                )
                 return result if isinstance(result, ReadResult) else None
             case _:
                 return None

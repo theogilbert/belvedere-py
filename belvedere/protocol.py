@@ -27,6 +27,7 @@ class Method(StrEnum):
     CONNECT = "connect"
     DISCONNECT = "disconnect"
     EXECUTE = "execute"
+    CANCEL = "cancel"
     EXPLORE_LIST = "explore.list"
     EXPLORE_DESCRIBE = "explore.describe"
     EXPLORE_PREVIEW = "explore.preview"

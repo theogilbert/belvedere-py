@@ -10,6 +10,7 @@ from .drivers import SENSITIVE_PARAM_KEYS
 from .drivers.base import DriverError
 from .protocol import (
     DecodeError,
+    Method,
     Progress,
     ProgressDetail,
     Request,
@@ -49,6 +50,8 @@ class Server:
         self._stdin = stdin
         self._lock = asyncio.Lock()
         """Serializes concurrent response writes to stdout."""
+        self._tasks: dict[int, asyncio.Task[None]] = {}
+        """Maps request id to its in-flight task, enabling cancellation by id."""
 
     async def run(self) -> None:
         """Start the read loop.
@@ -73,7 +76,12 @@ class Server:
                 logger.debug(
                     f"Received {_truncate(json.dumps({'id': req.id, 'method': req.method, 'params': _redact(req.params)}))}"
                 )
-                asyncio.create_task(self._handle(req))
+                if req.method == Method.CANCEL:
+                    asyncio.create_task(self._handle_cancel(req))
+                else:
+                    task = asyncio.create_task(self._handle(req))
+                    self._tasks[req.id] = task
+                    task.add_done_callback(lambda _: self._tasks.pop(req.id, None))
             except DecodeError as e:
                 logger.warning(f"Received invalid request: {e}")
                 asyncio.create_task(
@@ -97,10 +105,26 @@ class Server:
             response = Result(id=req.id, result=result, error=None)
         except (DispatchError, DriverError) as exc:
             response = Result(id=req.id, result=None, error=str(exc))
+        except asyncio.CancelledError:
+            response = Result(id=req.id, result=None, error="cancelled")
         except Exception:
             logger.exception(f"Unhandled error for request {req.id}")
             response = Result(id=req.id, result=None, error="internal error")
         await self._send(response)
+
+    async def _handle_cancel(self, req: Request) -> None:
+        target_id = req.params.get("request_id")
+        if not isinstance(target_id, int):
+            await self._send(
+                Result(
+                    id=req.id, result=None, error="Missing required param: 'request_id'"
+                )
+            )
+            return
+        task = self._tasks.get(target_id)
+        if task is not None:
+            task.cancel()
+        await self._send(Result(id=req.id, result={"ok": True}, error=None))
 
     async def _send(self, msg: Response) -> None:
         data = encode(msg)

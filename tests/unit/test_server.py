@@ -1,11 +1,14 @@
+import asyncio
 import io
 import json
 import logging
 import os
 import pathlib
+from unittest.mock import patch
 
 import pytest
 
+from belvedere.dispatcher import Dispatcher
 from belvedere.server import Server, _LOG_CAP, _redact, _truncate
 
 
@@ -113,3 +116,49 @@ class TestServerLogging:
         with caplog.at_level(logging.INFO, logger="belvedere.server"):
             await _run_server(tmp_path)
         assert any("exit" in r.message.lower() for r in caplog.records)
+
+
+class TestCancel:
+    async def test_returns_ok_for_unknown_request_id(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        out = await _run_server(
+            tmp_path, _req(id=1, method="cancel", params={"request_id": 99})
+        )
+        msg = json.loads(out.getvalue())
+        assert msg == {"id": 1, "result": {"ok": True}, "error": None}
+
+    async def test_returns_error_when_request_id_is_missing(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        out = await _run_server(tmp_path, _req(id=1, method="cancel", params={}))
+        msg = json.loads(out.getvalue())
+        assert msg["id"] == 1
+        assert msg["error"] is not None
+
+    async def test_cancelled_task_receives_cancelled_error(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        gate = asyncio.Event()
+
+        async def slow_dispatch(
+            self_d: Dispatcher, method: object, params: object, send_progress: object
+        ) -> dict:
+            await gate.wait()
+            return {}
+
+        with patch.object(Dispatcher, "dispatch", slow_dispatch):
+            out = await _run_server(
+                tmp_path,
+                _req(
+                    id=1, method="execute", params={"connection_id": "0", "query": "q"}
+                ),
+                _req(id=2, method="cancel", params={"request_id": 1}),
+            )
+
+        messages = {
+            json.loads(line)["id"]: json.loads(line)
+            for line in out.getvalue().splitlines()
+        }
+        assert messages[1]["error"] == "cancelled"
+        assert messages[2] == {"id": 2, "result": {"ok": True}, "error": None}

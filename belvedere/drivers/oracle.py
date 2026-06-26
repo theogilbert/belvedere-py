@@ -185,7 +185,7 @@ column metadata (name, type, nullability, primary key flag, default).
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             if isinstance(exc, oracledb.DatabaseError):
-                raise DriverError(str(exc)) from exc
+                raise DriverError(_format_db_error(exc, query)) from exc
             raise
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
@@ -342,3 +342,20 @@ column metadata (name, type, nullability, primary key flag, default).
 def _maybe_raise_connection_lost(exc: Exception) -> None:
     if isinstance(exc, (oracledb.OperationalError, oracledb.InterfaceError)):
         raise ConnectionLostError(str(exc)) from exc
+
+
+def _format_db_error(exc: oracledb.DatabaseError, query: str) -> str:
+    msg = str(exc)
+    error = exc.args[0] if exc.args else None
+    offset = getattr(error, "offset", 0)
+    if offset > 0:
+        line, col = _offset_to_line_col(query, offset)
+        msg = f"{msg} (line {line}, col {col})"
+    return msg
+
+
+def _offset_to_line_col(query: str, offset: int) -> tuple[int, int]:
+    segment = query[:offset]
+    line = segment.count("\n") + 1
+    col = offset - segment.rfind("\n")
+    return line, col

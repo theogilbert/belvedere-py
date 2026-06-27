@@ -118,6 +118,13 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
         try:
             async with self._driver.session(database=db) as session:
                 result = await session.run(query, params)  # ty: ignore[invalid-argument-type]
+                keyword = _plan_keyword(query)
+                if keyword:
+                    summary = await result.consume()
+                    plan = summary.profile if keyword == "profile" else summary.plan
+                    if plan is not None:
+                        return _plan_to_result(plan, keyword == "profile")
+                    return WriteResult(rows_affected=0)
                 keys = result.keys()
                 if keys:
                     rows = []
@@ -272,6 +279,48 @@ def _serialize(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _serialize(v) for k, v in value.items()}
     return value
+
+
+def _plan_keyword(query: str) -> str | None:
+    """Returns 'explain' or 'profile' if the query's first real keyword is EXPLAIN/PROFILE."""
+    for line in query.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        upper = stripped.upper()
+        if upper.startswith("EXPLAIN"):
+            return "explain"
+        if upper.startswith("PROFILE"):
+            return "profile"
+        return None
+    return None
+
+
+def _plan_to_result(root: dict, is_profile: bool) -> ReadResult:
+    rows: list[list[Any]] = []
+    _collect_plan_rows(root, rows, depth=0, is_profile=is_profile)
+    columns = (
+        ["operator", "rows", "db_hits", "identifiers"]
+        if is_profile
+        else ["operator", "estimated_rows", "identifiers"]
+    )
+    return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
+
+
+def _collect_plan_rows(
+    plan: dict, out: list[list[Any]], depth: int, is_profile: bool
+) -> None:
+    op = "  " * depth + plan.get("operatorType", "?")
+    identifiers = ", ".join(plan.get("identifiers", []))
+    if is_profile:
+        out.append([op, plan.get("rows", 0), plan.get("dbHits", 0), identifiers])
+    else:
+        estimated = plan.get("args", {}).get("EstimatedRows", "")
+        if isinstance(estimated, float) and estimated == int(estimated):
+            estimated = int(estimated)
+        out.append([op, estimated, identifiers])
+    for child in plan.get("children", []):
+        _collect_plan_rows(child, out, depth + 1, is_profile)
 
 
 async def _make_neo4j_driver(params: dict[str, Any]) -> neo4j.AsyncDriver:

@@ -8,6 +8,8 @@ from ..protocol import (
     ColumnInfo,
     DriverParam,
     ExploreItem,
+    IndexDescription,
+    IndexKeyField,
     Language,
     ParamType,
     ReadResult,
@@ -15,6 +17,11 @@ from ..protocol import (
     WriteResult,
 )
 from .base import BaseDriver, ConnectionLostError, DriverError
+
+_USED_IMPORTS = (
+    IndexDescription,
+    IndexKeyField,
+)  # referenced below in _explore_describe
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
 
@@ -120,8 +127,9 @@ SELECT * FROM employees WHERE department_id = :1 AND hire_date > :2
         └── constraints  → name, type (primary_key, unique, check, foreign_key)
 ```
 
-`explore.describe` is supported on `[schema, table]` paths and returns full
-column metadata (name, type, nullability, primary key flag, default).
+`explore.describe` is supported on `[schema, table]` paths (column metadata:
+name, type, nullability, primary key flag, default) and on
+`[schema, table, "indexes", index_name]` paths (key fields, direction, uniqueness).
 """
 
     def __init__(
@@ -288,14 +296,18 @@ column metadata (name, type, nullability, primary key flag, default).
             case _:
                 return None
 
-    async def explore_describe(self, path: list[str]) -> TableDescription | None:
+    async def explore_describe(
+        self, path: list[str]
+    ) -> TableDescription | IndexDescription | None:
         try:
             return await self._explore_describe(path)
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             raise
 
-    async def _explore_describe(self, path: list[str]) -> TableDescription | None:
+    async def _explore_describe(
+        self, path: list[str]
+    ) -> TableDescription | IndexDescription | None:
         match path:
             case [schema, table]:
                 schema_up = schema.upper()
@@ -349,6 +361,41 @@ column metadata (name, type, nullability, primary key flag, default).
                         for r in col_rows
                     ],
                 )
+
+            case [schema, table, "indexes", index_name]:
+                schema_up = schema.upper()
+                index_up = index_name.upper()
+                cur = self._conn.cursor()
+
+                await cur.execute(
+                    "SELECT UNIQUENESS FROM ALL_INDEXES"
+                    " WHERE OWNER = :1 AND INDEX_NAME = :2",
+                    [schema_up, index_up],
+                )
+                row = await cur.fetchone()
+                if row is None:
+                    return None
+
+                await cur.execute(
+                    "SELECT COLUMN_NAME, DESCEND FROM ALL_IND_COLUMNS"
+                    " WHERE INDEX_OWNER = :1 AND INDEX_NAME = :2"
+                    " ORDER BY COLUMN_POSITION",
+                    [schema_up, index_up],
+                )
+                fields = [
+                    IndexKeyField(
+                        name=r[0], direction="desc" if r[1] == "DESC" else "asc"
+                    )
+                    for r in await cur.fetchall()
+                ]
+
+                return IndexDescription(
+                    index=index_name,
+                    fields=fields,
+                    unique=row[0] == "UNIQUE",
+                    entity=table.upper(),
+                )
+
             case _:
                 return None
 

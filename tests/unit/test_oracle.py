@@ -13,7 +13,17 @@ from belvedere.drivers.oracle import (
     _format_db_error,
     _offset_to_line_col,
 )
-from belvedere.protocol import ExploreItem
+from belvedere.protocol import ExploreItem, IndexDescription
+
+
+def _make_index_driver(index_row: tuple | None, col_rows: list) -> OracleDriver:
+    cur = MagicMock()
+    cur.execute = AsyncMock()
+    cur.fetchone = AsyncMock(return_value=index_row)
+    cur.fetchall = AsyncMock(return_value=col_rows)
+    conn = MagicMock()
+    conn.cursor.return_value = cur
+    return OracleDriver({}, conn, True)
 
 
 def _make_driver(rows: list, has_oracle_maintained: bool) -> OracleDriver:
@@ -143,3 +153,49 @@ class TestExecuteErrorPropagation:
         driver = OracleDriver({}, conn, True)
         with pytest.raises(ConnectionLostError):
             asyncio.run(driver.explore_describe(["MYSCHEMA", "MYTABLE"]))
+
+
+class TestExploreDescribeIndex:
+    def test_returns_index_description(self) -> None:
+        driver = _make_index_driver(
+            index_row=("UNIQUE",),
+            col_rows=[("ID", "ASC"), ("NAME", "ASC")],
+        )
+        result = asyncio.run(
+            driver.explore_describe(["MYSCHEMA", "MYTABLE", "indexes", "MY_IDX"])
+        )
+        assert isinstance(result, IndexDescription)
+        assert result.index == "MY_IDX"
+        assert result.unique is True
+        assert result.entity == "MYTABLE"
+        assert [f.name for f in result.fields] == ["ID", "NAME"]
+        assert all(f.direction == "asc" for f in result.fields)
+
+    def test_desc_direction(self) -> None:
+        driver = _make_index_driver(
+            index_row=("NONUNIQUE",),
+            col_rows=[("CREATED_AT", "DESC")],
+        )
+        result = asyncio.run(
+            driver.explore_describe(["MYSCHEMA", "MYTABLE", "indexes", "MY_IDX"])
+        )
+        assert isinstance(result, IndexDescription)
+        assert result.fields[0].direction == "desc"
+
+    def test_non_unique_index(self) -> None:
+        driver = _make_index_driver(
+            index_row=("NONUNIQUE",),
+            col_rows=[("COL", "ASC")],
+        )
+        result = asyncio.run(
+            driver.explore_describe(["MYSCHEMA", "MYTABLE", "indexes", "MY_IDX"])
+        )
+        assert isinstance(result, IndexDescription)
+        assert result.unique is False
+
+    def test_returns_none_when_index_not_found(self) -> None:
+        driver = _make_index_driver(index_row=None, col_rows=[])
+        result = asyncio.run(
+            driver.explore_describe(["MYSCHEMA", "MYTABLE", "indexes", "NO_SUCH"])
+        )
+        assert result is None

@@ -164,7 +164,7 @@ class TestExploreDescribe:
         assert by_name["id"].pk is True
         assert by_name["val"].pk is False
 
-    async def test_should_return_index_names_for_indexed_columns(
+    async def test_should_return_exclusive_index_flag_for_single_column_index(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
@@ -172,19 +172,39 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(["t"])
         assert isinstance(desc, TableDescription)
         by_name = {c.name: c for c in desc.columns}
-        assert by_name["val"].indexes == ["idx"]
-        assert by_name["id"].indexes == []
-        assert by_name["other"].indexes == []
+        assert by_name["val"].exclusive_index is True
+        assert by_name["val"].composite_index is False
+        assert by_name["id"].exclusive_index is False
+        assert by_name["id"].composite_index is False
+        assert by_name["other"].exclusive_index is False
+        assert by_name["other"].composite_index is False
 
-    async def test_should_return_multiple_index_names_for_multi_indexed_column(
+    async def test_should_return_composite_index_flag_for_multi_column_index(
         self, driver: SQLiteDriver
     ) -> None:
-        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
-        await driver.execute("CREATE INDEX idx1 ON t(val)", [])
-        await driver.execute("CREATE INDEX idx2 ON t(val)", [])
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val, other)", [])
         desc = await driver.explore_describe(["t"])
         assert isinstance(desc, TableDescription)
-        assert sorted(desc.columns[1].indexes) == ["idx1", "idx2"]
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["val"].exclusive_index is False
+        assert by_name["val"].composite_index is True
+        assert by_name["other"].exclusive_index is False
+        assert by_name["other"].composite_index is True
+        assert by_name["id"].exclusive_index is False
+        assert by_name["id"].composite_index is False
+
+    async def test_should_return_both_flags_when_column_has_exclusive_and_composite_index(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
+        await driver.execute("CREATE INDEX idx1 ON t(val)", [])
+        await driver.execute("CREATE INDEX idx2 ON t(val, other)", [])
+        desc = await driver.explore_describe(["t"])
+        assert isinstance(desc, TableDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["val"].exclusive_index is True
+        assert by_name["val"].composite_index is True
 
     async def test_should_return_none_when_path_is_invalid(
         self, driver: SQLiteDriver

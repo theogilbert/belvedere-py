@@ -310,8 +310,11 @@ column metadata (name, type, nullability, default).
                     (schema, table),
                 )
                 col_indexes: dict[str, list[str]] = {}
+                index_cols: dict[str, set[str]] = {}
                 for col_name, idx_name in cur.fetchall():  # ty: ignore[missing-argument]
                     col_indexes.setdefault(col_name, []).append(idx_name)
+                    index_cols.setdefault(idx_name, set()).add(col_name)
+                index_col_count = {k: len(v) for k, v in index_cols.items()}
                 return TableDescription(
                     table=table,
                     schema=schema,
@@ -321,7 +324,14 @@ column metadata (name, type, nullability, default).
                             type=r[1],
                             nullable=r[2] == "YES",
                             default=r[3],
-                            indexes=col_indexes.get(r[0], []),
+                            exclusive_index=any(
+                                index_col_count[i] == 1
+                                for i in col_indexes.get(r[0], [])
+                            ),
+                            composite_index=any(
+                                index_col_count[i] > 1
+                                for i in col_indexes.get(r[0], [])
+                            ),
                         )
                         for r in col_rows
                     ],

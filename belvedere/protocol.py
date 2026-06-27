@@ -103,8 +103,10 @@ class ColumnInfo:
     """Whether the column is part of the primary key."""
     default: str | None = None
     """Default expression, or None if not set."""
-    indexes: list[str] = field(default_factory=list)
-    """Names of indexes that include this column."""
+    exclusive_index: bool = False
+    """Whether this column is covered by an index that spans only this column."""
+    composite_index: bool = False
+    """Whether this column is covered by an index that also spans other columns."""
 
 
 @dataclass

@@ -254,8 +254,11 @@ SELECT * FROM 'glob/**/*.parquet'
                     [schema, table],
                 ).fetchall()
                 col_indexes: dict[str, list[str]] = {}
+                index_col_count: dict[str, int] = {}
                 for idx_name, sql in idx_rows:
-                    for key_field in _parse_index_columns(sql):
+                    key_fields = _parse_index_columns(sql)
+                    index_col_count[idx_name] = len(key_fields)
+                    for key_field in key_fields:
                         col_indexes.setdefault(key_field.name, []).append(idx_name)
                 return TableDescription(
                     table=table,
@@ -266,7 +269,14 @@ SELECT * FROM 'glob/**/*.parquet'
                             type=r[1],
                             nullable=r[2] == "YES",
                             pk=r[0] in pk_cols,
-                            indexes=col_indexes.get(r[0], []),
+                            exclusive_index=any(
+                                index_col_count[i] == 1
+                                for i in col_indexes.get(r[0], [])
+                            ),
+                            composite_index=any(
+                                index_col_count[i] > 1
+                                for i in col_indexes.get(r[0], [])
+                            ),
                         )
                         for r in col_rows
                     ],

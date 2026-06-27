@@ -351,8 +351,11 @@ name, type, nullability, primary key flag, default) and on
                     [schema_up, table_up],
                 )
                 col_indexes: dict[str, list[str]] = {}
+                index_cols: dict[str, set[str]] = {}
                 for col_name, idx_name in await cur.fetchall():
                     col_indexes.setdefault(col_name, []).append(idx_name)
+                    index_cols.setdefault(idx_name, set()).add(col_name)
+                index_col_count = {k: len(v) for k, v in index_cols.items()}
 
                 return TableDescription(
                     table=table_up,
@@ -364,7 +367,14 @@ name, type, nullability, primary key flag, default) and on
                             nullable=r[2] == "Y",
                             pk=r[0] in pk_cols,
                             default=r[3].strip() if r[3] is not None else None,
-                            indexes=col_indexes.get(r[0], []),
+                            exclusive_index=any(
+                                index_col_count[i] == 1
+                                for i in col_indexes.get(r[0], [])
+                            ),
+                            composite_index=any(
+                                index_col_count[i] > 1
+                                for i in col_indexes.get(r[0], [])
+                            ),
                         )
                         for r in col_rows
                     ],

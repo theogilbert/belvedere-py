@@ -43,12 +43,14 @@ class Connection:
 
     async def __aenter__(self) -> "Connection":
         if self._idle_timer:
-            self._idle_timer.reset()
+            self._idle_timer.cancel()
         await self._semaphore.acquire()
         return self
 
     async def __aexit__(self, *_: object) -> None:
         self._semaphore.release()
+        if self._idle_timer:
+            self._idle_timer.reset()
 
     async def _on_idle_expire(self, timeout: float) -> None:
         logger.info(f"Connection {self.id} idle for {timeout}s — closing")

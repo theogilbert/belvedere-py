@@ -726,3 +726,31 @@ class TestIdleTimeout:
         await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
         await asyncio.sleep(0.1)
         mock_driver.disconnect.assert_not_awaited()
+
+    async def test_timer_does_not_fire_while_query_is_running(
+        self, dispatcher: Dispatcher, mock_driver: AsyncMock
+    ) -> None:
+        gate = asyncio.Event()
+        mock_driver.execute.side_effect = self._slow_execute(gate)
+        r = await dispatcher.dispatch(
+            Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
+        )
+        task = asyncio.create_task(
+            dispatcher.dispatch(
+                Method.EXECUTE,
+                {"connection_id": r["connection_id"], "query": "SELECT 1"},
+                noop_progress,
+            )
+        )
+        await asyncio.sleep(0.15)
+        mock_driver.disconnect.assert_not_awaited()
+        gate.set()
+        await task
+
+    @staticmethod
+    def _slow_execute(gate: asyncio.Event):
+        async def _fn(*_: object) -> ReadResult:
+            await gate.wait()
+            return ReadResult(columns=[], rows=[], rows_total=0)
+
+        return _fn

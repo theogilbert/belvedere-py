@@ -187,6 +187,13 @@ column metadata (name, type, nullability, primary key flag, default).
             raise
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
+        try:
+            return await self._explore_list(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise
+
+    async def _explore_list(self, path: list[str]) -> list[ExploreItem]:
         cur = self._conn.cursor()
         match path:
             case []:
@@ -280,6 +287,13 @@ column metadata (name, type, nullability, primary key flag, default).
                 return None
 
     async def explore_describe(self, path: list[str]) -> TableDescription | None:
+        try:
+            return await self._explore_describe(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise
+
+    async def _explore_describe(self, path: list[str]) -> TableDescription | None:
         match path:
             case [schema, table]:
                 schema_up = schema.upper()
@@ -340,6 +354,10 @@ column metadata (name, type, nullability, primary key flag, default).
 def _maybe_raise_connection_lost(exc: Exception) -> None:
     if isinstance(exc, (oracledb.OperationalError, oracledb.InterfaceError)):
         raise ConnectionLostError(str(exc)) from exc
+    if isinstance(exc, oracledb.DatabaseError):
+        error = exc.args[0] if exc.args else None
+        if getattr(error, "is_session_dead", False):
+            raise ConnectionLostError(str(exc)) from exc
 
 
 def _format_db_error(exc: oracledb.DatabaseError, query: str) -> str:

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from belvedere.drivers.base import DriverError
+from belvedere.drivers.base import ConnectionLostError, DriverError
 from belvedere.drivers.oracle import (
     OracleDriver,
     _PRE12_SYSTEM_SCHEMAS_SQL,
@@ -28,6 +28,7 @@ def _make_driver(rows: list, has_oracle_maintained: bool) -> OracleDriver:
 def _make_db_error(message: str, offset: int = 0) -> oracledb.DatabaseError:
     err = MagicMock()
     err.offset = offset
+    err.is_session_dead = False
     err.__str__ = lambda self: message
     return oracledb.DatabaseError(err)
 
@@ -110,3 +111,35 @@ class TestExecuteErrorPropagation:
         driver = OracleDriver({}, conn, True)
         with pytest.raises(DriverError, match=r"line 1, col 8"):
             asyncio.run(driver.execute("SELECT FROM t", []))
+
+    def test_dead_session_raises_connection_lost(self) -> None:
+        error = MagicMock()
+        error.is_session_dead = True
+        exc = oracledb.DatabaseError(error)
+        cur = MagicMock()
+        cur.execute = AsyncMock(side_effect=exc)
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        driver = OracleDriver({}, conn, True)
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.execute("SELECT 1 FROM DUAL", []))
+
+    def test_explore_list_not_connected_raises_connection_lost(self) -> None:
+        exc = oracledb.InterfaceError("DPY-1001: not connected to the database")
+        cur = MagicMock()
+        cur.execute = AsyncMock(side_effect=exc)
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        driver = OracleDriver({}, conn, True)
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.explore_list([]))
+
+    def test_explore_describe_not_connected_raises_connection_lost(self) -> None:
+        exc = oracledb.InterfaceError("DPY-1001: not connected to the database")
+        cur = MagicMock()
+        cur.execute = AsyncMock(side_effect=exc)
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        driver = OracleDriver({}, conn, True)
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.explore_describe(["MYSCHEMA", "MYTABLE"]))

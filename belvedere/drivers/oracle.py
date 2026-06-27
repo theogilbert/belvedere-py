@@ -137,7 +137,6 @@ column metadata (name, type, nullability, primary key flag, default).
 
     @staticmethod
     async def _open(params: dict[str, Any]) -> tuple[Any, bool]:
-
         try:
             conn = await oracledb.connect_async(
                 user=params.get("user", ""),
@@ -148,7 +147,6 @@ column metadata (name, type, nullability, primary key flag, default).
                     f"/{params.get('service_name', 'FREEPDB1')}"
                 ),
             )
-            conn.autocommit = True
             major_version = int(conn.version.split(".")[0])
             return conn, major_version >= 12
         except oracledb.DatabaseError as exc:

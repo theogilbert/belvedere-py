@@ -29,8 +29,7 @@ def _make_db_error(message: str, offset: int = 0) -> oracledb.DatabaseError:
     err = MagicMock()
     err.offset = offset
     err.__str__ = lambda self: message
-    exc = oracledb.DatabaseError(err)
-    return exc
+    return oracledb.DatabaseError(err)
 
 
 class TestRootListing:

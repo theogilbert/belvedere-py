@@ -15,11 +15,14 @@ class RegisteredDriver:
 
 
 _REGISTRY: list[RegisteredDriver] = [
+    # SQL drivers — ordered by pick priority for the "sql" filetype.
+    RegisteredDriver(module="oracle", class_name="OracleDriver"),
+    RegisteredDriver(module="sqlserver", class_name="SQLServerDriver"),
     RegisteredDriver(module="sqlite", class_name="SQLiteDriver"),
     RegisteredDriver(module="duckdb", class_name="DuckDBDriver"),
-    RegisteredDriver(module="sqlserver", class_name="SQLServerDriver"),
+    # Cypher driver.
     RegisteredDriver(module="neo4j", class_name="Neo4jDriver"),
-    RegisteredDriver(module="oracle", class_name="OracleDriver"),
+    # Generic drivers (no filetype affinity) — appear first for unknown filetypes.
     RegisteredDriver(module="mongodb", class_name="MongoDriver"),
     RegisteredDriver(module="elasticsearch", class_name="ElasticsearchDriver"),
 ]
@@ -46,7 +49,7 @@ def list_drivers() -> list[Driver]:
         except ImportError:
             logger.info("Driver %r unavailable: package not installed", entry.module)
             continue
-        result.append(Driver(driver=entry.module, label=cls.LABEL, params=cls.PARAMS))
+        result.append(Driver(driver=entry.module, label=cls.LABEL, params=cls.PARAMS, languages=cls.LANGUAGES))
     return result
 
 

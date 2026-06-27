@@ -10,6 +10,7 @@ from ..protocol import (
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    Language,
     ParamType,
     ReadResult,
     WriteResult,
@@ -27,6 +28,7 @@ class Neo4jDriver(BaseDriver):
     """
 
     LABEL = "Neo4j"
+    LANGUAGES = [Language.CYPHER]
 
     PARAMS: list[DriverParam] = [
         DriverParam(

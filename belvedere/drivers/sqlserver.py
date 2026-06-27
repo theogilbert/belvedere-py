@@ -11,6 +11,7 @@ from ..protocol import (
     DriverParam,
     DriverParamChoice,
     ExploreItem,
+    Language,
     ParamType,
     ReadResult,
     TableDescription,
@@ -33,6 +34,7 @@ class SQLServerDriver(BaseDriver):
     """
 
     LABEL = "SQL Server"
+    LANGUAGES = [Language.SQL]
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

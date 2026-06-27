@@ -179,6 +179,17 @@ class DriverParamChoice:
     """Human-readable display name shown in the UI."""
 
 
+class Language(StrEnum):
+    """Standard query-language identifiers reported by drivers in ``capabilities``.
+
+    These are language-neutral identifiers — mapping them to editor-specific
+    concepts (e.g. Vim filetypes) is the client's responsibility.
+    """
+
+    SQL    = "sql"
+    CYPHER = "cypher"
+
+
 class ParamType(StrEnum):
     """Represent the possible types a driver parameter can have."""
 
@@ -217,6 +228,13 @@ class Driver:
     """Human-readable display name (e.g. ``"SQLite"``)."""
     params: list[DriverParam]
     """Connection parameters in display order."""
+    languages: list[Language] = field(default_factory=list)
+    """Query languages this driver supports, using the standard :class:`Language` enum.
+
+    Clients map these to editor-specific concepts (e.g. Vim filetypes) and may
+    use them to prioritise matching drivers in a connection picker.  An empty
+    list means the driver has no language affinity and is treated as generic.
+    """
 
 
 Response = Result | Progress | ExploreItem

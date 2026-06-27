@@ -11,6 +11,7 @@ from ..protocol import (
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    Language,
     ParamType,
     ReadResult,
     TableDescription,
@@ -30,6 +31,7 @@ class DuckDBDriver(BaseDriver):
     """
 
     LABEL = "DuckDB"
+    LANGUAGES = [Language.SQL]
     DEFAULT_IDLE_TIMEOUT: ClassVar[float] = 0
     """File-based driver; idle connections are never closed automatically."""
 

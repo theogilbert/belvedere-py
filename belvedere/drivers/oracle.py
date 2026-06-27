@@ -8,6 +8,7 @@ from ..protocol import (
     ColumnInfo,
     DriverParam,
     ExploreItem,
+    Language,
     ParamType,
     ReadResult,
     TableDescription,
@@ -73,6 +74,7 @@ class OracleDriver(BaseDriver):
     """
 
     LABEL = "Oracle"
+    LANGUAGES = [Language.SQL]
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

@@ -185,9 +185,17 @@ name, type, nullability, primary key flag, default) and on
         try:
             cur = self._conn.cursor()
             await cur.execute(query, binds)
+            if _is_explain_plan(query):
+                await cur.execute(
+                    "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())"
+                )
+                rows: list[list[Any]] = [[r[0]] for r in await cur.fetchall()]
+                return ReadResult(
+                    columns=["PLAN_TABLE_OUTPUT"], rows=rows, rows_total=len(rows)
+                )
             if cur.description is not None:
                 columns = [d[0] for d in cur.description]
-                rows: list[list[Any]] = [list(r) for r in await cur.fetchall()]
+                rows = [list(r) for r in await cur.fetchall()]
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
@@ -398,6 +406,15 @@ name, type, nullability, primary key flag, default) and on
 
             case _:
                 return None
+
+
+def _is_explain_plan(query: str) -> bool:
+    for line in query.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("--"):
+            continue
+        return stripped.upper().startswith("EXPLAIN PLAN")
+    return False
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:

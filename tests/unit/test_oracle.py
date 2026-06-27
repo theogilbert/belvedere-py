@@ -11,9 +11,10 @@ from belvedere.drivers.oracle import (
     OracleDriver,
     _PRE12_SYSTEM_SCHEMAS_SQL,
     _format_db_error,
+    _is_explain_plan,
     _offset_to_line_col,
 )
-from belvedere.protocol import ExploreItem, IndexDescription
+from belvedere.protocol import ExploreItem, IndexDescription, ReadResult
 
 
 def _make_index_driver(index_row: tuple | None, col_rows: list) -> OracleDriver:
@@ -199,3 +200,90 @@ class TestExploreDescribeIndex:
             driver.explore_describe(["MYSCHEMA", "MYTABLE", "indexes", "NO_SUCH"])
         )
         assert result is None
+
+
+class TestIsExplainPlan:
+    def test_uppercase_matches(self) -> None:
+        assert _is_explain_plan("EXPLAIN PLAN FOR SELECT 1 FROM DUAL") is True
+
+    def test_lowercase_matches(self) -> None:
+        assert _is_explain_plan("explain plan for SELECT 1 FROM DUAL") is True
+
+    def test_mixed_case_matches(self) -> None:
+        assert _is_explain_plan("Explain Plan For SELECT 1 FROM DUAL") is True
+
+    def test_leading_whitespace_matches(self) -> None:
+        assert _is_explain_plan("  EXPLAIN PLAN FOR SELECT 1 FROM DUAL") is True
+
+    def test_leading_comment_line_matches(self) -> None:
+        assert (
+            _is_explain_plan("-- a comment\nEXPLAIN PLAN FOR SELECT 1 FROM DUAL")
+            is True
+        )
+
+    def test_multiple_leading_comment_lines_match(self) -> None:
+        assert _is_explain_plan("-- c1\n-- c2\nEXPLAIN PLAN FOR SELECT 1") is True
+
+    def test_regular_select_does_not_match(self) -> None:
+        assert _is_explain_plan("SELECT 1 FROM DUAL") is False
+
+    def test_insert_does_not_match(self) -> None:
+        assert _is_explain_plan("INSERT INTO t VALUES (1)") is False
+
+
+class TestExplainPlanExecute:
+    @pytest.fixture()
+    def explain_cur(self) -> MagicMock:
+        cur = MagicMock()
+        cur.execute = AsyncMock()
+        cur.fetchall = AsyncMock(
+            return_value=[
+                ("Plan hash value: 12345",),
+                ("| Id | Operation |",),
+                ("|  0 | SELECT STATEMENT |",),
+            ]
+        )
+        return cur
+
+    @pytest.fixture()
+    def explain_driver(self, explain_cur: MagicMock) -> OracleDriver:
+        conn = MagicMock()
+        conn.cursor.return_value = explain_cur
+        return OracleDriver({}, conn, True)
+
+    def test_returns_read_result(
+        self, explain_driver: OracleDriver, explain_cur: MagicMock
+    ) -> None:
+        result = asyncio.run(
+            explain_driver.execute("EXPLAIN PLAN FOR SELECT 1 FROM DUAL", [])
+        )
+        assert isinstance(result, ReadResult)
+
+    def test_columns_are_plan_table_output(
+        self, explain_driver: OracleDriver, explain_cur: MagicMock
+    ) -> None:
+        result = asyncio.run(
+            explain_driver.execute("EXPLAIN PLAN FOR SELECT 1 FROM DUAL", [])
+        )
+        assert isinstance(result, ReadResult)
+        assert result.columns == ["PLAN_TABLE_OUTPUT"]
+
+    def test_rows_contain_plan_lines(
+        self, explain_driver: OracleDriver, explain_cur: MagicMock
+    ) -> None:
+        result = asyncio.run(
+            explain_driver.execute("EXPLAIN PLAN FOR SELECT 1 FROM DUAL", [])
+        )
+        assert isinstance(result, ReadResult)
+        assert result.rows == [
+            ["Plan hash value: 12345"],
+            ["| Id | Operation |"],
+            ["|  0 | SELECT STATEMENT |"],
+        ]
+
+    def test_calls_dbms_xplan_display(
+        self, explain_driver: OracleDriver, explain_cur: MagicMock
+    ) -> None:
+        asyncio.run(explain_driver.execute("EXPLAIN PLAN FOR SELECT 1 FROM DUAL", []))
+        second_call_sql = explain_cur.execute.call_args_list[1][0][0]
+        assert "DBMS_XPLAN.DISPLAY" in second_call_sql

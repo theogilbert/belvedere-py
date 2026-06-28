@@ -168,10 +168,6 @@ class IndicesDescription:
 
     indices: list[IndexDescription]
     """All indexes on this table, in driver-defined order."""
-    table: str | None = None
-    """Table name; None when the concept does not apply (e.g. Neo4j global index group)."""
-    schema: str | None = None
-    """Schema name, or None for databases without schema support."""
     type: str = "indices"
     """Discriminator — always ``"indices"``."""
 

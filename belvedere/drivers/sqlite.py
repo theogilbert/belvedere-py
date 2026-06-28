@@ -264,7 +264,7 @@ metadata (name, type, nullability, primary key flag).
             idx = self._describe_index_sync(table, idx_row[1])
             if idx is not None:
                 indices.append(idx)
-        return IndicesDescription(table=table, indices=indices)
+        return IndicesDescription(indices=indices)
 
     def _describe_index_sync(self, table: str, index_name: str) -> IndexDescription | None:
         index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()

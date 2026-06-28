@@ -228,7 +228,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
     async def _describe_all_indices(self) -> IndicesDescription:
         specs = await self._all_index_specs()
         indices = [self._spec_to_description(s) for s in specs]
-        return IndicesDescription(table=None, indices=indices)
+        return IndicesDescription(indices=indices)
 
     async def _describe_index(self, index_name: str) -> IndexDescription | None:
         specs = await self._all_index_specs()

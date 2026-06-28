@@ -291,9 +291,7 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
                     _spec_to_index_description(name, spec, collection_name)
                     for name, spec in sorted(info.items())
                 ]
-                return IndicesDescription(
-                    table=collection_name, schema=db_name, indices=indices
-                )
+                return IndicesDescription(indices=indices)
             case [db_name, collection_name, "indexes", index_name]:
                 info = await self._client[db_name][collection_name].index_information()
                 spec = info.get(index_name)

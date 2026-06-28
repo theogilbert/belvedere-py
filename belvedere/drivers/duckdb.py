@@ -302,7 +302,7 @@ SELECT * FROM 'glob/**/*.parquet'
                     )
                     for idx_name, is_unique, sql in rows
                 ]
-                return IndicesDescription(table=table, schema=schema, indices=indices)
+                return IndicesDescription(indices=indices)
 
             case [schema, table, "indices", index_name]:
                 rows = self._conn.execute(

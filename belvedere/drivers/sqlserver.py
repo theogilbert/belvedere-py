@@ -413,7 +413,7 @@ column metadata (name, type, nullability, default).
                 condition=condition,
                 ddl=ddl,
             ))
-        return IndicesDescription(table=table, schema=schema, indices=indices)
+        return IndicesDescription(indices=indices)
 
     def _describe_index_sync(
         self, schema: str, table: str, index_name: str

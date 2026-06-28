@@ -457,7 +457,7 @@ name, type, nullability, primary key flag, default) and on
                 )
             )
 
-        return IndicesDescription(table=table, schema=schema, indices=indices)
+        return IndicesDescription(indices=indices)
 
     async def _describe_index(
         self, schema: str, table: str, index_name: str

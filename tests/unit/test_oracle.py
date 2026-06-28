@@ -20,8 +20,8 @@ from belvedere.protocol import ExploreItem, IndexDescription, ReadResult
 def _make_index_driver(index_row: tuple | None, col_rows: list) -> OracleDriver:
     cur = MagicMock()
     cur.execute = AsyncMock()
-    cur.fetchone = AsyncMock(return_value=index_row)
-    cur.fetchall = AsyncMock(return_value=col_rows)
+    cur.fetchone = AsyncMock(side_effect=[index_row, None])  # meta, then DDL
+    cur.fetchall = AsyncMock(side_effect=[col_rows, []])  # fields, then join tables
     conn = MagicMock()
     conn.cursor.return_value = cur
     return OracleDriver({}, conn, True)
@@ -159,7 +159,7 @@ class TestExecuteErrorPropagation:
 class TestExploreDescribeIndex:
     def test_returns_index_description(self) -> None:
         driver = _make_index_driver(
-            index_row=("UNIQUE",),
+            index_row=("NORMAL", "UNIQUE", "VISIBLE", "N"),
             col_rows=[("ID", "ASC"), ("NAME", "ASC")],
         )
         result = asyncio.run(
@@ -168,13 +168,13 @@ class TestExploreDescribeIndex:
         assert isinstance(result, IndexDescription)
         assert result.index == "MY_IDX"
         assert result.unique is True
-        assert result.entity == "MYTABLE"
+        assert result.tables == ["MYTABLE"]
         assert [f.name for f in result.fields] == ["ID", "NAME"]
         assert all(f.direction == "asc" for f in result.fields)
 
     def test_desc_direction(self) -> None:
         driver = _make_index_driver(
-            index_row=("NONUNIQUE",),
+            index_row=("NORMAL", "NONUNIQUE", "VISIBLE", "N"),
             col_rows=[("CREATED_AT", "DESC")],
         )
         result = asyncio.run(
@@ -185,7 +185,7 @@ class TestExploreDescribeIndex:
 
     def test_non_unique_index(self) -> None:
         driver = _make_index_driver(
-            index_row=("NONUNIQUE",),
+            index_row=("NORMAL", "NONUNIQUE", "VISIBLE", "N"),
             col_rows=[("COL", "ASC")],
         )
         result = asyncio.run(

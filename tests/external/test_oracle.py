@@ -87,6 +87,16 @@ async def tables(
             pass
 
 
+class TestReconnect:
+    async def test_reconnect_succeeds_when_connection_is_dead(
+        self, driver: OracleDriver
+    ) -> None:
+        await driver._conn.close()
+        await driver.reconnect()
+        result = await driver.execute("SELECT 1 FROM DUAL", [])
+        assert isinstance(result, ReadResult)
+
+
 class TestExecute:
     async def test_should_return_columns_and_rows(self, driver: OracleDriver) -> None:
         result = await driver.execute("SELECT 1 AS n, 'hello' AS s FROM DUAL", [])
@@ -363,7 +373,9 @@ class TestExploreDescribeIndex:
     async def test_descending_direction(
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
-        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER, val NUMBER)", [])
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val NUMBER)", []
+        )
         idx = "IDX_" + table
         await driver.execute(
             f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val DESC)", []
@@ -502,9 +514,7 @@ class TestExploreDescribeColumns:
         assert len(by_name["VAL"].composite_indices) == 1
         assert by_name["VAL"].exclusive_indices == []
 
-    async def test_comment(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
+    async def test_comment(self, driver: OracleDriver, schema: str, table: str) -> None:
         await driver.execute(
             f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
         )
@@ -576,9 +586,7 @@ class TestExploreDescribeColumn:
         assert desc.exclusive_indices[0].index == idx
         assert desc.composite_indices == []
 
-    async def test_comment(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
+    async def test_comment(self, driver: OracleDriver, schema: str, table: str) -> None:
         await driver.execute(
             f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
         )

@@ -141,7 +141,10 @@ name, type, nullability, primary key flag, default) and on
             raise DriverError(_exc_message(exc)) from exc
 
     async def reconnect(self) -> None:
-        await self._conn.close()
+        try:
+            await self._conn.close()
+        except oracledb.InterfaceError:
+            pass
         self._conn, self._has_oracle_maintained = await self._open(self.params)
         self._metadata_transform_set = False
 

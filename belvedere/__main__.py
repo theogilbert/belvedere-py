@@ -6,6 +6,7 @@ import pathlib
 import sys
 from dataclasses import dataclass
 
+from . import log
 from .server import Server
 
 
@@ -18,11 +19,7 @@ def main() -> None:
     if args.log:
         log_path = _log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        logging.basicConfig(
-            filename=log_path,
-            level=logging.DEBUG if args.verbose else logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-        )
+        log.configure(log_path, logging.DEBUG if args.verbose else logging.INFO)
 
     cache_dir = _cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)

@@ -5,6 +5,7 @@ import pathlib
 import sys
 from typing import Any, BinaryIO
 
+from . import log
 from .dispatcher import DispatchError, Dispatcher
 from .drivers import SENSITIVE_PARAM_KEYS
 from .drivers.base import DriverError
@@ -89,6 +90,8 @@ class Server:
                 )
 
     async def _handle(self, req: Request) -> None:
+        log.request_id_var.set(req.id)
+
         async def send_progress(status: str, message: str) -> None:
             await self._send(
                 Progress(

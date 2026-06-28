@@ -5,11 +5,8 @@ from ..protocol import (
     DescribeResult,
     DriverParam,
     ExploreItem,
-    IndexDescription,
-    IndicesDescription,
     Language,
     ReadResult,
-    TableDescription,
     WriteResult,
 )
 
@@ -118,9 +115,7 @@ class BaseDriver(ABC):
         return None
 
     @abstractmethod
-    async def explore_describe(
-        self, path: list[str]
-    ) -> DescribeResult:
+    async def explore_describe(self, path: list[str]) -> DescribeResult:
         """Return column metadata for the node at the given path.
 
         Args:

@@ -6,7 +6,9 @@ from typing import Any, ClassVar, TypeVar
 import duckdb
 
 from ..protocol import (
+    ColumnDescription,
     ColumnInfo,
+    ColumnsDescription,
     DescribeResult,
     DriverParam,
     ExploreItem,
@@ -222,9 +224,7 @@ SELECT * FROM 'glob/**/*.parquet'
             case _:
                 return None
 
-    async def explore_describe(
-        self, path: list[str]
-    ) -> DescribeResult:
+    async def explore_describe(self, path: list[str]) -> DescribeResult:
         """Return metadata for the node at the given path.
 
         Args:
@@ -234,9 +234,7 @@ SELECT * FROM 'glob/**/*.parquet'
         """
         return await self._run(self._explore_describe_sync, path)
 
-    def _explore_describe_sync(
-        self, path: list[str]
-    ) -> DescribeResult:
+    def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
         match path:
             case [schema, table]:
                 col_rows = self._conn.execute(
@@ -286,23 +284,7 @@ SELECT * FROM 'glob/**/*.parquet'
                 )
 
             case [schema, table, "indices"]:
-                rows = self._conn.execute(
-                    "SELECT index_name, is_unique, sql FROM duckdb_indexes()"
-                    " WHERE schema_name = ? AND table_name = ? ORDER BY index_name",
-                    [schema, table],
-                ).fetchall()
-                indices = [
-                    IndexDescription(
-                        index=idx_name,
-                        fields=_parse_index_columns(sql) if sql else [],
-                        unique=bool(is_unique),
-                        tables=[table],
-                        condition=_parse_index_condition(sql) if sql else None,
-                        ddl=sql,
-                    )
-                    for idx_name, is_unique, sql in rows
-                ]
-                return IndicesDescription(indices=indices)
+                return self._describe_indices_sync(schema, table)
 
             case [schema, table, "indices", index_name]:
                 rows = self._conn.execute(
@@ -322,8 +304,162 @@ SELECT * FROM 'glob/**/*.parquet'
                     ddl=sql,
                 )
 
+            case [schema, table, "columns"]:
+                return self._describe_columns_sync(schema, table)
+
+            case [schema, table, "columns", col_name]:
+                return self._describe_column_sync(schema, table, col_name)
+
             case _:
                 return None
+
+    def _describe_indices_sync(self, schema: str, table: str) -> IndicesDescription:
+        rows = self._conn.execute(
+            "SELECT index_name, is_unique, sql FROM duckdb_indexes()"
+            " WHERE schema_name = ? AND table_name = ? ORDER BY index_name",
+            [schema, table],
+        ).fetchall()
+        return IndicesDescription(
+            indices=[
+                IndexDescription(
+                    index=idx_name,
+                    fields=_parse_index_columns(sql) if sql else [],
+                    unique=bool(is_unique),
+                    tables=[table],
+                    condition=_parse_index_condition(sql) if sql else None,
+                    ddl=sql,
+                )
+                for idx_name, is_unique, sql in rows
+            ]
+        )
+
+    def _describe_columns_sync(self, schema: str, table: str) -> ColumnsDescription:
+        col_rows = self._conn.execute(
+            "SELECT column_name, data_type, is_nullable"
+            " FROM information_schema.columns"
+            " WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
+            [schema, table],
+        ).fetchall()
+        pk_rows = self._conn.execute(
+            "SELECT constraint_column_names FROM duckdb_constraints()"
+            " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'",
+            [schema, table],
+        ).fetchall()
+        pk_cols: set[str] = set(pk_rows[0][0]) if pk_rows else set()
+
+        idx_desc_list = self._describe_indices_sync(schema, table).indices
+        col_excl: dict[str, list[IndexDescription]] = {}
+        col_comp: dict[str, list[IndexDescription]] = {}
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            for cn in key_col_names:
+                if len(key_col_names) == 1:
+                    col_excl.setdefault(cn, []).append(idx_desc)
+                else:
+                    col_comp.setdefault(cn, []).append(idx_desc)
+
+        col_comments: dict[str, str | None] = {}
+        try:
+            for r in self._conn.execute(
+                "SELECT column_name, comment FROM duckdb_columns()"
+                " WHERE schema_name = ? AND table_name = ?",
+                [schema, table],
+            ).fetchall():
+                col_comments[r[0]] = r[1] if r[1] else None
+        except Exception:
+            pass
+
+        result = []
+        for r in col_rows:
+            cn = r[0]
+            try:
+                sample = [
+                    row[0]
+                    for row in self._conn.execute(
+                        f'SELECT DISTINCT "{cn}" FROM "{schema}"."{table}"'
+                        f' WHERE "{cn}" IS NOT NULL LIMIT 3'
+                    ).fetchall()
+                ]
+            except Exception:
+                sample = []
+            result.append(
+                ColumnDescription(
+                    name=cn,
+                    data_type=r[1] or "",
+                    nullable=r[2] == "YES",
+                    pk=cn in pk_cols,
+                    exclusive_indices=col_excl.get(cn, []),
+                    composite_indices=col_comp.get(cn, []),
+                    comment=col_comments.get(cn),
+                    sample=sample,
+                )
+            )
+        return ColumnsDescription(columns=result)
+
+    def _describe_column_sync(
+        self, schema: str, table: str, col_name: str
+    ) -> ColumnDescription | None:
+        col_rows = self._conn.execute(
+            "SELECT column_name, data_type, is_nullable"
+            " FROM information_schema.columns"
+            " WHERE table_schema = ? AND table_name = ? AND column_name = ?",
+            [schema, table, col_name],
+        ).fetchall()
+        if not col_rows:
+            return None
+        r = col_rows[0]
+
+        pk_rows = self._conn.execute(
+            "SELECT constraint_column_names FROM duckdb_constraints()"
+            " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'",
+            [schema, table],
+        ).fetchall()
+        pk_cols: set[str] = set(pk_rows[0][0]) if pk_rows else set()
+
+        idx_desc_list = self._describe_indices_sync(schema, table).indices
+        exclusive_indices = []
+        composite_indices = []
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            if col_name not in key_col_names:
+                continue
+            if len(key_col_names) == 1:
+                exclusive_indices.append(idx_desc)
+            else:
+                composite_indices.append(idx_desc)
+
+        comment: str | None = None
+        try:
+            rows = self._conn.execute(
+                "SELECT comment FROM duckdb_columns()"
+                " WHERE schema_name = ? AND table_name = ? AND column_name = ?",
+                [schema, table, col_name],
+            ).fetchall()
+            comment = rows[0][0] if rows and rows[0][0] else None
+        except Exception:
+            pass
+
+        try:
+            sample = [
+                row[0]
+                for row in self._conn.execute(
+                    f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
+                    f' WHERE "{col_name}" IS NOT NULL LIMIT 3'
+                ).fetchall()
+            ]
+        except Exception:
+            sample = []
+
+        return ColumnDescription(
+            name=col_name,
+            data_type=r[1] or "",
+            nullable=r[2] == "YES",
+            pk=col_name in pk_cols,
+            exclusive_indices=exclusive_indices,
+            composite_indices=composite_indices,
+            comment=comment,
+            sample=sample,
+        )
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         try:

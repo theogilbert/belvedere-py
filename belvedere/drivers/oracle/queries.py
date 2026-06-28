@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from ...protocol import IndexKeyField
+from ...protocol import IndexKeyField, IndexDescription
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
 
@@ -369,6 +369,81 @@ async def fetch_join_tables_for_index(
     except Exception:
         pass
     return tables
+
+
+# ---------------------------------------------------------------------------
+# Column describe queries
+# ---------------------------------------------------------------------------
+
+
+async def fetch_all_column_comments(
+    conn: Any, schema: str, table: str
+) -> dict[str, str | None]:
+    """Return ``{column_name: comment}`` for all columns; value is None when no comment is set."""
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT COLUMN_NAME, COMMENTS FROM ALL_COL_COMMENTS"
+        " WHERE OWNER = :1 AND TABLE_NAME = :2",
+        [schema, table],
+    )
+    return {
+        r[0]: (r[1].strip() if r[1] and r[1].strip() else None)
+        for r in await cur.fetchall()
+    }
+
+
+async def fetch_column_sample(
+    conn: Any, schema: str, table: str, col_name: str
+) -> list[Any]:
+    """Return up to 3 distinct non-null values sampled from *col_name*."""
+    cur = conn.cursor()
+    try:
+        await cur.execute(
+            f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
+            f' WHERE "{col_name}" IS NOT NULL FETCH FIRST 3 ROWS ONLY'
+        )
+        return [r[0] for r in await cur.fetchall()]
+    except Exception:
+        return []
+
+
+async def build_column_index_lists(
+    conn: Any,
+    schema: str,
+    table: str,
+    all_indices: list[IndexDescription],
+) -> tuple[dict[str, list[IndexDescription]], dict[str, list[IndexDescription]]]:
+    """Return (exclusive, composite) dicts mapping column name to index descriptions.
+
+    *all_indices* is the full list of :class:`IndexDescription` already fetched for the
+    table; this function queries ``ALL_IND_COLUMNS`` to determine which columns each
+    index covers.
+    """
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT INDEX_NAME, COLUMN_NAME"
+        " FROM ALL_IND_COLUMNS"
+        " WHERE INDEX_OWNER = :1 AND TABLE_NAME = :2"
+        " ORDER BY INDEX_NAME, COLUMN_POSITION",
+        [schema, table],
+    )
+    idx_columns: dict[str, list[str]] = {}
+    for idx_name, col_name in await cur.fetchall():
+        idx_columns.setdefault(idx_name, []).append(col_name)
+
+    idx_by_name = {idx.index: idx for idx in all_indices}
+    excl: dict[str, list[IndexDescription]] = {}
+    comp: dict[str, list[IndexDescription]] = {}
+    for idx_name, col_names in idx_columns.items():
+        idx_desc = idx_by_name.get(idx_name)
+        if idx_desc is None:
+            continue
+        for cn in col_names:
+            if len(col_names) == 1:
+                excl.setdefault(cn, []).append(idx_desc)
+            else:
+                comp.setdefault(cn, []).append(idx_desc)
+    return excl, comp
 
 
 # ---------------------------------------------------------------------------

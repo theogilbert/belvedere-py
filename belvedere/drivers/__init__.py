@@ -49,7 +49,14 @@ def list_drivers() -> list[Driver]:
         except ImportError:
             logger.info("Driver %r unavailable: package not installed", entry.module)
             continue
-        result.append(Driver(driver=entry.module, label=cls.LABEL, params=cls.PARAMS, languages=cls.LANGUAGES))
+        result.append(
+            Driver(
+                driver=entry.module,
+                label=cls.LABEL,
+                params=cls.PARAMS,
+                languages=cls.LANGUAGES,
+            )
+        )
     return result
 
 

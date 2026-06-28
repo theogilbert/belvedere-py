@@ -172,7 +172,50 @@ class IndicesDescription:
     """Discriminator — always ``"indices"``."""
 
 
-DescribeResult = TableDescription | IndexDescription | IndicesDescription | None
+@dataclass
+class ColumnDescription:
+    """Detailed metadata for a single column returned by explore.describe."""
+
+    name: str
+    """Column name."""
+    data_type: str
+    """Data type as reported by the database."""
+    nullable: bool | None = None
+    """Whether the column allows NULL; None if unknown."""
+    pk: bool = False
+    """Whether the column is part of the primary key."""
+    default: str | None = None
+    """Default expression, or None if not set."""
+    exclusive_indices: list[IndexDescription] = field(default_factory=list)
+    """Indices that cover only this column."""
+    composite_indices: list[IndexDescription] = field(default_factory=list)
+    """Indices that cover this column and at least one other column."""
+    comment: str | None = None
+    """Column comment as stored in the database; None if unsupported or not set."""
+    sample: list[Any] = field(default_factory=list)
+    """Up to 3 distinct non-null representative values sampled from the column."""
+    type: str = "column"
+    """Discriminator — always ``"column"``."""
+
+
+@dataclass
+class ColumnsDescription:
+    """All column detail metadata for a table returned by explore.describe on a columns group node."""
+
+    columns: list[ColumnDescription]
+    """All columns in this table, in declaration order."""
+    type: str = "columns"
+    """Discriminator — always ``"columns"``."""
+
+
+DescribeResult = (
+    TableDescription
+    | IndexDescription
+    | IndicesDescription
+    | ColumnDescription
+    | ColumnsDescription
+    | None
+)
 """Return type of ``explore_describe`` across all drivers."""
 
 
@@ -213,7 +256,7 @@ class Language(StrEnum):
     concepts (e.g. Vim filetypes) is the client's responsibility.
     """
 
-    SQL    = "sql"
+    SQL = "sql"
     CYPHER = "cypher"
 
 

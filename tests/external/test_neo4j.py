@@ -213,7 +213,7 @@ class TestExploreDescribeIndex:
         desc = await driver.explore_describe(["indexes", "test_idx"])
         assert isinstance(desc, IndexDescription)
         assert desc.index == "test_idx"
-        assert desc.entity == "User"
+        assert desc.tables == ["User"]
         assert len(desc.fields) == 1
         assert desc.fields[0].name == "name"
         assert desc.fields[0].direction == "RANGE"

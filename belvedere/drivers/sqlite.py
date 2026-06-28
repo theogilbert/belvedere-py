@@ -4,7 +4,9 @@ from collections.abc import Callable
 from typing import Any, ClassVar, TypeVar
 
 from ..protocol import (
+    ColumnDescription,
     ColumnInfo,
+    ColumnsDescription,
     DescribeResult,
     DriverParam,
     ExploreItem,
@@ -192,9 +194,7 @@ metadata (name, type, nullability, primary key flag).
             case _:
                 return None
 
-    async def explore_describe(
-        self, path: list[str]
-    ) -> DescribeResult:
+    async def explore_describe(self, path: list[str]) -> DescribeResult:
         """Return column metadata for the table at the given path.
 
         Args:
@@ -207,9 +207,7 @@ metadata (name, type, nullability, primary key flag).
         """
         return await self._run(self._explore_describe_sync, path)
 
-    def _explore_describe_sync(
-        self, path: list[str]
-    ) -> DescribeResult:
+    def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
         match path:
             case [table]:
                 cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -254,6 +252,12 @@ metadata (name, type, nullability, primary key flag).
             case [table, "indices", index_name]:
                 return self._describe_index_sync(table, index_name)
 
+            case [table, "columns"]:
+                return self._describe_columns_sync(table)
+
+            case [table, "columns", col_name]:
+                return self._describe_column_sync(table, col_name)
+
             case _:
                 return None
 
@@ -266,7 +270,9 @@ metadata (name, type, nullability, primary key flag).
                 indices.append(idx)
         return IndicesDescription(indices=indices)
 
-    def _describe_index_sync(self, table: str, index_name: str) -> IndexDescription | None:
+    def _describe_index_sync(
+        self, table: str, index_name: str
+    ) -> IndexDescription | None:
         index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
         index_row = next((r for r in index_list if r[1] == index_name), None)
         if index_row is None:
@@ -288,7 +294,7 @@ metadata (name, type, nullability, primary key flag).
         if is_partial and ddl:
             where_pos = ddl.upper().find(" WHERE ")
             if where_pos != -1:
-                condition = ddl[where_pos + 7:].strip()
+                condition = ddl[where_pos + 7 :].strip()
         return IndexDescription(
             index=index_name,
             fields=fields,
@@ -297,6 +303,86 @@ metadata (name, type, nullability, primary key flag).
             index_type="btree",
             condition=condition,
             ddl=ddl,
+        )
+
+    def _describe_columns_sync(self, table: str) -> ColumnsDescription:
+        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        idx_desc_list = self._describe_indices_sync(table).indices
+        col_excl: dict[str, list[IndexDescription]] = {}
+        col_comp: dict[str, list[IndexDescription]] = {}
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            for cn in key_col_names:
+                if len(key_col_names) == 1:
+                    col_excl.setdefault(cn, []).append(idx_desc)
+                else:
+                    col_comp.setdefault(cn, []).append(idx_desc)
+
+        result = []
+        for r in cols:
+            cn = r[1]
+            try:
+                sample = [
+                    row[0]
+                    for row in self._conn.execute(
+                        f'SELECT DISTINCT "{cn}" FROM "{table}"'
+                        f' WHERE "{cn}" IS NOT NULL LIMIT 3'
+                    ).fetchall()
+                ]
+            except Exception:
+                sample = []
+            result.append(
+                ColumnDescription(
+                    name=cn,
+                    data_type=r[2] or "",
+                    nullable=not bool(r[3]),
+                    pk=bool(r[5]),
+                    exclusive_indices=col_excl.get(cn, []),
+                    composite_indices=col_comp.get(cn, []),
+                    sample=sample,
+                )
+            )
+        return ColumnsDescription(columns=result)
+
+    def _describe_column_sync(
+        self, table: str, col_name: str
+    ) -> ColumnDescription | None:
+        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        row = next((r for r in cols if r[1] == col_name), None)
+        if row is None:
+            return None
+
+        idx_desc_list = self._describe_indices_sync(table).indices
+        exclusive_indices = []
+        composite_indices = []
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            if col_name not in key_col_names:
+                continue
+            if len(key_col_names) == 1:
+                exclusive_indices.append(idx_desc)
+            else:
+                composite_indices.append(idx_desc)
+
+        try:
+            sample = [
+                r[0]
+                for r in self._conn.execute(
+                    f'SELECT DISTINCT "{col_name}" FROM "{table}"'
+                    f' WHERE "{col_name}" IS NOT NULL LIMIT 3'
+                ).fetchall()
+            ]
+        except Exception:
+            sample = []
+
+        return ColumnDescription(
+            name=col_name,
+            data_type=row[2] or "",
+            nullable=not bool(row[3]),
+            pk=bool(row[5]),
+            exclusive_indices=exclusive_indices,
+            composite_indices=composite_indices,
+            sample=sample,
         )
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:

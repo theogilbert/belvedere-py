@@ -9,7 +9,9 @@ from belvedere.drivers import SENSITIVE_PARAM_KEYS
 
 from .drivers.base import BaseDriver, ReadResult, WriteResult
 from .protocol import (
+    ColumnDescription,
     ColumnInfo,
+    ColumnsDescription,
     DescribeResult,
     ExploreItem,
     IndexDescription,
@@ -103,7 +105,12 @@ class ConnectionCache:
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
         """In-memory cache mapping path tuples to their explore.list results."""
         self._describe: dict[
-            tuple[str, ...], TableDescription | IndexDescription | IndicesDescription
+            tuple[str, ...],
+            TableDescription
+            | IndexDescription
+            | IndicesDescription
+            | ColumnDescription
+            | ColumnsDescription,
         ] = {}
         """In-memory cache mapping path tuples to their explore.describe results."""
         self._load()
@@ -166,7 +173,11 @@ class ConnectionCache:
     def set_describe(
         self,
         path: list[str],
-        desc: TableDescription | IndexDescription | IndicesDescription,
+        desc: TableDescription
+        | IndexDescription
+        | IndicesDescription
+        | ColumnDescription
+        | ColumnsDescription,
     ) -> None:
         """Store explore.describe results for path and persist to disk.
 

@@ -6,7 +6,9 @@ from typing import Any
 import oracledb
 
 from ...protocol import (
+    ColumnDescription,
     ColumnInfo,
+    ColumnsDescription,
     DescribeResult,
     DriverParam,
     ExploreItem,
@@ -21,9 +23,12 @@ from ...protocol import (
 from ..base import BaseDriver, ConnectionLostError, DriverError
 from .queries import (
     apply_metadata_transform,
+    build_column_index_lists,
+    fetch_all_column_comments,
     fetch_column_details,
     fetch_column_index_mapping,
     fetch_column_names_and_types,
+    fetch_column_sample,
     fetch_constraint_names_and_types,
     fetch_index_ddl,
     fetch_index_fields_for_index,
@@ -267,6 +272,14 @@ name, type, nullability, primary key flag, default) and on
                     schema.upper(), table.upper(), index_name.upper()
                 )
 
+            case [schema, table, "columns"]:
+                return await self._describe_columns(schema.upper(), table.upper())
+
+            case [schema, table, "columns", col_name]:
+                return await self._describe_column(
+                    schema.upper(), table.upper(), col_name.upper()
+                )
+
             case _:
                 return None
 
@@ -347,6 +360,61 @@ name, type, nullability, primary key flag, default) and on
             index_type=meta.index_type,
             visible=meta.visible,
             ddl=ddl,
+        )
+
+    async def _describe_columns(self, schema: str, table: str) -> ColumnsDescription:
+        col_details = await fetch_column_details(self._conn, schema, table)
+        pk_cols = await fetch_pk_columns(self._conn, schema, table)
+        all_indices = (await self._describe_indices(schema, table)).indices
+        excl, comp = await build_column_index_lists(
+            self._conn, schema, table, all_indices
+        )
+        comments = await fetch_all_column_comments(self._conn, schema, table)
+
+        columns = []
+        for col in col_details:
+            sample = await fetch_column_sample(self._conn, schema, table, col.name)
+            columns.append(
+                ColumnDescription(
+                    name=col.name,
+                    data_type=col.type,
+                    nullable=col.nullable,
+                    pk=col.name in pk_cols,
+                    default=col.default,
+                    exclusive_indices=excl.get(col.name, []),
+                    composite_indices=comp.get(col.name, []),
+                    comment=comments.get(col.name),
+                    sample=sample,
+                )
+            )
+        return ColumnsDescription(columns=columns)
+
+    async def _describe_column(
+        self, schema: str, table: str, col_name: str
+    ) -> ColumnDescription | None:
+        col_details = await fetch_column_details(self._conn, schema, table)
+        col = next((c for c in col_details if c.name == col_name), None)
+        if col is None:
+            return None
+
+        pk_cols = await fetch_pk_columns(self._conn, schema, table)
+        all_indices = (await self._describe_indices(schema, table)).indices
+        excl, comp = await build_column_index_lists(
+            self._conn, schema, table, all_indices
+        )
+        comments = await fetch_all_column_comments(self._conn, schema, table)
+        sample = await fetch_column_sample(self._conn, schema, table, col_name)
+
+        return ColumnDescription(
+            name=col.name,
+            data_type=col.type,
+            nullable=col.nullable,
+            pk=col.name in pk_cols,
+            default=col.default,
+            exclusive_indices=excl.get(col_name, []),
+            composite_indices=comp.get(col_name, []),
+            comment=comments.get(col_name),
+            sample=sample,
         )
 
     async def _ensure_metadata_transform(self) -> None:

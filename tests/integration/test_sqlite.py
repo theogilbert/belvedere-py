@@ -4,6 +4,8 @@ import pytest
 
 from belvedere.drivers.sqlite import SQLiteDriver
 from belvedere.protocol import (
+    ColumnDescription,
+    ColumnsDescription,
     ExploreItem,
     IndexDescription,
     ReadResult,
@@ -272,3 +274,125 @@ class TestExploreDescribeIndex:
     async def test_unknown_index_returns_none(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         assert await driver.explore_describe(["t", "indices", "no_such_idx"]) is None
+
+
+class TestExploreDescribeColumns:
+    async def test_columns_description_returns_all_columns(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        desc = await driver.explore_describe(["t", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        assert [c.name for c in desc.columns] == ["id", "val"]
+
+    async def test_columns_description_data_type(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        desc = await driver.explore_describe(["t", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["id"].data_type == "INTEGER"
+        assert by_name["val"].data_type == "TEXT"
+
+    async def test_columns_description_pk(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+        desc = await driver.explore_describe(["t", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["id"].pk is True
+        assert by_name["val"].pk is False
+
+    async def test_columns_description_nullable(self, driver: SQLiteDriver) -> None:
+        await driver.execute(
+            "CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", []
+        )
+        desc = await driver.explore_describe(["t", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["a"].nullable is False
+        assert by_name["b"].nullable is True
+
+    async def test_columns_description_exclusive_index(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["t", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert len(by_name["val"].exclusive_indices) == 1
+        assert by_name["val"].exclusive_indices[0].index == "idx"
+        assert by_name["id"].exclusive_indices == []
+        assert by_name["val"].composite_indices == []
+
+    async def test_columns_description_composite_index(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val, other)", [])
+        desc = await driver.explore_describe(["t", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert len(by_name["val"].composite_indices) == 1
+        assert by_name["val"].composite_indices[0].index == "idx"
+        assert by_name["val"].exclusive_indices == []
+
+    async def test_columns_description_sample_values(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        for i, v in enumerate(["a", "b", "c", "a"]):
+            await driver.execute("INSERT INTO t VALUES (?, ?)", [i, v])
+        desc = await driver.explore_describe(["t", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        sample = by_name["val"].sample
+        assert len(sample) <= 3
+        assert set(sample).issubset({"a", "b", "c"})
+
+
+class TestExploreDescribeColumn:
+    async def test_single_column_basic_fields(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT NOT NULL)", [])
+        desc = await driver.explore_describe(["t", "columns", "val"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.name == "val"
+        assert desc.data_type == "TEXT"
+        assert desc.nullable is False
+        assert desc.pk is False
+
+    async def test_single_column_pk(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
+        desc = await driver.explore_describe(["t", "columns", "id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.pk is True
+
+    async def test_single_column_exclusive_index(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val)", [])
+        desc = await driver.explore_describe(["t", "columns", "val"])
+        assert isinstance(desc, ColumnDescription)
+        assert len(desc.exclusive_indices) == 1
+        assert desc.exclusive_indices[0].index == "idx"
+        assert desc.composite_indices == []
+
+    async def test_single_column_composite_index(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
+        await driver.execute("CREATE INDEX idx ON t(val, other)", [])
+        desc = await driver.explore_describe(["t", "columns", "val"])
+        assert isinstance(desc, ColumnDescription)
+        assert len(desc.composite_indices) == 1
+        assert desc.composite_indices[0].index == "idx"
+        assert desc.exclusive_indices == []
+
+    async def test_single_column_sample_values(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        for i, v in enumerate(["x", "y", "z", "x"]):
+            await driver.execute("INSERT INTO t VALUES (?, ?)", [i, v])
+        desc = await driver.explore_describe(["t", "columns", "val"])
+        assert isinstance(desc, ColumnDescription)
+        assert len(desc.sample) <= 3
+        assert set(desc.sample).issubset({"x", "y", "z"})
+
+    async def test_unknown_column_returns_none(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert await driver.explore_describe(["t", "columns", "no_such_col"]) is None

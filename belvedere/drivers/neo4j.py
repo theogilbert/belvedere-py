@@ -214,9 +214,7 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
             case _:
                 return None
 
-    async def explore_describe(
-        self, path: list[str]
-    ) -> DescribeResult:
+    async def explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
             case ["indexes"]:
                 return await self._describe_all_indices()

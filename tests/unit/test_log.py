@@ -19,7 +19,7 @@ def test_filter_sets_dash_when_no_request_id(
     filt: RequestIdFilter, record: logging.LogRecord
 ) -> None:
     filt.filter(record)
-    assert record.request_id == "-"  # type: ignore[attr-defined]
+    assert record.request_id == "-"  # ty: ignore[unresolved-attribute]
 
 
 def test_filter_sets_request_id_when_set(
@@ -28,7 +28,7 @@ def test_filter_sets_request_id_when_set(
     token = request_id_var.set(42)
     try:
         filt.filter(record)
-        assert record.request_id == "42"  # type: ignore[attr-defined]
+        assert record.request_id == "42"  # ty: ignore[unresolved-attribute]
     finally:
         request_id_var.reset(token)
 

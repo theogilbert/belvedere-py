@@ -281,9 +281,7 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
             case _:
                 return None
 
-    async def explore_describe(
-        self, path: list[str]
-    ) -> DescribeResult:
+    async def explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
             case [db_name, collection_name, "indexes"]:
                 info = await self._client[db_name][collection_name].index_information()
@@ -332,7 +330,9 @@ def _spec_to_index_description(
         for field, direction in spec.get("key", [])
     ]
     # Determine index_type from non-numeric key direction values (e.g. "text", "hashed", "2dsphere").
-    non_numeric = {str(d) for _, d in spec.get("key", []) if not isinstance(d, (int, float))}
+    non_numeric = {
+        str(d) for _, d in spec.get("key", []) if not isinstance(d, (int, float))
+    }
     index_type = next(iter(non_numeric)).lower() if non_numeric else "regular"
     partial = spec.get("partialFilterExpression")
     return IndexDescription(
@@ -342,7 +342,9 @@ def _spec_to_index_description(
         tables=[collection_name],
         index_type=index_type,
         visible=not bool(spec.get("hidden", False)),
-        condition=json.dumps(partial, separators=(",", ":")) if partial is not None else None,
+        condition=json.dumps(partial, separators=(",", ":"))
+        if partial is not None
+        else None,
     )
 
 

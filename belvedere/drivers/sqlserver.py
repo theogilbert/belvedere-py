@@ -7,7 +7,9 @@ from typing import Any, TypeVar
 import mssql_python
 
 from ..protocol import (
+    ColumnDescription,
     ColumnInfo,
+    ColumnsDescription,
     DescribeResult,
     DriverParam,
     DriverParamChoice,
@@ -277,9 +279,7 @@ column metadata (name, type, nullability, default).
             case _:
                 return None
 
-    async def explore_describe(
-        self, path: list[str]
-    ) -> DescribeResult:
+    async def explore_describe(self, path: list[str]) -> DescribeResult:
         """Return column metadata for the table at the given path.
 
         Args:
@@ -291,9 +291,7 @@ column metadata (name, type, nullability, default).
         """
         return await self._run(self._explore_describe_sync, path)
 
-    def _explore_describe_sync(
-        self, path: list[str]
-    ) -> DescribeResult:
+    def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
 
         match path:
             case [schema, table]:
@@ -352,6 +350,12 @@ column metadata (name, type, nullability, default).
             case [schema, table, "indices", index_name]:
                 return self._describe_index_sync(schema, table, index_name)
 
+            case [schema, table, "columns"]:
+                return self._describe_columns_sync(schema, table)
+
+            case [schema, table, "columns", col_name]:
+                return self._describe_column_sync(schema, table, col_name)
+
             case _:
                 return None
 
@@ -393,26 +397,42 @@ column metadata (name, type, nullability, default).
                 )
 
         indices = []
-        for idx_name, type_desc, is_unique, is_clustered, is_disabled, filter_def in index_rows:
+        for (
+            idx_name,
+            type_desc,
+            is_unique,
+            is_clustered,
+            is_disabled,
+            filter_def,
+        ) in index_rows:
             fields = index_fields.get(idx_name, [])
             included = index_included.get(idx_name, [])
             condition = filter_def.strip() if filter_def else None
             ddl = _build_sqlserver_ddl(
-                idx_name, schema, table, type_desc, bool(is_unique),
-                bool(is_clustered), fields, included, condition,
+                idx_name,
+                schema,
+                table,
+                type_desc,
+                bool(is_unique),
+                bool(is_clustered),
+                fields,
+                included,
+                condition,
             )
-            indices.append(IndexDescription(
-                index=idx_name,
-                fields=fields,
-                unique=bool(is_unique),
-                tables=[table],
-                index_type=type_desc.lower() if type_desc else None,
-                clustered=bool(is_clustered),
-                visible=not bool(is_disabled),
-                included_columns=included,
-                condition=condition,
-                ddl=ddl,
-            ))
+            indices.append(
+                IndexDescription(
+                    index=idx_name,
+                    fields=fields,
+                    unique=bool(is_unique),
+                    tables=[table],
+                    index_type=type_desc.lower() if type_desc else None,
+                    clustered=bool(is_clustered),
+                    visible=not bool(is_disabled),
+                    included_columns=included,
+                    condition=condition,
+                    ddl=ddl,
+                )
+            )
         return IndicesDescription(indices=indices)
 
     def _describe_index_sync(
@@ -452,12 +472,21 @@ column metadata (name, type, nullability, default).
             if is_included:
                 included.append(col_name)
             else:
-                fields.append(IndexKeyField(name=col_name, direction="desc" if is_desc else "asc"))
+                fields.append(
+                    IndexKeyField(name=col_name, direction="desc" if is_desc else "asc")
+                )
 
         condition = filter_def.strip() if filter_def else None
         ddl = _build_sqlserver_ddl(
-            index_name, schema, table, type_desc, bool(is_unique),
-            bool(is_clustered), fields, included, condition,
+            index_name,
+            schema,
+            table,
+            type_desc,
+            bool(is_unique),
+            bool(is_clustered),
+            fields,
+            included,
+            condition,
         )
         return IndexDescription(
             index=index_name,
@@ -470,6 +499,162 @@ column metadata (name, type, nullability, default).
             included_columns=included,
             condition=condition,
             ddl=ddl,
+        )
+
+    def _describe_columns_sync(self, schema: str, table: str) -> ColumnsDescription:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
+            " FROM INFORMATION_SCHEMA.COLUMNS"
+            " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+            " ORDER BY ORDINAL_POSITION",
+            (schema, table),
+        )
+        col_rows = cur.fetchall()  # ty: ignore[missing-argument]
+
+        cur.execute(
+            "SELECT c.name FROM sys.key_constraints kc"
+            " JOIN sys.index_columns ic"
+            "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
+            " JOIN sys.columns c"
+            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+            " JOIN sys.objects o ON kc.parent_object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND kc.type = 'PK'",
+            (schema, table),
+        )
+        pk_cols: set[str] = {r[0] for r in cur.fetchall()}  # ty: ignore[missing-argument]
+
+        cur.execute(
+            "SELECT c.name, CAST(ep.value AS NVARCHAR(MAX))"
+            " FROM sys.columns c"
+            " JOIN sys.objects o ON c.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " LEFT JOIN sys.extended_properties ep"
+            "  ON ep.major_id = c.object_id AND ep.minor_id = c.column_id"
+            "  AND ep.name = 'MS_Description'"
+            " WHERE s.name = ? AND o.name = ?",
+            (schema, table),
+        )
+        col_comments: dict[str, str | None] = {
+            r[0]: (r[1].strip() if r[1] else None)
+            for r in cur.fetchall()  # ty: ignore[missing-argument]
+        }
+
+        idx_desc_list = self._describe_indices_sync(schema, table).indices
+        col_excl: dict[str, list[IndexDescription]] = {}
+        col_comp: dict[str, list[IndexDescription]] = {}
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            for cn in key_col_names:
+                if len(key_col_names) == 1:
+                    col_excl.setdefault(cn, []).append(idx_desc)
+                else:
+                    col_comp.setdefault(cn, []).append(idx_desc)
+
+        result = []
+        for r in col_rows:
+            cn = r[0]
+            try:
+                cur.execute(
+                    f"SELECT TOP 3 [{cn}] FROM"
+                    f" (SELECT DISTINCT [{cn}] FROM [{schema}].[{table}]"
+                    f"  WHERE [{cn}] IS NOT NULL) AS _s"
+                )
+                sample: list[Any] = [row[0] for row in cur.fetchall()]  # ty: ignore[missing-argument]
+            except Exception:
+                sample = []
+            result.append(
+                ColumnDescription(
+                    name=cn,
+                    data_type=r[1] or "",
+                    nullable=r[2] == "YES",
+                    pk=cn in pk_cols,
+                    default=r[3],
+                    exclusive_indices=col_excl.get(cn, []),
+                    composite_indices=col_comp.get(cn, []),
+                    comment=col_comments.get(cn),
+                    sample=sample,
+                )
+            )
+        return ColumnsDescription(columns=result)
+
+    def _describe_column_sync(
+        self, schema: str, table: str, col_name: str
+    ) -> ColumnDescription | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
+            " FROM INFORMATION_SCHEMA.COLUMNS"
+            " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+            (schema, table, col_name),
+        )
+        rows = cur.fetchall()  # ty: ignore[missing-argument]
+        if not rows:
+            return None
+        r = rows[0]
+
+        cur.execute(
+            "SELECT c.name FROM sys.key_constraints kc"
+            " JOIN sys.index_columns ic"
+            "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
+            " JOIN sys.columns c"
+            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+            " JOIN sys.objects o ON kc.parent_object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND kc.type = 'PK'",
+            (schema, table),
+        )
+        pk_cols: set[str] = {row[0] for row in cur.fetchall()}  # ty: ignore[missing-argument]
+
+        cur.execute(
+            "SELECT CAST(ep.value AS NVARCHAR(MAX))"
+            " FROM sys.columns c"
+            " JOIN sys.objects o ON c.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " LEFT JOIN sys.extended_properties ep"
+            "  ON ep.major_id = c.object_id AND ep.minor_id = c.column_id"
+            "  AND ep.name = 'MS_Description'"
+            " WHERE s.name = ? AND o.name = ? AND c.name = ?",
+            (schema, table, col_name),
+        )
+        comment_row = cur.fetchone()  # ty: ignore[missing-argument]
+        comment: str | None = (
+            comment_row[0].strip() if comment_row and comment_row[0] else None
+        )
+
+        idx_desc_list = self._describe_indices_sync(schema, table).indices
+        exclusive_indices = []
+        composite_indices = []
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            if col_name not in key_col_names:
+                continue
+            if len(key_col_names) == 1:
+                exclusive_indices.append(idx_desc)
+            else:
+                composite_indices.append(idx_desc)
+
+        try:
+            cur.execute(
+                f"SELECT TOP 3 [{col_name}] FROM"
+                f" (SELECT DISTINCT [{col_name}] FROM [{schema}].[{table}]"
+                f"  WHERE [{col_name}] IS NOT NULL) AS _s"
+            )
+            sample: list[Any] = [row[0] for row in cur.fetchall()]  # ty: ignore[missing-argument]
+        except Exception:
+            sample = []
+
+        return ColumnDescription(
+            name=col_name,
+            data_type=r[1] or "",
+            nullable=r[2] == "YES",
+            pk=col_name in pk_cols,
+            default=r[3],
+            exclusive_indices=exclusive_indices,
+            composite_indices=composite_indices,
+            comment=comment,
+            sample=sample,
         )
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:

@@ -362,7 +362,7 @@ column metadata (name, type, nullability, default).
     def _describe_indices_sync(self, schema: str, table: str) -> IndicesDescription:
         cur = self._conn.cursor()
         cur.execute(
-            "SELECT i.name, i.type_desc, i.is_unique, i.is_clustered,"
+            "SELECT i.name, i.type_desc, i.is_unique,"
             "       i.is_disabled, i.filter_definition"
             " FROM sys.indexes i"
             " JOIN sys.objects o ON i.object_id = o.object_id"
@@ -401,10 +401,10 @@ column metadata (name, type, nullability, default).
             idx_name,
             type_desc,
             is_unique,
-            is_clustered,
             is_disabled,
             filter_def,
         ) in index_rows:
+            is_clustered = (type_desc or "").upper() == "CLUSTERED"
             fields = index_fields.get(idx_name, [])
             included = index_included.get(idx_name, [])
             condition = filter_def.strip() if filter_def else None
@@ -440,7 +440,7 @@ column metadata (name, type, nullability, default).
     ) -> IndexDescription | None:
         cur = self._conn.cursor()
         cur.execute(
-            "SELECT i.type_desc, i.is_unique, i.is_clustered,"
+            "SELECT i.type_desc, i.is_unique,"
             "       i.is_disabled, i.filter_definition"
             " FROM sys.indexes i"
             " JOIN sys.objects o ON i.object_id = o.object_id"
@@ -451,7 +451,8 @@ column metadata (name, type, nullability, default).
         row = cur.fetchone()  # ty: ignore[missing-argument]
         if row is None:
             return None
-        type_desc, is_unique, is_clustered, is_disabled, filter_def = row
+        type_desc, is_unique, is_disabled, filter_def = row
+        is_clustered = (type_desc or "").upper() == "CLUSTERED"
 
         cur.execute(
             "SELECT c.name, ic.is_descending_key, ic.is_included_column"

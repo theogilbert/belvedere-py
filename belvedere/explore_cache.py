@@ -10,9 +10,11 @@ from belvedere.drivers import SENSITIVE_PARAM_KEYS
 from .drivers.base import BaseDriver, ReadResult, WriteResult
 from .protocol import (
     ColumnInfo,
+    DescribeResult,
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    IndicesDescription,
     TableDescription,
 )
 
@@ -52,9 +54,7 @@ class CachingDriver(BaseDriver):
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         return await self._inner.explore_preview(path)
 
-    async def explore_describe(
-        self, path: list[str]
-    ) -> TableDescription | IndexDescription | None:
+    async def explore_describe(self, path: list[str]) -> DescribeResult:
         if self._cache.has_describe(path):
             logger.debug(f"explore.describe cache hit for path {path}")
             return self._cache.get_describe(path)
@@ -102,7 +102,9 @@ class ConnectionCache:
         """Path to the backing JSON cache file."""
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
         """In-memory cache mapping path tuples to their explore.list results."""
-        self._describe: dict[tuple[str, ...], TableDescription | IndexDescription] = {}
+        self._describe: dict[
+            tuple[str, ...], TableDescription | IndexDescription | IndicesDescription
+        ] = {}
         """In-memory cache mapping path tuples to their explore.describe results."""
         self._load()
 
@@ -157,20 +159,20 @@ class ConnectionCache:
         """
         return tuple(path) in self._describe
 
-    def get_describe(
-        self, path: list[str]
-    ) -> TableDescription | IndexDescription | None:
+    def get_describe(self, path: list[str]) -> DescribeResult:
         """Return cached explore.describe results for path, or None on a miss."""
         return self._describe.get(tuple(path))
 
     def set_describe(
-        self, path: list[str], desc: TableDescription | IndexDescription
+        self,
+        path: list[str],
+        desc: TableDescription | IndexDescription | IndicesDescription,
     ) -> None:
         """Store explore.describe results for path and persist to disk.
 
         Args:
             path: Path segments identifying the node.
-            desc: TableDescription to cache, or None if the path is not a table.
+            desc: Description to cache.
         """
         self._describe[tuple(path)] = desc
         self._persist()
@@ -188,19 +190,11 @@ class ConnectionCache:
                 if desc is None:
                     pass  # legacy: None was cached before; skip it
                 elif desc.get("type") == "index":
-                    self._describe[key] = IndexDescription(
-                        index=desc["index"],
-                        fields=[IndexKeyField(**f) for f in desc.get("fields", [])],
-                        unique=desc.get("unique", False),
-                        entity=desc.get("entity"),
-                        condition=desc.get("condition"),
-                    )
+                    self._describe[key] = _deserialize_index(desc)
+                elif desc.get("type") == "indices":
+                    self._describe[key] = _deserialize_indices(desc)
                 else:
-                    self._describe[key] = TableDescription(
-                        table=desc["table"],
-                        schema=desc.get("schema"),
-                        columns=[ColumnInfo(**col) for col in desc.get("columns", [])],
-                    )
+                    self._describe[key] = _deserialize_table(desc)
         except Exception:
             logger.warning(f"Discarding unreadable explore cache at {self._path}")
             self._list.clear()
@@ -228,3 +222,32 @@ class ConnectionCache:
             tmp.replace(self._path)
         except Exception:
             logger.warning(f"Failed to persist explore cache to {self._path}")
+
+
+def _deserialize_index(d: dict[str, Any]) -> IndexDescription:
+    return IndexDescription(
+        index=d["index"],
+        fields=[IndexKeyField(**f) for f in d.get("fields", [])],
+        unique=d.get("unique", False),
+        tables=d.get("tables", []),
+        index_type=d.get("index_type"),
+        clustered=d.get("clustered", False),
+        visible=d.get("visible", True),
+        included_columns=d.get("included_columns", []),
+        condition=d.get("condition"),
+        ddl=d.get("ddl"),
+    )
+
+
+def _deserialize_indices(d: dict[str, Any]) -> IndicesDescription:
+    return IndicesDescription(
+        indices=[_deserialize_index(idx) for idx in d.get("indices", [])]
+    )
+
+
+def _deserialize_table(d: dict[str, Any]) -> TableDescription:
+    return TableDescription(
+        table=d["table"],
+        schema=d.get("schema"),
+        columns=[ColumnInfo(**col) for col in d.get("columns", [])],
+    )

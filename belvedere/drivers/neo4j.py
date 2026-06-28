@@ -6,10 +6,12 @@ import neo4j
 import neo4j.exceptions
 
 from ..protocol import (
+    DescribeResult,
     DriverParam,
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    IndicesDescription,
     Language,
     ParamType,
     ReadResult,
@@ -212,34 +214,54 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
             case _:
                 return None
 
-    async def explore_describe(self, path: list[str]) -> IndexDescription | None:
+    async def explore_describe(
+        self, path: list[str]
+    ) -> DescribeResult:
         match path:
+            case ["indexes"]:
+                return await self._describe_all_indices()
             case ["indexes", index_name]:
-                spec = await self._index_info(index_name)
-                if spec is None:
-                    return None
-                labels_or_types: list[str] = spec["labelsOrTypes"] or []
-                return IndexDescription(
-                    index=index_name,
-                    fields=[
-                        IndexKeyField(name=prop, direction=spec["type"])
-                        for prop in (spec["properties"] or [])
-                    ],
-                    unique=spec["owningConstraint"] is not None,
-                    entity=", ".join(labels_or_types) if labels_or_types else None,
-                )
+                return await self._describe_index(index_name)
             case _:
                 return None
 
-    async def _index_info(self, index_name: str) -> dict | None:
+    async def _describe_all_indices(self) -> IndicesDescription:
+        specs = await self._all_index_specs()
+        indices = [self._spec_to_description(s) for s in specs]
+        return IndicesDescription(table=None, indices=indices)
+
+    async def _describe_index(self, index_name: str) -> IndexDescription | None:
+        specs = await self._all_index_specs()
+        spec = next((s for s in specs if s["name"] == index_name), None)
+        if spec is None:
+            return None
+        return self._spec_to_description(spec)
+
+    def _spec_to_description(self, spec: dict) -> IndexDescription:
+        labels_or_types: list[str] = spec.get("labelsOrTypes") or []
+        idx_type: str = spec.get("type") or ""
+        return IndexDescription(
+            index=spec["name"],
+            fields=[
+                IndexKeyField(name=prop, direction=idx_type)
+                for prop in (spec.get("properties") or [])
+            ],
+            unique=spec.get("owningConstraint") is not None,
+            tables=labels_or_types,
+            index_type=idx_type.lower() if idx_type else None,
+            ddl=spec.get("createStatement"),
+        )
+
+    async def _all_index_specs(self) -> list[dict]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
             result = await session.run(
-                "SHOW INDEXES YIELD name, type, properties, labelsOrTypes, owningConstraint "
-                "RETURN name, type, properties, labelsOrTypes, owningConstraint"
+                "SHOW INDEXES YIELD name, type, properties, labelsOrTypes,"
+                " owningConstraint, createStatement"
+                " RETURN name, type, properties, labelsOrTypes,"
+                " owningConstraint, createStatement"
             )
-            rows = await result.data()
-        return next((r for r in rows if r["name"] == index_name), None)
+            return await result.data()
 
     async def _query_column(self, query: LiteralString, key: str) -> list[str]:
         db = self.params.get("database", "neo4j")

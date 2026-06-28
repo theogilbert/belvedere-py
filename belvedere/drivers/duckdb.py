@@ -7,10 +7,12 @@ import duckdb
 
 from ..protocol import (
     ColumnInfo,
+    DescribeResult,
     DriverParam,
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    IndicesDescription,
     Language,
     ParamType,
     ReadResult,
@@ -222,18 +224,19 @@ SELECT * FROM 'glob/**/*.parquet'
 
     async def explore_describe(
         self, path: list[str]
-    ) -> TableDescription | IndexDescription | None:
+    ) -> DescribeResult:
         """Return metadata for the node at the given path.
 
         Args:
-            path: ``[schema, table]`` for a table description, or
-                ``[schema, table, "indices", index_name]`` for an index description.
+            path: ``[schema, table]`` for a table description,
+                ``[schema, table, "indices"]`` for all indexes, or
+                ``[schema, table, "indices", index_name]`` for one index.
         """
         return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(
         self, path: list[str]
-    ) -> TableDescription | IndexDescription | None:
+    ) -> DescribeResult:
         match path:
             case [schema, table]:
                 col_rows = self._conn.execute(
@@ -282,6 +285,25 @@ SELECT * FROM 'glob/**/*.parquet'
                     ],
                 )
 
+            case [schema, table, "indices"]:
+                rows = self._conn.execute(
+                    "SELECT index_name, is_unique, sql FROM duckdb_indexes()"
+                    " WHERE schema_name = ? AND table_name = ? ORDER BY index_name",
+                    [schema, table],
+                ).fetchall()
+                indices = [
+                    IndexDescription(
+                        index=idx_name,
+                        fields=_parse_index_columns(sql) if sql else [],
+                        unique=bool(is_unique),
+                        tables=[table],
+                        condition=_parse_index_condition(sql) if sql else None,
+                        ddl=sql,
+                    )
+                    for idx_name, is_unique, sql in rows
+                ]
+                return IndicesDescription(table=table, schema=schema, indices=indices)
+
             case [schema, table, "indices", index_name]:
                 rows = self._conn.execute(
                     "SELECT is_unique, sql FROM duckdb_indexes()"
@@ -293,10 +315,11 @@ SELECT * FROM 'glob/**/*.parquet'
                 is_unique, sql = rows[0]
                 return IndexDescription(
                     index=index_name,
-                    fields=_parse_index_columns(sql),
+                    fields=_parse_index_columns(sql) if sql else [],
                     unique=bool(is_unique),
-                    entity=table,
-                    condition=_parse_index_condition(sql),
+                    tables=[table],
+                    condition=_parse_index_condition(sql) if sql else None,
+                    ddl=sql,
                 )
 
             case _:

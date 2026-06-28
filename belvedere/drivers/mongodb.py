@@ -8,10 +8,12 @@ import pymongo
 import pymongo.errors
 
 from ..protocol import (
+    DescribeResult,
     DriverParam,
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    IndicesDescription,
     ParamType,
     ReadResult,
     WriteResult,
@@ -279,25 +281,25 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
             case _:
                 return None
 
-    async def explore_describe(self, path: list[str]) -> IndexDescription | None:
+    async def explore_describe(
+        self, path: list[str]
+    ) -> DescribeResult:
         match path:
+            case [db_name, collection_name, "indexes"]:
+                info = await self._client[db_name][collection_name].index_information()
+                indices = [
+                    _spec_to_index_description(name, spec, collection_name)
+                    for name, spec in sorted(info.items())
+                ]
+                return IndicesDescription(
+                    table=collection_name, schema=db_name, indices=indices
+                )
             case [db_name, collection_name, "indexes", index_name]:
                 info = await self._client[db_name][collection_name].index_information()
                 spec = info.get(index_name)
                 if spec is None:
                     return None
-                partial = spec.get("partialFilterExpression")
-                return IndexDescription(
-                    index=index_name,
-                    fields=[
-                        IndexKeyField(name=field, direction=_index_direction(direction))
-                        for field, direction in spec.get("key", [])
-                    ],
-                    unique=bool(spec.get("unique", False)),
-                    condition=json.dumps(partial, separators=(",", ":"))
-                    if partial is not None
-                    else None,
-                )
+                return _spec_to_index_description(index_name, spec, collection_name)
             case _:
                 return None
 
@@ -322,6 +324,28 @@ def _index_direction(direction: Any) -> str:
     if direction == -1:
         return "desc"
     return str(direction)
+
+
+def _spec_to_index_description(
+    index_name: str, spec: dict, collection_name: str
+) -> IndexDescription:
+    fields = [
+        IndexKeyField(name=field, direction=_index_direction(direction))
+        for field, direction in spec.get("key", [])
+    ]
+    # Determine index_type from non-numeric key direction values (e.g. "text", "hashed", "2dsphere").
+    non_numeric = {str(d) for _, d in spec.get("key", []) if not isinstance(d, (int, float))}
+    index_type = next(iter(non_numeric)).lower() if non_numeric else "regular"
+    partial = spec.get("partialFilterExpression")
+    return IndexDescription(
+        index=index_name,
+        fields=fields,
+        unique=bool(spec.get("unique", False)),
+        tables=[collection_name],
+        index_type=index_type,
+        visible=not bool(spec.get("hidden", False)),
+        condition=json.dumps(partial, separators=(",", ":")) if partial is not None else None,
+    )
 
 
 def _docs_to_result(docs: list[dict[str, Any]]) -> ReadResult:

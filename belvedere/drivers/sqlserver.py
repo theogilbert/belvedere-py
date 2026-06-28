@@ -8,9 +8,13 @@ import mssql_python
 
 from ..protocol import (
     ColumnInfo,
+    DescribeResult,
     DriverParam,
     DriverParamChoice,
     ExploreItem,
+    IndexDescription,
+    IndexKeyField,
+    IndicesDescription,
     Language,
     ParamType,
     ReadResult,
@@ -273,18 +277,23 @@ column metadata (name, type, nullability, default).
             case _:
                 return None
 
-    async def explore_describe(self, path: list[str]) -> TableDescription | None:
+    async def explore_describe(
+        self, path: list[str]
+    ) -> DescribeResult:
         """Return column metadata for the table at the given path.
 
         Args:
-            path: Two-element path with schema and table name (e.g. ``["dbo", "users"]``).
+            path: Two-element path ``[schema, table]``, ``[schema, table, "indices"]``
+                for all indexes, or ``[schema, table, "indices", index_name]`` for one.
 
         Returns:
-            TableDescription if the path resolves to a table, None otherwise.
+            TableDescription, IndicesDescription, or IndexDescription depending on the path.
         """
         return await self._run(self._explore_describe_sync, path)
 
-    def _explore_describe_sync(self, path: list[str]) -> TableDescription | None:
+    def _explore_describe_sync(
+        self, path: list[str]
+    ) -> DescribeResult:
 
         match path:
             case [schema, table]:
@@ -336,10 +345,164 @@ column metadata (name, type, nullability, default).
                         for r in col_rows
                     ],
                 )
+
+            case [schema, table, "indices"]:
+                return self._describe_indices_sync(schema, table)
+
+            case [schema, table, "indices", index_name]:
+                return self._describe_index_sync(schema, table, index_name)
+
             case _:
                 return None
+
+    def _describe_indices_sync(self, schema: str, table: str) -> IndicesDescription:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT i.name, i.type_desc, i.is_unique, i.is_clustered,"
+            "       i.is_disabled, i.filter_definition"
+            " FROM sys.indexes i"
+            " JOIN sys.objects o ON i.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND i.name IS NOT NULL"
+            " ORDER BY i.name",
+            (schema, table),
+        )
+        index_rows = cur.fetchall()  # ty: ignore[missing-argument]
+
+        cur.execute(
+            "SELECT i.name, c.name, ic.is_descending_key, ic.is_included_column"
+            " FROM sys.indexes i"
+            " JOIN sys.index_columns ic"
+            "  ON i.object_id = ic.object_id AND i.index_id = ic.index_id"
+            " JOIN sys.columns c"
+            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+            " JOIN sys.objects o ON i.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND i.name IS NOT NULL"
+            " ORDER BY i.name, ic.key_ordinal, ic.index_column_id",
+            (schema, table),
+        )
+        index_fields: dict[str, list[IndexKeyField]] = {}
+        index_included: dict[str, list[str]] = {}
+        for idx_name, col_name, is_desc, is_included in cur.fetchall():  # ty: ignore[missing-argument]
+            if is_included:
+                index_included.setdefault(idx_name, []).append(col_name)
+            else:
+                index_fields.setdefault(idx_name, []).append(
+                    IndexKeyField(name=col_name, direction="desc" if is_desc else "asc")
+                )
+
+        indices = []
+        for idx_name, type_desc, is_unique, is_clustered, is_disabled, filter_def in index_rows:
+            fields = index_fields.get(idx_name, [])
+            included = index_included.get(idx_name, [])
+            condition = filter_def.strip() if filter_def else None
+            ddl = _build_sqlserver_ddl(
+                idx_name, schema, table, type_desc, bool(is_unique),
+                bool(is_clustered), fields, included, condition,
+            )
+            indices.append(IndexDescription(
+                index=idx_name,
+                fields=fields,
+                unique=bool(is_unique),
+                tables=[table],
+                index_type=type_desc.lower() if type_desc else None,
+                clustered=bool(is_clustered),
+                visible=not bool(is_disabled),
+                included_columns=included,
+                condition=condition,
+                ddl=ddl,
+            ))
+        return IndicesDescription(table=table, schema=schema, indices=indices)
+
+    def _describe_index_sync(
+        self, schema: str, table: str, index_name: str
+    ) -> IndexDescription | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT i.type_desc, i.is_unique, i.is_clustered,"
+            "       i.is_disabled, i.filter_definition"
+            " FROM sys.indexes i"
+            " JOIN sys.objects o ON i.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND i.name = ?",
+            (schema, table, index_name),
+        )
+        row = cur.fetchone()  # ty: ignore[missing-argument]
+        if row is None:
+            return None
+        type_desc, is_unique, is_clustered, is_disabled, filter_def = row
+
+        cur.execute(
+            "SELECT c.name, ic.is_descending_key, ic.is_included_column"
+            " FROM sys.indexes i"
+            " JOIN sys.index_columns ic"
+            "  ON i.object_id = ic.object_id AND i.index_id = ic.index_id"
+            " JOIN sys.columns c"
+            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+            " JOIN sys.objects o ON i.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND i.name = ?"
+            " ORDER BY ic.key_ordinal, ic.index_column_id",
+            (schema, table, index_name),
+        )
+        fields: list[IndexKeyField] = []
+        included: list[str] = []
+        for col_name, is_desc, is_included in cur.fetchall():  # ty: ignore[missing-argument]
+            if is_included:
+                included.append(col_name)
+            else:
+                fields.append(IndexKeyField(name=col_name, direction="desc" if is_desc else "asc"))
+
+        condition = filter_def.strip() if filter_def else None
+        ddl = _build_sqlserver_ddl(
+            index_name, schema, table, type_desc, bool(is_unique),
+            bool(is_clustered), fields, included, condition,
+        )
+        return IndexDescription(
+            index=index_name,
+            fields=fields,
+            unique=bool(is_unique),
+            tables=[table],
+            index_type=type_desc.lower() if type_desc else None,
+            clustered=bool(is_clustered),
+            visible=not bool(is_disabled),
+            included_columns=included,
+            condition=condition,
+            ddl=ddl,
+        )
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         return await asyncio.get_running_loop().run_in_executor(
             None, lambda: fn(*args, **kwargs)
         )
+
+
+def _build_sqlserver_ddl(
+    index_name: str,
+    schema: str,
+    table: str,
+    type_desc: str | None,
+    is_unique: bool,
+    is_clustered: bool,
+    fields: list[IndexKeyField],
+    included: list[str],
+    condition: str | None,
+) -> str | None:
+    """Construct a CREATE INDEX DDL string for standard CLUSTERED/NONCLUSTERED indexes."""
+    td = (type_desc or "").upper()
+    if td not in ("CLUSTERED", "NONCLUSTERED"):
+        return None
+    parts = ["CREATE"]
+    if is_unique:
+        parts.append("UNIQUE")
+    parts.append(td)
+    parts.append(f"INDEX [{index_name}]")
+    parts.append(f"ON [{schema}].[{table}]")
+    col_list = ", ".join(f"[{f.name}] {f.direction.upper()}" for f in fields)
+    parts.append(f"({col_list})")
+    if included:
+        parts.append("INCLUDE (" + ", ".join(f"[{c}]" for c in included) + ")")
+    if condition:
+        parts.append(f"WHERE {condition}")
+    return " ".join(parts)

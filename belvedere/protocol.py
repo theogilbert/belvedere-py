@@ -143,12 +143,41 @@ class IndexDescription:
     """Ordered list of key fields."""
     unique: bool = False
     """Whether the index enforces uniqueness."""
-    entity: str | None = None
-    """Label, table, or collection the index operates on; None when implicit from the explore path."""
+    tables: list[str] = field(default_factory=list)
+    """Tables (or labels/collections) the index operates on.
+    Typically one entry; multiple for Oracle cluster indexes and SQL Server indexed views."""
+    index_type: str | None = None
+    """Storage type as reported by the driver (e.g. ``"btree"``, ``"hash"``, ``"bitmap"``); None if unknown."""
+    clustered: bool = False
+    """Whether the index defines the physical row order of the table."""
+    visible: bool = True
+    """Whether the query optimiser considers this index; False for Oracle INVISIBLE or SQL Server DISABLED."""
+    included_columns: list[str] = field(default_factory=list)
+    """Non-key columns stored in index leaf pages for covering queries (PostgreSQL / SQL Server INCLUDE)."""
     condition: str | None = None
-    """Partial/filtered index predicate in the driver's native syntax; None if the index covers all documents."""
+    """Partial/filtered index predicate in the driver's native syntax; None if the index covers all rows."""
+    ddl: str | None = None
+    """CREATE INDEX statement as stored by the database; None when the driver cannot produce it."""
     type: str = "index"
     """Discriminator — always ``"index"``."""
+
+
+@dataclass
+class IndicesDescription:
+    """All index metadata for a table returned by explore.describe on an indices group node."""
+
+    indices: list[IndexDescription]
+    """All indexes on this table, in driver-defined order."""
+    table: str | None = None
+    """Table name; None when the concept does not apply (e.g. Neo4j global index group)."""
+    schema: str | None = None
+    """Schema name, or None for databases without schema support."""
+    type: str = "indices"
+    """Discriminator — always ``"indices"``."""
+
+
+DescribeResult = TableDescription | IndexDescription | IndicesDescription | None
+"""Return type of ``explore_describe`` across all drivers."""
 
 
 @dataclass

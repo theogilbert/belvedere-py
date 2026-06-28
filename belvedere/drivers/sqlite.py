@@ -5,10 +5,12 @@ from typing import Any, ClassVar, TypeVar
 
 from ..protocol import (
     ColumnInfo,
+    DescribeResult,
     DriverParam,
     ExploreItem,
     IndexDescription,
     IndexKeyField,
+    IndicesDescription,
     Language,
     ParamType,
     ReadResult,
@@ -192,20 +194,22 @@ metadata (name, type, nullability, primary key flag).
 
     async def explore_describe(
         self, path: list[str]
-    ) -> TableDescription | IndexDescription | None:
+    ) -> DescribeResult:
         """Return column metadata for the table at the given path.
 
         Args:
-            path: Single-element path with the table name (e.g. ``["users"]``).
+            path: Single-element path with the table name (e.g. ``["users"]``),
+                ``[table, "indices"]`` for all indexes, or
+                ``[table, "indices", index_name]`` for a single index.
 
         Returns:
-            TableDescription if the path resolves to a table, None otherwise.
+            TableDescription, IndicesDescription, or IndexDescription depending on the path.
         """
         return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(
         self, path: list[str]
-    ) -> TableDescription | IndexDescription | None:
+    ) -> DescribeResult:
         match path:
             case [table]:
                 cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -243,42 +247,57 @@ metadata (name, type, nullability, primary key flag).
                         for r in cols
                     ],
                 )
+
+            case [table, "indices"]:
+                return self._describe_indices_sync(table)
+
             case [table, "indices", index_name]:
-                index_list = self._conn.execute(
-                    f"PRAGMA index_list({table})"
-                ).fetchall()
-                index_row = next((r for r in index_list if r[1] == index_name), None)
-                if index_row is None:
-                    return None
-                unique = bool(index_row[2])
-                is_partial = bool(index_row[4])
-                xinfo = self._conn.execute(
-                    f"PRAGMA index_xinfo({index_name})"
-                ).fetchall()
-                fields = [
-                    IndexKeyField(name=r[2], direction="desc" if r[3] else "asc")
-                    for r in xinfo
-                    if r[5]  # key=1: part of the index key; 0 = implicit rowid
-                ]
-                condition = None
-                if is_partial:
-                    row = self._conn.execute(
-                        "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
-                        (index_name,),
-                    ).fetchone()
-                    if row and row[0]:
-                        sql: str = row[0]
-                        where_pos = sql.upper().find(" WHERE ")
-                        if where_pos != -1:
-                            condition = sql[where_pos + 7 :].strip()
-                return IndexDescription(
-                    index=index_name,
-                    fields=fields,
-                    unique=unique,
-                    condition=condition,
-                )
+                return self._describe_index_sync(table, index_name)
+
             case _:
                 return None
+
+    def _describe_indices_sync(self, table: str) -> IndicesDescription:
+        index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
+        indices = []
+        for idx_row in index_list:
+            idx = self._describe_index_sync(table, idx_row[1])
+            if idx is not None:
+                indices.append(idx)
+        return IndicesDescription(table=table, indices=indices)
+
+    def _describe_index_sync(self, table: str, index_name: str) -> IndexDescription | None:
+        index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
+        index_row = next((r for r in index_list if r[1] == index_name), None)
+        if index_row is None:
+            return None
+        unique = bool(index_row[2])
+        is_partial = bool(index_row[4])
+        xinfo = self._conn.execute(f"PRAGMA index_xinfo({index_name})").fetchall()
+        fields = [
+            IndexKeyField(name=r[2], direction="desc" if r[3] else "asc")
+            for r in xinfo
+            if r[5]  # key=1: part of the index key; 0 = implicit rowid
+        ]
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+            (index_name,),
+        ).fetchone()
+        ddl: str | None = row[0] if row and row[0] else None
+        condition = None
+        if is_partial and ddl:
+            where_pos = ddl.upper().find(" WHERE ")
+            if where_pos != -1:
+                condition = ddl[where_pos + 7:].strip()
+        return IndexDescription(
+            index=index_name,
+            fields=fields,
+            unique=unique,
+            tables=[table],
+            index_type="btree",
+            condition=condition,
+            ddl=ddl,
+        )
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         try:

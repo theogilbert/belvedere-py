@@ -39,4 +39,5 @@ echo "Elasticsearch is ready."
 
 ELASTICSEARCH_HOST="$HOST" \
 ELASTICSEARCH_PORT="$PORT" \
+ELASTICSEARCH_PROTOCOL="http" \
     python -m pytest tests/external/test_elasticsearch.py -v "$@"

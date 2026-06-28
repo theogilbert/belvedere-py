@@ -24,24 +24,22 @@ class TestVerboseFlag:
             patch("sys.argv", ["belvedere", "--log", "-v"]),
             patch("belvedere.__main__._cache_dir", return_value=tmp_path),
             patch("belvedere.__main__._log_path", return_value=tmp_path / "server.log"),
-            patch("logging.basicConfig") as mock_basicConfig,
+            patch("belvedere.log.configure") as mock_configure,
             patch.object(Server, "run", new_callable=AsyncMock),
         ):
             main()
-        mock_basicConfig.assert_called_once()
-        assert mock_basicConfig.call_args.kwargs["level"] == logging.DEBUG
+        mock_configure.assert_called_once_with(tmp_path / "server.log", logging.DEBUG)
 
     def test_log_level_is_info_without_verbose(self, tmp_path: pathlib.Path) -> None:
         with (
             patch("sys.argv", ["belvedere", "--log"]),
             patch("belvedere.__main__._cache_dir", return_value=tmp_path),
             patch("belvedere.__main__._log_path", return_value=tmp_path / "server.log"),
-            patch("logging.basicConfig") as mock_basicConfig,
+            patch("belvedere.log.configure") as mock_configure,
             patch.object(Server, "run", new_callable=AsyncMock),
         ):
             main()
-        mock_basicConfig.assert_called_once()
-        assert mock_basicConfig.call_args.kwargs["level"] == logging.INFO
+        mock_configure.assert_called_once_with(tmp_path / "server.log", logging.INFO)
 
 
 class TestKeyboardInterrupt:

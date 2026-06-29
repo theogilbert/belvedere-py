@@ -307,7 +307,6 @@ SELECT * FROM 'glob/**/*.parquet'
                     fields=_parse_index_columns(sql) if sql else [],
                     unique=bool(is_unique),
                     tables=[table],
-                    condition=_parse_index_condition(sql) if sql else None,
                     ddl=sql,
                 )
 
@@ -333,7 +332,6 @@ SELECT * FROM 'glob/**/*.parquet'
                     fields=_parse_index_columns(sql) if sql else [],
                     unique=bool(is_unique),
                     tables=[table],
-                    condition=_parse_index_condition(sql) if sql else None,
                     ddl=sql,
                 )
                 for idx_name, is_unique, sql in rows
@@ -491,11 +489,3 @@ def _parse_index_columns(sql: str) -> list[IndexKeyField]:
         direction = "desc" if len(tokens) > 1 and tokens[1].upper() == "DESC" else "asc"
         fields.append(IndexKeyField(name=name, direction=direction))
     return fields
-
-
-def _parse_index_condition(sql: str) -> str | None:
-    """Extract the WHERE clause from a partial index SQL string, or None."""
-    where_pos = sql.upper().find(" WHERE ")
-    if where_pos == -1:
-        return None
-    return sql[where_pos + 7 :].strip()

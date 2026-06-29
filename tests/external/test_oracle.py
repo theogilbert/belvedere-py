@@ -24,6 +24,7 @@ from belvedere.protocol import (
     ColumnDescription,
     ColumnsDescription,
     IndexDescription,
+    IndicesDescription,
     ReadResult,
     TableDescription,
     WriteResult,
@@ -56,6 +57,32 @@ async def driver() -> AsyncGenerator[OracleDriver, None]:
 @pytest.fixture
 async def schema(driver: OracleDriver) -> str:
     result = await driver.execute("SELECT USER FROM DUAL", [])
+    assert isinstance(result, ReadResult)
+    return result.rows[0][0]
+
+
+@pytest.fixture
+async def driver2() -> AsyncGenerator[OracleDriver, None]:
+    pytest.importorskip("oracledb")
+    password2 = os.environ.get("ORACLE_PASSWORD2", "")
+    if not password2:
+        pytest.skip("ORACLE_PASSWORD2 not set; skipping cross-schema index tests")
+    params = {
+        **_params(),
+        "user": os.environ.get("ORACLE_USER2", "testuser2"),
+        "password": password2,
+    }
+    try:
+        d = await OracleDriver.create(params, DriverSettings())
+    except Exception as exc:
+        pytest.skip(f"Second Oracle user not available: {exc}")
+    yield d
+    await d.disconnect()
+
+
+@pytest.fixture
+async def schema2(driver2: OracleDriver) -> str:
+    result = await driver2.execute("SELECT USER FROM DUAL", [])
     assert isinstance(result, ReadResult)
     return result.rows[0][0]
 
@@ -621,3 +648,28 @@ class TestExploreDescribeColumn:
             await driver.explore_describe([schema, table, "columns", "NO_SUCH_COL"])
             is None
         )
+
+
+class TestCrossSchemaIndex:
+    async def test_indices_ddl_for_index_owned_by_different_schema(
+        self,
+        driver: OracleDriver,
+        driver2: OracleDriver,
+        schema: str,
+        schema2: str,
+        table: str,
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
+        )
+        idx = "IDX_" + table
+        await driver2.execute(
+            f"CREATE INDEX {schema2}.{idx} ON {schema}.{table}(val)", []
+        )
+        desc = await driver.explore_describe([schema, table, "indexes"])
+        assert isinstance(desc, IndicesDescription)
+        by_name = {i.index: i for i in desc.indices}
+        assert idx in by_name
+        ddl = by_name[idx].ddl
+        assert ddl is not None
+        assert idx in ddl

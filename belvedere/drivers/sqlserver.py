@@ -435,7 +435,6 @@ column metadata (name, type, nullability, default).
                     clustered=bool(is_clustered),
                     visible=not bool(is_disabled),
                     included_columns=included,
-                    condition=condition,
                     ddl=ddl,
                 )
             )
@@ -503,7 +502,6 @@ column metadata (name, type, nullability, default).
             clustered=bool(is_clustered),
             visible=not bool(is_disabled),
             included_columns=included,
-            condition=condition,
             ddl=ddl,
         )
 

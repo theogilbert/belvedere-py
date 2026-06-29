@@ -245,7 +245,6 @@ def _deserialize_index(d: dict[str, Any]) -> IndexDescription:
         clustered=d.get("clustered", False),
         visible=d.get("visible", True),
         included_columns=d.get("included_columns", []),
-        condition=d.get("condition"),
         ddl=d.get("ddl"),
     )
 

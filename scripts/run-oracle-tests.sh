@@ -9,6 +9,8 @@ CONTAINER="oracle-dev"
 SYS_PASSWORD="TestPassword1"
 APP_USER="testuser"
 APP_PASSWORD="testuser1"
+APP_USER2="testuser2"
+APP_PASSWORD2="testuser2pw"
 PORT=1521
 IMAGE="container-registry.oracle.com/database/free:latest"
 SERVICE="FREEPDB1"
@@ -40,11 +42,13 @@ until [ "$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER")" = "health
 done
 echo "Oracle is ready."
 
-echo "Creating test user..."
+echo "Creating test users..."
 docker exec "$CONTAINER" bash -c "
 sqlplus -S sys/$SYS_PASSWORD@//localhost:1521/$SERVICE as sysdba << 'EOF'
 CREATE USER $APP_USER IDENTIFIED BY $APP_PASSWORD;
-GRANT CONNECT, RESOURCE, UNLIMITED TABLESPACE TO $APP_USER;
+GRANT CONNECT, RESOURCE, UNLIMITED TABLESPACE, CREATE ANY INDEX TO $APP_USER;
+CREATE USER $APP_USER2 IDENTIFIED BY $APP_PASSWORD2;
+GRANT CONNECT, CREATE ANY INDEX TO $APP_USER2;
 EXIT;
 EOF
 "
@@ -54,4 +58,6 @@ ORACLE_PORT="$PORT" \
 ORACLE_USER="$APP_USER" \
 ORACLE_PASSWORD="$APP_PASSWORD" \
 ORACLE_SERVICE="$SERVICE" \
+ORACLE_USER2="$APP_USER2" \
+ORACLE_PASSWORD2="$APP_PASSWORD2" \
     python -m pytest tests/external/test_oracle.py -v "$@"

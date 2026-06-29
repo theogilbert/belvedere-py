@@ -254,23 +254,24 @@ class TestExploreDescribeIndex:
         assert isinstance(desc, IndexDescription)
         assert [f.name for f in desc.fields] == ["last", "first"]
 
-    async def test_partial_index_condition(self, driver: SQLiteDriver) -> None:
+    async def test_partial_index_ddl_contains_where(self, driver: SQLiteDriver) -> None:
         await driver.execute(
             "CREATE TABLE t (id INTEGER, email TEXT, active INTEGER)", []
         )
         await driver.execute("CREATE INDEX idx ON t(email) WHERE active = 1", [])
         desc = await driver.explore_describe(["t", "indices", "idx"])
         assert isinstance(desc, IndexDescription)
-        assert desc.condition == "active = 1"
+        assert desc.ddl is not None
+        assert "active = 1" in desc.ddl
 
-    async def test_non_partial_index_has_no_condition(
+    async def test_non_partial_index_ddl_has_no_where(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         await driver.execute("CREATE INDEX idx ON t(val)", [])
         desc = await driver.explore_describe(["t", "indices", "idx"])
         assert isinstance(desc, IndexDescription)
-        assert desc.condition is None
+        assert desc.ddl is None or "WHERE" not in desc.ddl.upper()
 
     async def test_unknown_index_returns_none(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])

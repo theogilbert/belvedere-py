@@ -154,8 +154,6 @@ class IndexDescription:
     """Whether the query optimiser considers this index; False for Oracle INVISIBLE or SQL Server DISABLED."""
     included_columns: list[str] = field(default_factory=list)
     """Non-key columns stored in index leaf pages for covering queries (PostgreSQL / SQL Server INCLUDE)."""
-    condition: str | None = None
-    """Partial/filtered index predicate in the driver's native syntax; None if the index covers all rows."""
     ddl: str | None = None
     """CREATE INDEX statement as stored by the database; None when the driver cannot produce it."""
     type: str = "index"

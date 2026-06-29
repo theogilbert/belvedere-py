@@ -347,9 +347,7 @@ def _spec_to_index_description(
         tables=[collection_name],
         index_type=index_type,
         visible=not bool(spec.get("hidden", False)),
-        condition=json.dumps(partial, separators=(",", ":"))
-        if partial is not None
-        else None,
+        ddl=json.dumps(partial, separators=(",", ":")) if partial is not None else None,
     )
 
 

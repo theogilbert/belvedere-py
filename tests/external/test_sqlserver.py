@@ -313,7 +313,7 @@ class TestExploreDescribeIndex:
         assert isinstance(desc, IndexDescription)
         assert desc.included_columns == ["extra"]
 
-    async def test_filtered_index_condition(
+    async def test_filtered_index_ddl_contains_where(
         self, driver: SQLServerDriver, table: str
     ) -> None:
         await driver.execute(
@@ -324,8 +324,8 @@ class TestExploreDescribeIndex:
         )
         desc = await driver.explore_describe(["dbo", table, "indices", "ix_active"])
         assert isinstance(desc, IndexDescription)
-        assert desc.condition is not None
-        assert "active" in desc.condition
+        assert desc.ddl is not None
+        assert "active" in desc.ddl
 
     async def test_multi_column_index_field_order(
         self, driver: SQLServerDriver, table: str

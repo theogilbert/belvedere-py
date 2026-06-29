@@ -282,7 +282,6 @@ metadata (name, type, nullability, primary key flag).
         if index_row is None:
             return None
         unique = bool(index_row[2])
-        is_partial = bool(index_row[4])
         xinfo = self._conn.execute(f"PRAGMA index_xinfo({index_name})").fetchall()
         fields = [
             IndexKeyField(name=r[2], direction="desc" if r[3] else "asc")
@@ -294,18 +293,12 @@ metadata (name, type, nullability, primary key flag).
             (index_name,),
         ).fetchone()
         ddl: str | None = row[0] if row and row[0] else None
-        condition = None
-        if is_partial and ddl:
-            where_pos = ddl.upper().find(" WHERE ")
-            if where_pos != -1:
-                condition = ddl[where_pos + 7 :].strip()
         return IndexDescription(
             index=index_name,
             fields=fields,
             unique=unique,
             tables=[table],
             index_type="btree",
-            condition=condition,
             ddl=ddl,
         )
 

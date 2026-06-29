@@ -335,7 +335,9 @@ name, type, nullability, primary key flag, default) and on
         indices = []
         for meta in metas:
             ddl = (
-                None if meta.generated else await self._get_index_ddl(schema, meta.name)
+                None
+                if meta.generated
+                else await self._get_index_ddl(meta.owner, meta.name)
             )
             indices.append(
                 IndexDescription(

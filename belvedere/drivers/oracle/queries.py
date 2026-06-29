@@ -75,6 +75,8 @@ class IndexMeta:
 
     name: str
     """Index name."""
+    owner: str
+    """Schema that owns the index (may differ from the table owner)."""
     index_type: str | None
     """Index storage type in lowercase (e.g. ``"normal"``, ``"bitmap"``); None if unknown."""
     unique: bool
@@ -256,7 +258,7 @@ async def fetch_index_metas_for_table(
     """Return metadata for all indexes on *table*, ordered by index name."""
     cur = conn.cursor()
     await cur.execute(
-        "SELECT INDEX_NAME, INDEX_TYPE, UNIQUENESS, VISIBILITY, GENERATED"
+        "SELECT OWNER, INDEX_NAME, INDEX_TYPE, UNIQUENESS, VISIBILITY, GENERATED"
         " FROM ALL_INDEXES"
         " WHERE TABLE_OWNER = :1 AND TABLE_NAME = :2"
         " ORDER BY INDEX_NAME",
@@ -264,11 +266,12 @@ async def fetch_index_metas_for_table(
     )
     return [
         IndexMeta(
-            name=r[0],
-            index_type=r[1].lower() if r[1] else None,
-            unique=r[2] == "UNIQUE",
-            visible=r[3] != "INVISIBLE",
-            generated=r[4] == "Y",
+            name=r[1],
+            owner=r[0],
+            index_type=r[2].lower() if r[2] else None,
+            unique=r[3] == "UNIQUE",
+            visible=r[4] != "INVISIBLE",
+            generated=r[5] == "Y",
         )
         for r in await cur.fetchall()
     ]
@@ -344,6 +347,7 @@ async def fetch_index_meta(
     idx_type, uniqueness, visibility, generated = row
     return IndexMeta(
         name=index_name,
+        owner=schema,
         index_type=idx_type.lower() if idx_type else None,
         unique=uniqueness == "UNIQUE",
         visible=visibility != "INVISIBLE",

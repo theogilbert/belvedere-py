@@ -3,7 +3,9 @@
 from dataclasses import dataclass
 from typing import Any
 
-from ...protocol import IndexKeyField, IndexDescription
+from oracledb import AsyncConnection, AsyncCursor
+
+from ...protocol import IndexDescription, IndexKeyField
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
 
@@ -83,12 +85,27 @@ class IndexMeta:
     """True for system-generated constraint-backing indexes; their DDL is part of CREATE TABLE."""
 
 
+async def fetch_explain_plan(cur: AsyncCursor) -> list[str]:
+    """Return the execution plan of the last EXPLAIN PLAN query.
+
+    Returns:
+        A list of str representing the formatted lines of the plan.
+    """
+    await cur.execute("SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())")
+    return [r[0]] for r in await cur.fetchall()]
+
+
 # ---------------------------------------------------------------------------
 # Explore queries
 # ---------------------------------------------------------------------------
 
+def build_preview_query(schema: str, table: str) -> str:
+    """Build an SQL query to preview a table."""
+    return f'SELECT * FROM "{schema}"."{table}" FETCH FIRST 10 ROWS ONLY'
 
-async def fetch_schemas(conn: Any, has_oracle_maintained: bool) -> list[str]:
+async def fetch_schemas(
+    conn: AsyncConnection, has_oracle_maintained: bool
+) -> list[str]:
     """Return non-system schema names, ordered alphabetically."""
     cur = conn.cursor()
     if has_oracle_maintained:
@@ -105,7 +122,7 @@ async def fetch_schemas(conn: Any, has_oracle_maintained: bool) -> list[str]:
     return [r[0] for r in await cur.fetchall()]
 
 
-async def fetch_tables_and_views(conn: Any, schema: str) -> list[tuple[str, str]]:
+async def fetch_tables_and_views(conn: AsyncConnection, schema: str) -> list[tuple[str, str]]:
     """Return (name, type) pairs for all tables and views in *schema*."""
     cur = conn.cursor()
     await cur.execute(
@@ -119,7 +136,7 @@ async def fetch_tables_and_views(conn: Any, schema: str) -> list[tuple[str, str]
 
 
 async def fetch_column_names_and_types(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> list[tuple[str, str]]:
     """Return (column_name, data_type) pairs ordered by column position."""
     cur = conn.cursor()
@@ -132,7 +149,7 @@ async def fetch_column_names_and_types(
 
 
 async def fetch_index_names_and_types(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> list[tuple[str, str]]:
     """Return (index_name, index_type) pairs ordered by index name."""
     cur = conn.cursor()
@@ -145,7 +162,7 @@ async def fetch_index_names_and_types(
 
 
 async def fetch_constraint_names_and_types(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> list[tuple[str, str]]:
     """Return (constraint_name, mapped_type) pairs for user-named enabled constraints."""
     cur = conn.cursor()
@@ -168,7 +185,7 @@ async def fetch_constraint_names_and_types(
 
 
 async def fetch_column_details(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> list[ColumnDetail]:
     """Return column metadata ordered by column position."""
     cur = conn.cursor()
@@ -189,7 +206,7 @@ async def fetch_column_details(
     ]
 
 
-async def fetch_pk_columns(conn: Any, schema: str, table: str) -> set[str]:
+async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> set[str]:
     """Return the set of column names that form the primary key."""
     cur = conn.cursor()
     await cur.execute(
@@ -206,7 +223,7 @@ async def fetch_pk_columns(conn: Any, schema: str, table: str) -> set[str]:
 
 
 async def fetch_column_index_mapping(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, list[str]]:
     """Return ``{column_name: [index_name, ...]}`` for all indexed columns."""
     cur = conn.cursor()
@@ -230,7 +247,7 @@ async def fetch_column_index_mapping(
 
 
 async def fetch_index_metas_for_table(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> list[IndexMeta]:
     """Return metadata for all indexes on *table*, ordered by index name."""
     cur = conn.cursor()
@@ -254,7 +271,7 @@ async def fetch_index_metas_for_table(
 
 
 async def fetch_index_fields_for_table(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, list[IndexKeyField]]:
     """Return ``{index_name: [IndexKeyField, ...]}`` for all indexes on *table*."""
     cur = conn.cursor()
@@ -276,7 +293,7 @@ async def fetch_index_fields_for_table(
 
 
 async def fetch_join_tables_for_table(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, list[str]]:
     """Return ``{index_name: [table, ...]}`` for bitmap join indexes.
 
@@ -306,7 +323,7 @@ async def fetch_join_tables_for_table(
 # ---------------------------------------------------------------------------
 
 
-async def fetch_index_meta(conn: Any, schema: str, index_name: str) -> IndexMeta | None:
+async def fetch_index_meta(conn: AsyncConnection, schema: str, index_name: str) -> IndexMeta | None:
     """Return metadata for a single index, or None if not found."""
     cur = conn.cursor()
     await cur.execute(
@@ -329,7 +346,7 @@ async def fetch_index_meta(conn: Any, schema: str, index_name: str) -> IndexMeta
 
 
 async def fetch_index_fields_for_index(
-    conn: Any, schema: str, index_name: str
+    conn: AsyncConnection, schema: str, index_name: str
 ) -> list[IndexKeyField]:
     """Return key fields for a single index, ordered by column position."""
     cur = conn.cursor()
@@ -346,7 +363,7 @@ async def fetch_index_fields_for_index(
 
 
 async def fetch_join_tables_for_index(
-    conn: Any, schema: str, index_name: str, table: str
+    conn: AsyncConnection, schema: str, index_name: str, table: str
 ) -> list[str]:
     """Return the list of tables for a bitmap join index.
 
@@ -377,7 +394,7 @@ async def fetch_join_tables_for_index(
 
 
 async def fetch_all_column_comments(
-    conn: Any, schema: str, table: str
+    conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, str | None]:
     """Return ``{column_name: comment}`` for all columns; value is None when no comment is set."""
     cur = conn.cursor()
@@ -408,7 +425,7 @@ async def fetch_column_sample(
 
 
 async def build_column_index_lists(
-    conn: Any,
+    conn: AsyncConnection,
     schema: str,
     table: str,
     all_indices: list[IndexDescription],
@@ -451,7 +468,7 @@ async def build_column_index_lists(
 # ---------------------------------------------------------------------------
 
 
-async def apply_metadata_transform(conn: Any) -> None:
+async def apply_metadata_transform(conn: AsyncConnection) -> None:
     """Set DBMS_METADATA session transform params to suppress storage/segment clauses."""
     cur = conn.cursor()
     await cur.execute(
@@ -464,7 +481,7 @@ async def apply_metadata_transform(conn: Any) -> None:
     )
 
 
-async def fetch_index_ddl(conn: Any, schema: str, index_name: str) -> str | None:
+async def fetch_index_ddl(conn: AsyncConnection, schema: str, index_name: str) -> str | None:
     """Return the CREATE INDEX DDL for *index_name*, or None if unavailable."""
     cur = conn.cursor()
     await cur.execute(

@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 import oracledb
+from oracledb import AsyncConnection
 
 from ...protocol import (
     ColumnDescription,
@@ -30,6 +31,7 @@ from .queries import (
     fetch_column_names_and_types,
     fetch_column_sample,
     fetch_constraint_names_and_types,
+    fetch_explain_plan,
     fetch_index_ddl,
     fetch_index_fields_for_index,
     fetch_index_fields_for_table,
@@ -41,6 +43,7 @@ from .queries import (
     fetch_pk_columns,
     fetch_schemas,
     fetch_tables_and_views,
+    build_preview_query,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,7 +111,10 @@ name, type, nullability, primary key flag, default) and on
 """
 
     def __init__(
-        self, params: dict[str, Any], conn: Any, has_oracle_maintained: bool
+        self,
+        params: dict[str, Any],
+        conn: AsyncConnection,
+        has_oracle_maintained: bool,
     ) -> None:
         super().__init__(params)
         self._conn = conn
@@ -151,12 +157,14 @@ name, type, nullability, primary key flag, default) and on
     async def disconnect(self) -> None:
         await self._conn.close()
 
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
+    async def execute(
+        self, query: str, binds: list[Any] | None = None
+    ) -> ReadResult | WriteResult:
         """Run a SQL statement. Positional bind values map to ``:1``, ``:2``, … in the query.
 
         Args:
             query: SQL statement to execute.
-            binds: Positional bind parameters (referenced as ``:1``, ``:2``, … in the query).
+            binds: Optional positional bind parameters (referenced as ``:1``, ``:2``, … in the query).
 
         Returns:
             ReadResult for queries that return rows, WriteResult otherwise.
@@ -164,14 +172,14 @@ name, type, nullability, primary key flag, default) and on
         Raises:
             ConnectionLostError: If the connection was lost during execution.
         """
+        binds = binds or []
+
         try:
             cur = self._conn.cursor()
             await cur.execute(query, binds)
             if _is_explain_plan(query):
-                await cur.execute(
-                    "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())"
-                )
-                rows: list[list[Any]] = [[r[0]] for r in await cur.fetchall()]
+                lines = await fetch_explain_plan(cur)
+                rows = [[row] for row in lines]
                 return ReadResult(
                     columns=["PLAN_TABLE_OUTPUT"], rows=rows, rows_total=len(rows)
                 )
@@ -248,9 +256,7 @@ name, type, nullability, primary key flag, default) and on
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         match path:
             case [schema, table]:
-                result = await self.execute(
-                    f'SELECT * FROM "{schema}"."{table}" FETCH FIRST 10 ROWS ONLY', []
-                )
+                result = await self.execute(build_preview_query(schema, table))
                 return result if isinstance(result, ReadResult) else None
             case _:
                 return None

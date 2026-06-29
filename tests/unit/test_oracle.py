@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from belvedere.drivers.base import ConnectionLostError, DriverError
+from belvedere.drivers.base import ConnectionLostError, DriverError, DriverSettings
 from belvedere.drivers.oracle import (
-    OracleDriver,
     _PRE12_SYSTEM_SCHEMAS_SQL,
+    OracleDriver,
     _format_db_error,
     _is_explain_plan,
     _offset_to_line_col,
@@ -24,7 +24,7 @@ def _make_index_driver(index_row: tuple | None, col_rows: list) -> OracleDriver:
     cur.fetchall = AsyncMock(side_effect=[col_rows, []])  # fields, then join tables
     conn = MagicMock()
     conn.cursor.return_value = cur
-    return OracleDriver({}, conn, True)
+    return OracleDriver({}, conn, True, DriverSettings())
 
 
 def _make_driver(rows: list, has_oracle_maintained: bool) -> OracleDriver:
@@ -33,7 +33,7 @@ def _make_driver(rows: list, has_oracle_maintained: bool) -> OracleDriver:
     cur.fetchall = AsyncMock(return_value=rows)
     conn = MagicMock()
     conn.cursor.return_value = cur
-    return OracleDriver({}, conn, has_oracle_maintained)
+    return OracleDriver({}, conn, has_oracle_maintained, DriverSettings())
 
 
 def _make_db_error(message: str, offset: int = 0) -> oracledb.DatabaseError:
@@ -48,14 +48,14 @@ class TestRootListing:
     def test_12c_uses_oracle_maintained_filter(self) -> None:
         driver = _make_driver([("ALICE",), ("BOB",)], has_oracle_maintained=True)
         asyncio.run(driver.explore_list([]))
-        sql = driver._conn.cursor().execute.call_args[0][0]
+        sql = driver._conn.cursor().execute.call_args[0][0]  # ty: ignore[unresolved-attribute]
         assert "ORACLE_MAINTAINED" in sql
         assert "NOT IN" not in sql
 
     def test_pre12c_uses_exclusion_list(self) -> None:
         driver = _make_driver([("ALICE",), ("BOB",)], has_oracle_maintained=False)
         asyncio.run(driver.explore_list([]))
-        sql = driver._conn.cursor().execute.call_args[0][0]
+        sql = driver._conn.cursor().execute.call_args[0][0]  # ty: ignore[unresolved-attribute]
         assert "ORACLE_MAINTAINED" not in sql
         assert "NOT IN" in sql
 
@@ -109,7 +109,7 @@ class TestExecuteErrorPropagation:
         cur.execute = AsyncMock(side_effect=exc)
         conn = MagicMock()
         conn.cursor.return_value = cur
-        driver = OracleDriver({}, conn, True)
+        driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(DriverError, match="ORA-00936"):
             asyncio.run(driver.execute("SELECT FROM t", []))
 
@@ -119,7 +119,7 @@ class TestExecuteErrorPropagation:
         cur.execute = AsyncMock(side_effect=exc)
         conn = MagicMock()
         conn.cursor.return_value = cur
-        driver = OracleDriver({}, conn, True)
+        driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(DriverError, match=r"line 1, col 8"):
             asyncio.run(driver.execute("SELECT FROM t", []))
 
@@ -131,7 +131,7 @@ class TestExecuteErrorPropagation:
         cur.execute = AsyncMock(side_effect=exc)
         conn = MagicMock()
         conn.cursor.return_value = cur
-        driver = OracleDriver({}, conn, True)
+        driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(ConnectionLostError):
             asyncio.run(driver.execute("SELECT 1 FROM DUAL", []))
 
@@ -141,7 +141,7 @@ class TestExecuteErrorPropagation:
         cur.execute = AsyncMock(side_effect=exc)
         conn = MagicMock()
         conn.cursor.return_value = cur
-        driver = OracleDriver({}, conn, True)
+        driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(ConnectionLostError):
             asyncio.run(driver.explore_list([]))
 
@@ -151,7 +151,7 @@ class TestExecuteErrorPropagation:
         cur.execute = AsyncMock(side_effect=exc)
         conn = MagicMock()
         conn.cursor.return_value = cur
-        driver = OracleDriver({}, conn, True)
+        driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(ConnectionLostError):
             asyncio.run(driver.explore_describe(["MYSCHEMA", "MYTABLE"]))
 
@@ -249,7 +249,7 @@ class TestExplainPlanExecute:
     def explain_driver(self, explain_cur: MagicMock) -> OracleDriver:
         conn = MagicMock()
         conn.cursor.return_value = explain_cur
-        return OracleDriver({}, conn, True)
+        return OracleDriver({}, conn, True, DriverSettings())
 
     def test_returns_read_result(
         self, explain_driver: OracleDriver, explain_cur: MagicMock

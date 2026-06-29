@@ -42,6 +42,18 @@ class TestVerboseFlag:
         mock_configure.assert_called_once_with(tmp_path / "server.log", logging.INFO)
 
 
+class TestColumnSampleSize:
+    def test_default_is_3(self) -> None:
+        with patch("sys.argv", ["belvedere"]):
+            args = parse_cli_args()
+        assert args.column_sample_size == 3
+
+    def test_custom_value(self) -> None:
+        with patch("sys.argv", ["belvedere", "--column-sample-size", "10"]):
+            args = parse_cli_args()
+        assert args.column_sample_size == 10
+
+
 class TestKeyboardInterrupt:
     def test_should_print_to_stderr(
         self, capsys: pytest.CaptureFixture, tmp_path: pathlib.Path

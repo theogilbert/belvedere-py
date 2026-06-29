@@ -21,7 +21,7 @@ from ..protocol import (
     TableDescription,
     WriteResult,
 )
-from .base import BaseDriver, DriverError
+from .base import BaseDriver, DriverError, DriverSettings
 
 T = TypeVar("T")
 
@@ -78,12 +78,19 @@ SELECT * FROM 'glob/**/*.parquet'
 ```
 """
 
-    def __init__(self, params: dict[str, Any], conn: duckdb.DuckDBPyConnection) -> None:
-        super().__init__(params)
+    def __init__(
+        self,
+        params: dict[str, Any],
+        conn: duckdb.DuckDBPyConnection,
+        settings: DriverSettings,
+    ) -> None:
+        super().__init__(params, settings)
         self._conn = conn
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> "DuckDBDriver":
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "DuckDBDriver":
         """Open a DuckDB connection and return a ready-to-use driver.
 
         Args:
@@ -97,7 +104,7 @@ SELECT * FROM 'glob/**/*.parquet'
             )
         except duckdb.Error as exc:
             raise DriverError(str(exc)) from exc
-        return cls(params, conn)
+        return cls(params, conn, settings)
 
     async def reconnect(self) -> None:
         database = self.params.get("database") or ":memory:"
@@ -377,7 +384,7 @@ SELECT * FROM 'glob/**/*.parquet'
                     row[0]
                     for row in self._conn.execute(
                         f'SELECT DISTINCT "{cn}" FROM "{schema}"."{table}"'
-                        f' WHERE "{cn}" IS NOT NULL LIMIT 3'
+                        f' WHERE "{cn}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
                     ).fetchall()
                 ]
             except Exception:
@@ -444,7 +451,7 @@ SELECT * FROM 'glob/**/*.parquet'
                 row[0]
                 for row in self._conn.execute(
                     f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
-                    f' WHERE "{col_name}" IS NOT NULL LIMIT 3'
+                    f' WHERE "{col_name}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
                 ).fetchall()
             ]
         except Exception:

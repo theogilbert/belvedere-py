@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from belvedere.drivers.base import DriverSettings
 from belvedere.drivers.sqlite import SQLiteDriver
 from belvedere.protocol import (
     ColumnDescription,
@@ -16,7 +17,7 @@ from belvedere.protocol import (
 
 @pytest.fixture
 async def driver() -> AsyncGenerator[SQLiteDriver, None]:
-    d = await SQLiteDriver.create({"database": ":memory:"})
+    d = await SQLiteDriver.create({"database": ":memory:"}, DriverSettings())
     yield d
     await d.disconnect()
 
@@ -302,9 +303,7 @@ class TestExploreDescribeColumns:
         assert by_name["val"].pk is False
 
     async def test_columns_description_nullable(self, driver: SQLiteDriver) -> None:
-        await driver.execute(
-            "CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", []
-        )
+        await driver.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", [])
         desc = await driver.explore_describe(["t", "columns"])
         assert isinstance(desc, ColumnsDescription)
         by_name = {c.name: c for c in desc.columns}

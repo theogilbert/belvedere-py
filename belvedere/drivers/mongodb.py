@@ -19,7 +19,7 @@ from ..protocol import (
     WriteResult,
 )
 from ..tabular import flatten_docs
-from .base import BaseDriver, ConnectionLostError, DriverError
+from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
 
 _DEFAULT_FIND_LIMIT = 1000
 
@@ -123,14 +123,19 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
 """
 
     def __init__(
-        self, params: dict[str, Any], client: pymongo.AsyncMongoClient
+        self,
+        params: dict[str, Any],
+        client: pymongo.AsyncMongoClient,
+        settings: DriverSettings,
     ) -> None:
-        super().__init__(params)
+        super().__init__(params, settings)
         self._client = client
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> "MongoDriver":
-        return cls(params, await _make_mongo_client(params))
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "MongoDriver":
+        return cls(params, await _make_mongo_client(params), settings)
 
     async def reconnect(self) -> None:
         await self._client.close()

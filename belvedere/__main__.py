@@ -6,9 +6,10 @@ import pathlib
 import sys
 from dataclasses import dataclass
 
+from belvedere.drivers.base import DriverSettings
+
 from . import log
 from .server import Server
-
 
 logger = logging.getLogger()
 
@@ -24,7 +25,11 @@ def main() -> None:
     cache_dir = _cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    server = Server(cache_dir=cache_dir, max_concurrency=args.max_concurrency)
+    server = Server(
+        cache_dir=cache_dir,
+        max_concurrency=args.max_concurrency,
+        driver_settings=args.driver_settings,
+    )
 
     try:
         asyncio.run(server.run())
@@ -54,17 +59,24 @@ class CliArgs:
     max_concurrency: int
     log: bool
     verbose: bool
+    driver_settings: DriverSettings
 
 
 def parse_cli_args() -> CliArgs:
     parser = argparse.ArgumentParser()
+
     parser.add_argument(
         "--max-concurrency",
         type=int,
         default=5,
         help="Define the max number of requests that can be executed at the same time per connection.",
     )
-    parser.add_argument(
+
+    logs_grp = parser.add_argument_group(
+        "Logging settings",
+        description="Settings affecting how logs are emitted",
+    )
+    logs_grp.add_argument(
         "--log",
         action="store_true",
         default=False,
@@ -73,15 +85,30 @@ def parse_cli_args() -> CliArgs:
             "Logs will be saved under `~/.local/state`."
         ),
     )
-    parser.add_argument(
+    logs_grp.add_argument(
         "-v",
         action="store_true",
         dest="verbose",
         default=False,
         help="Log at DEBUG level. Without this flag, only INFO and above are logged.",
     )
+
+    driver_stgs_grp = parser.add_argument_group(
+        "Driver settings",
+        description="Settings affecting the behavior of individual drivers",
+    )
+    driver_stgs_grp.add_argument(
+        "--column-sample-size",
+        type=int,
+        default=3,
+        help="Number of distinct non-null values sampled per column in describe results.",
+    )
+
     args = parser.parse_args()
 
     return CliArgs(
-        max_concurrency=args.max_concurrency, log=args.log, verbose=args.verbose
+        max_concurrency=args.max_concurrency,
+        log=args.log,
+        verbose=args.verbose,
+        driver_settings=DriverSettings(column_sample_size=args.column_sample_size),
     )

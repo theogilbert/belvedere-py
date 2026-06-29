@@ -14,7 +14,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from belvedere.drivers.base import DriverError
+from belvedere.drivers.base import DriverError, DriverSettings
 from belvedere.drivers.elasticsearch import ElasticsearchDriver
 from belvedere.protocol import ReadResult, TableDescription
 
@@ -35,7 +35,7 @@ def _params() -> dict:
 async def driver() -> AsyncGenerator[ElasticsearchDriver, None]:
     pytest.importorskip("elasticsearch")
     try:
-        d = await ElasticsearchDriver.create(_params())
+        d = await ElasticsearchDriver.create(_params(), DriverSettings())
     except Exception as exc:
         pytest.skip(f"Elasticsearch not available: {exc}")
     yield d
@@ -46,7 +46,9 @@ async def driver() -> AsyncGenerator[ElasticsearchDriver, None]:
 async def dev_tools_driver() -> AsyncGenerator[ElasticsearchDriver, None]:
     pytest.importorskip("elasticsearch")
     try:
-        d = await ElasticsearchDriver.create({**_params(), "query_mode": "dev_tools"})
+        d = await ElasticsearchDriver.create(
+            {**_params(), "query_mode": "dev_tools"}, DriverSettings()
+        )
     except Exception as exc:
         pytest.skip(f"Elasticsearch not available: {exc}")
     yield d

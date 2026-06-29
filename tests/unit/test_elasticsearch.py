@@ -5,20 +5,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from belvedere.drivers.base import DriverError
+from belvedere.drivers.base import DriverError, DriverSettings
 from belvedere.drivers.elasticsearch import ElasticsearchDriver
 
 
 async def _hosts(params: dict) -> list[str]:
     with patch("elasticsearch.AsyncElasticsearch") as mock_cls:
-        await ElasticsearchDriver.create(params)
+        await ElasticsearchDriver.create(params, DriverSettings())
         return mock_cls.call_args.kwargs["hosts"]
 
 
 def _driver_with_response(response: object) -> ElasticsearchDriver:
     client = MagicMock()
     client.perform_request = AsyncMock(return_value=SimpleNamespace(body=response))
-    return ElasticsearchDriver({"query_mode": "dev_tools"}, client)
+    return ElasticsearchDriver({"query_mode": "dev_tools"}, client, DriverSettings())
 
 
 class TestOpen:

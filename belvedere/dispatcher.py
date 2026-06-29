@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .drivers import get_driver, get_driver_help, list_drivers
-from .drivers.base import BaseDriver, ConnectionLostError
+from .drivers.base import BaseDriver, ConnectionLostError, DriverSettings
 from .explore_cache import CachingDriver, ConnectionCache, cache_file
 from .protocol import Method, ProgressCallback, WriteResult
 
@@ -110,10 +110,17 @@ class Dispatcher:
     Args:
         cache_dir: Directory for persisting explore caches.
         max_concurrency: Maximum concurrent requests allowed per connection.
+        column_sample_size: Number of distinct non-null values sampled per column in describe results.
     """
 
-    def __init__(self, cache_dir: pathlib.Path, max_concurrency: int = 1) -> None:
+    def __init__(
+        self,
+        cache_dir: pathlib.Path,
+        max_concurrency: int = 1,
+        driver_settings: DriverSettings
+    ) -> None:
         self._store = ConnectionStore(cache_dir, max_concurrency)
+        self._driver_settings = driver_settings
         self._conn_handlers = self._build_conn_handlers()
 
     async def dispatch(
@@ -194,7 +201,7 @@ class Dispatcher:
         ]
         if missing:
             raise DispatchError(f"Missing required parameter(s): {', '.join(missing)}")
-        driver = await driver_cls.create(params)
+        driver = await driver_cls.create(params, self._driver_settings)
 
         raw_timeout = params.get("idle_timeout")
         timeout = float(raw_timeout) if raw_timeout is not None else None

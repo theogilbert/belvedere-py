@@ -23,7 +23,7 @@ from ..protocol import (
     TableDescription,
     WriteResult,
 )
-from .base import BaseDriver, ConnectionLostError, DriverError
+from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
 
 T = TypeVar("T")
 
@@ -102,12 +102,19 @@ System schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*`) are hidden.
 column metadata (name, type, nullability, default).
 """
 
-    def __init__(self, params: dict[str, Any], conn: "mssql_python.Connection") -> None:
-        super().__init__(params)
+    def __init__(
+        self,
+        params: dict[str, Any],
+        conn: "mssql_python.Connection",
+        settings: DriverSettings,
+    ) -> None:
+        super().__init__(params, settings)
         self._conn = conn
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> "SQLServerDriver":
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "SQLServerDriver":
         """Open a SQL Server connection and return a ready-to-use driver.
 
         Args:
@@ -116,7 +123,7 @@ column metadata (name, type, nullability, default).
         Returns:
             A connected SQLServerDriver instance.
         """
-        return cls(params, await cls._open(params))
+        return cls(params, await cls._open(params), settings)
 
     async def reconnect(self) -> None:
         self._conn = await self._open(self.params)
@@ -556,7 +563,7 @@ column metadata (name, type, nullability, default).
             cn = r[0]
             try:
                 cur.execute(
-                    f"SELECT TOP 3 [{cn}] FROM"
+                    f"SELECT TOP {self._settings.column_sample_size} [{cn}] FROM"
                     f" (SELECT DISTINCT [{cn}] FROM [{schema}].[{table}]"
                     f"  WHERE [{cn}] IS NOT NULL) AS _s"
                 )
@@ -636,7 +643,7 @@ column metadata (name, type, nullability, default).
 
         try:
             cur.execute(
-                f"SELECT TOP 3 [{col_name}] FROM"
+                f"SELECT TOP {self._settings.column_sample_size} [{col_name}] FROM"
                 f" (SELECT DISTINCT [{col_name}] FROM [{schema}].[{table}]"
                 f"  WHERE [{col_name}] IS NOT NULL) AS _s"
             )

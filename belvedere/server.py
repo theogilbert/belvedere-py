@@ -8,7 +8,7 @@ from typing import Any, BinaryIO
 from . import log
 from .dispatcher import DispatchError, Dispatcher
 from .drivers import SENSITIVE_PARAM_KEYS
-from .drivers.base import DriverError
+from .drivers.base import DriverError, DriverSettings
 from .protocol import (
     DecodeError,
     Method,
@@ -33,6 +33,7 @@ class Server:
     Args:
         cache_dir: Directory for persisting explore caches between sessions.
         max_concurrency: Maximum concurrent requests allowed per connection.
+        column_sample_size: Number of distinct non-null values sampled per column in describe results.
         stdin: Binary stream to read requests from (typically ``sys.stdin.buffer``).
         stdout: Binary stream to write responses to (typically ``sys.stdout.buffer``).
     """
@@ -40,12 +41,15 @@ class Server:
     def __init__(
         self,
         cache_dir: pathlib.Path,
+        driver_settings: DriverSettings,
         max_concurrency: int = 1,
         stdin: BinaryIO = sys.stdin.buffer,
         stdout: BinaryIO = sys.stdout.buffer,
     ) -> None:
         self._dispatcher = Dispatcher(
-            max_concurrency=max_concurrency, cache_dir=cache_dir
+            max_concurrency=max_concurrency,
+            cache_dir=cache_dir,
+            driver_settings=driver_settings,
         )
         self._out = stdout
         self._stdin = stdin

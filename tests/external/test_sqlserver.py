@@ -18,6 +18,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from belvedere.drivers.base import DriverSettings
 from belvedere.drivers.sqlserver import SQLServerDriver
 from belvedere.protocol import (
     ColumnDescription,
@@ -45,7 +46,7 @@ def _params() -> dict:
 async def driver() -> AsyncGenerator[SQLServerDriver, None]:
     pytest.importorskip("mssql_python")
     try:
-        d = await SQLServerDriver.create(_params())
+        d = await SQLServerDriver.create(_params(), DriverSettings())
     except Exception as exc:
         pytest.skip(f"SQL Server not available: {exc}")
     yield d
@@ -287,20 +288,14 @@ class TestExploreDescribeIndex:
         await driver.execute(
             f"CREATE TABLE dbo.{table} (id INT, email VARCHAR(100))", []
         )
-        await driver.execute(
-            f"CREATE UNIQUE INDEX uix_email ON dbo.{table}(email)", []
-        )
+        await driver.execute(f"CREATE UNIQUE INDEX uix_email ON dbo.{table}(email)", [])
         desc = await driver.explore_describe(["dbo", table, "indices", "uix_email"])
         assert isinstance(desc, IndexDescription)
         assert desc.unique is True
 
     async def test_clustered_index(self, driver: SQLServerDriver, table: str) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", []
-        )
-        await driver.execute(
-            f"CREATE CLUSTERED INDEX cix_id ON dbo.{table}(id)", []
-        )
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
+        await driver.execute(f"CREATE CLUSTERED INDEX cix_id ON dbo.{table}(id)", [])
         desc = await driver.explore_describe(["dbo", table, "indices", "cix_id"])
         assert isinstance(desc, IndexDescription)
         assert desc.clustered is True
@@ -339,9 +334,7 @@ class TestExploreDescribeIndex:
             f"CREATE TABLE dbo.{table} (id INT, last VARCHAR(50), first VARCHAR(50))",
             [],
         )
-        await driver.execute(
-            f"CREATE INDEX ix_name ON dbo.{table}(last, first)", []
-        )
+        await driver.execute(f"CREATE INDEX ix_name ON dbo.{table}(last, first)", [])
         desc = await driver.explore_describe(["dbo", table, "indices", "ix_name"])
         assert isinstance(desc, IndexDescription)
         assert [f.name for f in desc.fields] == ["last", "first"]

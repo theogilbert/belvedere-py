@@ -92,16 +92,18 @@ async def fetch_explain_plan(cur: AsyncCursor) -> list[str]:
         A list of str representing the formatted lines of the plan.
     """
     await cur.execute("SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())")
-    return [r[0]] for r in await cur.fetchall()]
+    return [r[0] for r in await cur.fetchall()]
 
 
 # ---------------------------------------------------------------------------
 # Explore queries
 # ---------------------------------------------------------------------------
 
+
 def build_preview_query(schema: str, table: str) -> str:
     """Build an SQL query to preview a table."""
     return f'SELECT * FROM "{schema}"."{table}" FETCH FIRST 10 ROWS ONLY'
+
 
 async def fetch_schemas(
     conn: AsyncConnection, has_oracle_maintained: bool
@@ -122,7 +124,9 @@ async def fetch_schemas(
     return [r[0] for r in await cur.fetchall()]
 
 
-async def fetch_tables_and_views(conn: AsyncConnection, schema: str) -> list[tuple[str, str]]:
+async def fetch_tables_and_views(
+    conn: AsyncConnection, schema: str
+) -> list[tuple[str, str]]:
     """Return (name, type) pairs for all tables and views in *schema*."""
     cur = conn.cursor()
     await cur.execute(
@@ -323,7 +327,9 @@ async def fetch_join_tables_for_table(
 # ---------------------------------------------------------------------------
 
 
-async def fetch_index_meta(conn: AsyncConnection, schema: str, index_name: str) -> IndexMeta | None:
+async def fetch_index_meta(
+    conn: AsyncConnection, schema: str, index_name: str
+) -> IndexMeta | None:
     """Return metadata for a single index, or None if not found."""
     cur = conn.cursor()
     await cur.execute(
@@ -410,14 +416,14 @@ async def fetch_all_column_comments(
 
 
 async def fetch_column_sample(
-    conn: Any, schema: str, table: str, col_name: str
+    conn: AsyncConnection, schema: str, table: str, col_name: str, n: int = 3
 ) -> list[Any]:
-    """Return up to 3 distinct non-null values sampled from *col_name*."""
+    """Return up to *n* distinct non-null values sampled from *col_name*."""
     cur = conn.cursor()
     try:
         await cur.execute(
             f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
-            f' WHERE "{col_name}" IS NOT NULL FETCH FIRST 3 ROWS ONLY'
+            f' WHERE "{col_name}" IS NOT NULL FETCH FIRST {n} ROWS ONLY'
         )
         return [r[0] for r in await cur.fetchall()]
     except Exception:
@@ -481,7 +487,9 @@ async def apply_metadata_transform(conn: AsyncConnection) -> None:
     )
 
 
-async def fetch_index_ddl(conn: AsyncConnection, schema: str, index_name: str) -> str | None:
+async def fetch_index_ddl(
+    conn: AsyncConnection, schema: str, index_name: str
+) -> str | None:
     """Return the CREATE INDEX DDL for *index_name*, or None if unavailable."""
     cur = conn.cursor()
     await cur.execute(

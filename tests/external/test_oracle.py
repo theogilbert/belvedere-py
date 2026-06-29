@@ -18,6 +18,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from belvedere.drivers.base import DriverSettings
 from belvedere.drivers.oracle import OracleDriver
 from belvedere.protocol import (
     ColumnDescription,
@@ -45,7 +46,7 @@ def _params() -> dict:
 async def driver() -> AsyncGenerator[OracleDriver, None]:
     pytest.importorskip("oracledb")
     try:
-        d = await OracleDriver.create(_params())
+        d = await OracleDriver.create(_params(), DriverSettings())
     except Exception as exc:
         pytest.skip(f"Oracle not available: {exc}")
     yield d

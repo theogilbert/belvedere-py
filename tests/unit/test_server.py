@@ -9,7 +9,8 @@ from unittest.mock import patch
 import pytest
 
 from belvedere.dispatcher import Dispatcher
-from belvedere.server import Server, _LOG_CAP, _redact, _truncate
+from belvedere.drivers.base import DriverSettings
+from belvedere.server import _LOG_CAP, Server, _redact, _truncate
 
 
 class TestTruncate:
@@ -54,7 +55,10 @@ async def _run_server(tmp_path: pathlib.Path, *lines: str) -> io.BytesIO:
         stdin_w.write(line.encode())
     stdin_w.close()
     out = io.BytesIO()
-    await Server(stdin=stdin_r, stdout=out, cache_dir=tmp_path).run()
+    srv = Server(
+        stdin=stdin_r, stdout=out, cache_dir=tmp_path, driver_settings=DriverSettings()
+    )
+    await srv.run()
     return out
 
 

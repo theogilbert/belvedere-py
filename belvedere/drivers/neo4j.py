@@ -18,7 +18,7 @@ from ..protocol import (
     WriteResult,
 )
 from ..tabular import flatten_docs
-from .base import BaseDriver, ConnectionLostError, DriverError
+from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
 
 
 class Neo4jDriver(BaseDriver):
@@ -87,13 +87,20 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 `TEXT`, `POINT`) and `unique`.
 """
 
-    def __init__(self, params: dict[str, Any], driver: neo4j.AsyncDriver) -> None:
-        super().__init__(params)
+    def __init__(
+        self,
+        params: dict[str, Any],
+        driver: neo4j.AsyncDriver,
+        settings: DriverSettings,
+    ) -> None:
+        super().__init__(params, settings)
         self._driver = driver
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> "Neo4jDriver":
-        return cls(params, await _make_neo4j_driver(params))
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "Neo4jDriver":
+        return cls(params, await _make_neo4j_driver(params), settings)
 
     async def reconnect(self) -> None:
         await self._driver.close()

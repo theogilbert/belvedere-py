@@ -7,7 +7,7 @@ from typing import Any, Self
 
 from belvedere.drivers import SENSITIVE_PARAM_KEYS
 
-from .drivers.base import BaseDriver, ReadResult, WriteResult
+from .drivers.base import BaseDriver, DriverSettings, ReadResult, WriteResult
 from .protocol import (
     ColumnDescription,
     ColumnInfo,
@@ -27,12 +27,12 @@ class CachingDriver(BaseDriver):
     """BaseDriver decorator that intercepts explore calls for caching."""
 
     def __init__(self, inner: BaseDriver, cache: "ConnectionCache") -> None:
-        super().__init__({})
+        super().__init__({}, DriverSettings())
         self._inner = inner
         self._cache = cache
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> Self:
+    async def create(cls, params: dict[str, Any], settings: DriverSettings) -> Self:
         raise NotImplementedError
 
     async def reconnect(self) -> None:

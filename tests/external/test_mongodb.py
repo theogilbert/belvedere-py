@@ -16,8 +16,9 @@ from typing import Any
 
 import pytest
 
+from belvedere.drivers.base import DriverSettings
 from belvedere.drivers.mongodb import MongoDriver
-from belvedere.protocol import WriteResult, ExploreItem, ReadResult
+from belvedere.protocol import ExploreItem, ReadResult, WriteResult
 
 pytestmark = pytest.mark.external
 
@@ -32,7 +33,7 @@ def _params() -> dict:
 async def driver() -> AsyncGenerator[MongoDriver, None]:
     pytest.importorskip("pymongo")
     try:
-        d = await MongoDriver.create(_params())
+        d = await MongoDriver.create(_params(), DriverSettings())
     except Exception as exc:
         pytest.skip(f"MongoDB not available: {exc}")
     yield d

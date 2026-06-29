@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from belvedere.drivers.base import DriverSettings
 from belvedere.drivers.neo4j import Neo4jDriver
 from belvedere.protocol import ExploreItem, IndexDescription, ReadResult, WriteResult
 
@@ -47,7 +48,7 @@ async def _drop_user_indexes(driver: Neo4jDriver) -> None:
 async def driver() -> AsyncGenerator[Neo4jDriver, None]:
     pytest.importorskip("neo4j")
     try:
-        d = await Neo4jDriver.create(_params())
+        d = await Neo4jDriver.create(_params(), DriverSettings())
     except Exception as exc:
         pytest.skip(f"Neo4j not available: {exc}")
     yield d

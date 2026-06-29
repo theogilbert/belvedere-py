@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
+from belvedere.drivers.base import DriverSettings
 from belvedere.drivers.duckdb import DuckDBDriver
 from belvedere.protocol import (
     ColumnDescription,
@@ -16,7 +17,7 @@ from belvedere.protocol import (
 
 @pytest.fixture
 async def driver() -> AsyncGenerator[DuckDBDriver, None]:
-    d = await DuckDBDriver.create({"database": ":memory:"})
+    d = await DuckDBDriver.create({"database": ":memory:"}, DriverSettings())
     yield d
     await d.disconnect()
 
@@ -305,9 +306,7 @@ class TestExploreDescribeColumns:
         assert by_name["val"].pk is False
 
     async def test_columns_description_nullable(self, driver: DuckDBDriver) -> None:
-        await driver.execute(
-            "CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", []
-        )
+        await driver.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", [])
         desc = await driver.explore_describe(["main", "t", "columns"])
         assert isinstance(desc, ColumnsDescription)
         by_name = {c.name: c for c in desc.columns}

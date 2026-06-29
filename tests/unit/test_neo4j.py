@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
-
+from belvedere.drivers.base import DriverSettings
 from belvedere.drivers.neo4j import (
     Neo4jDriver,
     _plan_keyword,
@@ -27,7 +27,7 @@ def _make_driver(summary: MagicMock) -> Neo4jDriver:
 
     driver_mock = MagicMock()
     driver_mock.session = _session
-    return Neo4jDriver({}, driver_mock)
+    return Neo4jDriver({}, driver_mock, DriverSettings())
 
 
 def _make_summary(plan: dict | None = None, profile: dict | None = None) -> MagicMock:

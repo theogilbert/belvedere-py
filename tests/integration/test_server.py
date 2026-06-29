@@ -12,8 +12,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 from pytest import MonkeyPatch
 
-from belvedere.drivers.base import ConnectionLostError
-from belvedere.protocol import Request, ReadResult
+from belvedere.drivers.base import ConnectionLostError, DriverSettings
+from belvedere.protocol import ReadResult, Request
 from belvedere.server import Server
 
 
@@ -24,7 +24,7 @@ def out() -> io.BytesIO:
 
 @pytest.fixture
 def server(out: io.BytesIO, tmp_path: pathlib.Path) -> Server:
-    return Server(stdout=out, cache_dir=tmp_path)
+    return Server(stdout=out, cache_dir=tmp_path, driver_settings=DriverSettings())
 
 
 @pytest.fixture

@@ -21,10 +21,11 @@ from ...protocol import (
     TableDescription,
     WriteResult,
 )
-from ..base import BaseDriver, ConnectionLostError, DriverError
+from ..base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
 from .queries import (
     apply_metadata_transform,
     build_column_index_lists,
+    build_preview_query,
     fetch_all_column_comments,
     fetch_column_details,
     fetch_column_index_mapping,
@@ -43,7 +44,6 @@ from .queries import (
     fetch_pk_columns,
     fetch_schemas,
     fetch_tables_and_views,
-    build_preview_query,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,8 +115,9 @@ name, type, nullability, primary key flag, default) and on
         params: dict[str, Any],
         conn: AsyncConnection,
         has_oracle_maintained: bool,
+        settings: DriverSettings,
     ) -> None:
-        super().__init__(params)
+        super().__init__(params, settings)
         self._conn = conn
         self._has_oracle_maintained = has_oracle_maintained
         """True when connected to Oracle 12c+; enables ORACLE_MAINTAINED column filter."""
@@ -125,9 +126,11 @@ name, type, nullability, primary key flag, default) and on
         Cleared on reconnect so they are re-applied to the new session."""
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> "OracleDriver":
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "OracleDriver":
         conn, has_oracle_maintained = await cls._open(params)
-        return cls(params, conn, has_oracle_maintained)
+        return cls(params, conn, has_oracle_maintained, settings)
 
     @staticmethod
     async def _open(params: dict[str, Any]) -> tuple[Any, bool]:
@@ -382,7 +385,9 @@ name, type, nullability, primary key flag, default) and on
 
         columns = []
         for col in col_details:
-            sample = await fetch_column_sample(self._conn, schema, table, col.name)
+            sample = await fetch_column_sample(
+                self._conn, schema, table, col.name, self._settings.column_sample_size
+            )
             columns.append(
                 ColumnDescription(
                     name=col.name,
@@ -412,7 +417,9 @@ name, type, nullability, primary key flag, default) and on
             self._conn, schema, table, all_indices
         )
         comments = await fetch_all_column_comments(self._conn, schema, table)
-        sample = await fetch_column_sample(self._conn, schema, table, col_name)
+        sample = await fetch_column_sample(
+            self._conn, schema, table, col_name, self._settings.column_sample_size
+        )
 
         return ColumnDescription(
             name=col.name,

@@ -19,7 +19,7 @@ from ..protocol import (
     TableDescription,
     WriteResult,
 )
-from .base import BaseDriver, DriverError
+from .base import BaseDriver, DriverError, DriverSettings
 
 T = TypeVar("T")
 
@@ -70,12 +70,16 @@ SELECT * FROM users WHERE age > ?
 metadata (name, type, nullability, primary key flag).
 """
 
-    def __init__(self, params: dict[str, Any], conn: sqlite3.Connection) -> None:
-        super().__init__(params)
+    def __init__(
+        self, params: dict[str, Any], conn: sqlite3.Connection, settings: DriverSettings
+    ) -> None:
+        super().__init__(params, settings)
         self._conn = conn
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> "SQLiteDriver":
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "SQLiteDriver":
         """Open a SQLite connection and return a ready-to-use driver.
 
         Args:
@@ -94,7 +98,7 @@ metadata (name, type, nullability, primary key flag).
             )
         except sqlite3.OperationalError as exc:
             raise DriverError(str(exc)) from exc
-        return cls(params, conn)
+        return cls(params, conn, settings)
 
     async def reconnect(self) -> None:
         self._conn = await self._run(
@@ -326,7 +330,7 @@ metadata (name, type, nullability, primary key flag).
                     row[0]
                     for row in self._conn.execute(
                         f'SELECT DISTINCT "{cn}" FROM "{table}"'
-                        f' WHERE "{cn}" IS NOT NULL LIMIT 3'
+                        f' WHERE "{cn}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
                     ).fetchall()
                 ]
             except Exception:
@@ -369,7 +373,7 @@ metadata (name, type, nullability, primary key flag).
                 r[0]
                 for r in self._conn.execute(
                     f'SELECT DISTINCT "{col_name}" FROM "{table}"'
-                    f' WHERE "{col_name}" IS NOT NULL LIMIT 3'
+                    f' WHERE "{col_name}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
                 ).fetchall()
             ]
         except Exception:

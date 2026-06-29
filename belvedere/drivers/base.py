@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, ClassVar, Self
 
 from ..protocol import (
@@ -9,6 +10,14 @@ from ..protocol import (
     ReadResult,
     WriteResult,
 )
+
+
+@dataclass(frozen=True)
+class DriverSettings:
+    """Server-level configuration injected into every driver on connect."""
+
+    column_sample_size: int = 3
+    """Number of distinct non-null values sampled per column in describe results."""
 
 
 class DriverError(Exception):
@@ -48,12 +57,13 @@ class BaseDriver(ABC):
     The value can be set to 0 to disable closing the connection when idle too long.
     """
 
-    def __init__(self, params: dict[str, Any]) -> None:
+    def __init__(self, params: dict[str, Any], settings: DriverSettings) -> None:
         self.params = params
+        self._settings = settings
 
     @classmethod
     @abstractmethod
-    async def create(cls, params: dict[str, Any]) -> Self:
+    async def create(cls, params: dict[str, Any], settings: DriverSettings) -> Self:
         """Open a new connection and return a ready-to-use driver instance.
 
         Args:

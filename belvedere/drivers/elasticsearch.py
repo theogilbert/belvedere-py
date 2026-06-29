@@ -16,7 +16,7 @@ from ..protocol import (
     WriteResult,
 )
 from ..tabular import flatten_docs
-from .base import BaseDriver, ConnectionLostError, DriverError
+from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
 
 _DEFAULT_SEARCH_SIZE = 1000
 
@@ -125,15 +125,20 @@ from the index mapping (name, type).
 """
 
     def __init__(
-        self, params: dict[str, Any], client: elasticsearch.AsyncElasticsearch
+        self,
+        params: dict[str, Any],
+        client: elasticsearch.AsyncElasticsearch,
+        settings: DriverSettings,
     ) -> None:
-        super().__init__(params)
+        super().__init__(params, settings)
         self._client = client
         self._ever_connected = False
 
     @classmethod
-    async def create(cls, params: dict[str, Any]) -> "ElasticsearchDriver":
-        return cls(params, cls._open(params))
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "ElasticsearchDriver":
+        return cls(params, cls._open(params), settings)
 
     @staticmethod
     def _open(params: dict[str, Any]) -> elasticsearch.AsyncElasticsearch:

@@ -35,6 +35,7 @@ from .queries import (
     fetch_explain_plan,
     fetch_index_ddl,
     fetch_index_fields_for_index,
+    invalidate_cache,
     fetch_index_fields_for_table,
     fetch_index_meta,
     fetch_index_metas_for_table,
@@ -190,6 +191,7 @@ name, type, nullability, primary key flag, default) and on
                 columns = [d[0] for d in cur.description]
                 rows = [list(r) for r in await cur.fetchall()]
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
+            invalidate_cache(self._conn)
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except Exception as exc:
             _maybe_raise_connection_lost(exc)

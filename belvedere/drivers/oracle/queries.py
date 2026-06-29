@@ -57,16 +57,18 @@ _PRE12_SYSTEM_SCHEMAS_SQL = ", ".join(
 )
 
 
+_cache_stores: list[WeakKeyDictionary] = []
+"""All per-connection cache dicts, registered at decoration time for bulk invalidation."""
+
+
 def _conn_cache(fn):
     """Cache async query results per connection, keyed on positional args after *conn*.
 
     Each distinct *conn* object gets its own cache dict; entries are released
     when the connection is garbage-collected.
-
-    Raises TypeError at decoration time if the first parameter is not annotated
-    as AsyncConnection.
     """
     _store: WeakKeyDictionary = WeakKeyDictionary()
+    _cache_stores.append(_store)
 
     @wraps(fn)
     async def wrapper(conn, *args):
@@ -80,6 +82,15 @@ def _conn_cache(fn):
         return cache[args]
 
     return wrapper
+
+
+def invalidate_cache(conn: AsyncConnection) -> None:
+    """Drop all cached query results for *conn*.
+
+    Call after any DDL or DML so subsequent metadata queries re-hit the database.
+    """
+    for store in _cache_stores:
+        store.pop(conn, None)
 
 
 @dataclass

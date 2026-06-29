@@ -46,12 +46,12 @@ class TestColumnSampleSize:
     def test_default_is_3(self) -> None:
         with patch("sys.argv", ["belvedere"]):
             args = parse_cli_args()
-        assert args.column_sample_size == 3
+        assert args.driver_settings.column_sample_size == 3
 
     def test_custom_value(self) -> None:
         with patch("sys.argv", ["belvedere", "--column-sample-size", "10"]):
             args = parse_cli_args()
-        assert args.column_sample_size == 10
+        assert args.driver_settings.column_sample_size == 10
 
 
 class TestKeyboardInterrupt:

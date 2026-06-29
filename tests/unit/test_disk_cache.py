@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from belvedere.dispatcher import Dispatcher
+from belvedere.drivers.base import DriverSettings
 from belvedere.explore_cache import cache_file
 from belvedere.protocol import ExploreItem, Method, TableDescription
 
@@ -40,7 +41,7 @@ class TestDiskCache:
     async def test_should_persist_cache_to_disk_on_miss(
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
-        disp = Dispatcher(cache_dir=tmp_path)
+        disp = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
         await disp.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
@@ -51,7 +52,7 @@ class TestDiskCache:
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
         # first session: populate and persist
-        disp1 = Dispatcher(cache_dir=tmp_path)
+        disp1 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id = await connect(disp1, mock_driver, PARAMS)
         await disp1.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
@@ -61,7 +62,7 @@ class TestDiskCache:
         )
 
         # second session: cache loaded from disk, driver not called again
-        disp2 = Dispatcher(cache_dir=tmp_path)
+        disp2 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id2 = await connect(disp2, mock_driver, PARAMS)
         await disp2.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id2, "path": []}, noop_progress
@@ -72,7 +73,7 @@ class TestDiskCache:
     async def test_should_recreate_disk_file_after_reset_cache(
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
-        disp = Dispatcher(cache_dir=tmp_path)
+        disp = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
         await disp.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
@@ -96,7 +97,7 @@ class TestDiskCache:
         fresh_item = ExploreItem(name="new_table", type="table", expandable=True)
 
         # first session: populate cache
-        disp1 = Dispatcher(cache_dir=tmp_path)
+        disp1 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id = await connect(disp1, mock_driver, PARAMS)
         await disp1.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
@@ -114,7 +115,7 @@ class TestDiskCache:
         )
 
         # second session: should load the post-reset data, not the original
-        disp2 = Dispatcher(cache_dir=tmp_path)
+        disp2 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id2 = await connect(disp2, mock_driver, PARAMS)
         result = await disp2.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id2, "path": []}, noop_progress
@@ -129,7 +130,7 @@ class TestDiskCache:
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
         cache_file(PARAMS, tmp_path).write_text("not valid json{{{")
-        disp = Dispatcher(cache_dir=tmp_path)
+        disp = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, PARAMS)
         await disp.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
@@ -140,7 +141,7 @@ class TestDiskCache:
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
         params = {**PARAMS, "password": "s3cr3t"}
-        disp = Dispatcher(cache_dir=tmp_path)
+        disp = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_id = await connect(disp, mock_driver, params)
         await disp.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
@@ -165,7 +166,7 @@ class TestDiskCache:
         params_a = {"driver": "sqlite", "database": "a.db"}
         params_b = {"driver": "sqlite", "database": "b.db"}
 
-        disp = Dispatcher(cache_dir=tmp_path)
+        disp = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
         conn_a = await connect(disp, driver_a, params_a)
         conn_b = await connect(disp, driver_b, params_b)
 

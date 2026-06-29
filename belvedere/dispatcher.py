@@ -116,8 +116,8 @@ class Dispatcher:
     def __init__(
         self,
         cache_dir: pathlib.Path,
+        driver_settings: DriverSettings,
         max_concurrency: int = 1,
-        driver_settings: DriverSettings
     ) -> None:
         self._store = ConnectionStore(cache_dir, max_concurrency)
         self._driver_settings = driver_settings

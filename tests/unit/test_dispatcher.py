@@ -6,7 +6,7 @@ from unittest.mock import ANY, AsyncMock, patch
 import pytest
 
 from belvedere.dispatcher import Connection, Dispatcher, DispatchError, IdleTimer
-from belvedere.drivers.base import ConnectionLostError
+from belvedere.drivers.base import ConnectionLostError, DriverSettings
 from belvedere.protocol import (
     ColumnInfo,
     DriverParam,
@@ -44,7 +44,7 @@ def _driver_class(
 
 @pytest.fixture
 def dispatcher(tmp_path: pathlib.Path) -> Dispatcher:
-    return Dispatcher(cache_dir=tmp_path)
+    return Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
 
 
 @pytest.fixture
@@ -581,7 +581,9 @@ class TestConcurrency:
         order: list[str] = []
         gate = asyncio.Event()
         mock_driver.execute.side_effect = self._slow_execute(order, gate)
-        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
+        dispatcher = Dispatcher(
+            driver_settings=DriverSettings(), cache_dir=tmp_path, max_concurrency=1
+        )
         conn_id = (
             await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
         )["connection_id"]
@@ -612,7 +614,9 @@ class TestConcurrency:
         gate = asyncio.Event()
         driver_a.execute.side_effect = self._slow_execute_labeled(started, gate, "a")
         driver_b.execute.side_effect = self._slow_execute_labeled(started, gate, "b")
-        dispatcher = Dispatcher(cache_dir=tmp_path, max_concurrency=1)
+        dispatcher = Dispatcher(
+            driver_settings=DriverSettings(), cache_dir=tmp_path, max_concurrency=1
+        )
         conn_a = (
             await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
         )["connection_id"]

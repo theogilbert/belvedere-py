@@ -1,7 +1,9 @@
 """Oracle query functions — one per SQL query, with typed return values."""
 
 from dataclasses import dataclass
+from functools import wraps
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from oracledb import AsyncConnection, AsyncCursor
 
@@ -53,6 +55,31 @@ _PRE12_SYSTEM_SCHEMAS_SQL = ", ".join(
         }
     )
 )
+
+
+def _conn_cache(fn):
+    """Cache async query results per connection, keyed on positional args after *conn*.
+
+    Each distinct *conn* object gets its own cache dict; entries are released
+    when the connection is garbage-collected.
+
+    Raises TypeError at decoration time if the first parameter is not annotated
+    as AsyncConnection.
+    """
+    _store: WeakKeyDictionary = WeakKeyDictionary()
+
+    @wraps(fn)
+    async def wrapper(conn, *args):
+        if not isinstance(conn, AsyncConnection):
+            raise TypeError(
+                f"{fn.__name__}: expected AsyncConnection, got {type(conn).__name__}"
+            )
+        cache = _store.setdefault(conn, {})
+        if args not in cache:
+            cache[args] = await fn(conn, *args)
+        return cache[args]
+
+    return wrapper
 
 
 @dataclass
@@ -107,6 +134,7 @@ def build_preview_query(schema: str, table: str) -> str:
     return f'SELECT * FROM "{schema}"."{table}" FETCH FIRST 10 ROWS ONLY'
 
 
+@_conn_cache
 async def fetch_schemas(
     conn: AsyncConnection, has_oracle_maintained: bool
 ) -> list[str]:
@@ -126,6 +154,7 @@ async def fetch_schemas(
     return [r[0] for r in await cur.fetchall()]
 
 
+@_conn_cache
 async def fetch_tables_and_views(
     conn: AsyncConnection, schema: str
 ) -> list[tuple[str, str]]:
@@ -141,6 +170,7 @@ async def fetch_tables_and_views(
     return [(r[0], r[1]) for r in await cur.fetchall()]
 
 
+@_conn_cache
 async def fetch_column_names_and_types(
     conn: AsyncConnection, schema: str, table: str
 ) -> list[tuple[str, str]]:
@@ -154,6 +184,7 @@ async def fetch_column_names_and_types(
     return [(r[0], r[1]) for r in await cur.fetchall()]
 
 
+@_conn_cache
 async def fetch_index_names_and_types(
     conn: AsyncConnection, schema: str, table: str
 ) -> list[tuple[str, str]]:
@@ -167,6 +198,7 @@ async def fetch_index_names_and_types(
     return [(r[0], r[1]) for r in await cur.fetchall()]
 
 
+@_conn_cache
 async def fetch_constraint_names_and_types(
     conn: AsyncConnection, schema: str, table: str
 ) -> list[tuple[str, str]]:
@@ -190,6 +222,7 @@ async def fetch_constraint_names_and_types(
 # ---------------------------------------------------------------------------
 
 
+@_conn_cache
 async def fetch_column_details(
     conn: AsyncConnection, schema: str, table: str
 ) -> list[ColumnDetail]:
@@ -212,6 +245,7 @@ async def fetch_column_details(
     ]
 
 
+@_conn_cache
 async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> set[str]:
     """Return the set of column names that form the primary key."""
     cur = conn.cursor()
@@ -228,6 +262,7 @@ async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> se
     return {r[0] for r in await cur.fetchall()}
 
 
+@_conn_cache
 async def fetch_column_index_mapping(
     conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, list[str]]:
@@ -252,6 +287,7 @@ async def fetch_column_index_mapping(
 # ---------------------------------------------------------------------------
 
 
+@_conn_cache
 async def fetch_index_metas_for_table(
     conn: AsyncConnection, schema: str, table: str
 ) -> list[IndexMeta]:
@@ -277,6 +313,7 @@ async def fetch_index_metas_for_table(
     ]
 
 
+@_conn_cache
 async def fetch_index_fields_for_table(
     conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, list[IndexKeyField]]:
@@ -299,6 +336,7 @@ async def fetch_index_fields_for_table(
     return result
 
 
+@_conn_cache
 async def fetch_join_tables_for_table(
     conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, list[str]]:
@@ -330,6 +368,7 @@ async def fetch_join_tables_for_table(
 # ---------------------------------------------------------------------------
 
 
+@_conn_cache
 async def fetch_index_meta(
     conn: AsyncConnection, schema: str, index_name: str
 ) -> IndexMeta | None:
@@ -355,6 +394,7 @@ async def fetch_index_meta(
     )
 
 
+@_conn_cache
 async def fetch_index_fields_for_index(
     conn: AsyncConnection, schema: str, index_name: str
 ) -> list[IndexKeyField]:
@@ -372,6 +412,7 @@ async def fetch_index_fields_for_index(
     ]
 
 
+@_conn_cache
 async def fetch_join_tables_for_index(
     conn: AsyncConnection, schema: str, index_name: str, table: str
 ) -> list[str]:
@@ -403,6 +444,7 @@ async def fetch_join_tables_for_index(
 # ---------------------------------------------------------------------------
 
 
+@_conn_cache
 async def fetch_all_column_comments(
     conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, str | None]:
@@ -419,6 +461,7 @@ async def fetch_all_column_comments(
     }
 
 
+@_conn_cache
 async def fetch_column_sample(
     conn: AsyncConnection, schema: str, table: str, col_name: str, n: int = 3
 ) -> list[Any]:
@@ -434,37 +477,23 @@ async def fetch_column_sample(
         return []
 
 
-async def build_column_index_lists(
-    conn: AsyncConnection,
-    schema: str,
-    table: str,
+def build_column_index_lists(
+    fields_by_index: dict[str, list[IndexKeyField]],
     all_indices: list[IndexDescription],
 ) -> tuple[dict[str, list[IndexDescription]], dict[str, list[IndexDescription]]]:
     """Return (exclusive, composite) dicts mapping column name to index descriptions.
 
-    *all_indices* is the full list of :class:`IndexDescription` already fetched for the
-    table; this function queries ``ALL_IND_COLUMNS`` to determine which columns each
-    index covers.
+    *fields_by_index* is the result of :func:`fetch_index_fields_for_table`;
+    *all_indices* is the full list of :class:`IndexDescription` for the table.
     """
-    cur = conn.cursor()
-    await cur.execute(
-        "SELECT INDEX_NAME, COLUMN_NAME"
-        " FROM ALL_IND_COLUMNS"
-        " WHERE INDEX_OWNER = :1 AND TABLE_NAME = :2"
-        " ORDER BY INDEX_NAME, COLUMN_POSITION",
-        [schema, table],
-    )
-    idx_columns: dict[str, list[str]] = {}
-    for idx_name, col_name in await cur.fetchall():
-        idx_columns.setdefault(idx_name, []).append(col_name)
-
     idx_by_name = {idx.index: idx for idx in all_indices}
     excl: dict[str, list[IndexDescription]] = {}
     comp: dict[str, list[IndexDescription]] = {}
-    for idx_name, col_names in idx_columns.items():
+    for idx_name, fields in fields_by_index.items():
         idx_desc = idx_by_name.get(idx_name)
         if idx_desc is None:
             continue
+        col_names = [f.name for f in fields]
         for cn in col_names:
             if len(col_names) == 1:
                 excl.setdefault(cn, []).append(idx_desc)
@@ -491,6 +520,7 @@ async def apply_metadata_transform(conn: AsyncConnection) -> None:
     )
 
 
+@_conn_cache
 async def fetch_index_ddl(
     conn: AsyncConnection, schema: str, index_name: str
 ) -> str | None:

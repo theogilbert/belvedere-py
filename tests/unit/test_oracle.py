@@ -22,7 +22,7 @@ def _make_index_driver(index_row: tuple | None, col_rows: list) -> OracleDriver:
     cur.execute = AsyncMock()
     cur.fetchone = AsyncMock(side_effect=[index_row, None])  # meta, then DDL
     cur.fetchall = AsyncMock(side_effect=[col_rows, []])  # fields, then join tables
-    conn = MagicMock()
+    conn = MagicMock(spec=oracledb.AsyncConnection)
     conn.cursor.return_value = cur
     return OracleDriver({}, conn, True, DriverSettings())
 
@@ -31,7 +31,7 @@ def _make_driver(rows: list, has_oracle_maintained: bool) -> OracleDriver:
     cur = MagicMock()
     cur.execute = AsyncMock()
     cur.fetchall = AsyncMock(return_value=rows)
-    conn = MagicMock()
+    conn = MagicMock(spec=oracledb.AsyncConnection)
     conn.cursor.return_value = cur
     return OracleDriver({}, conn, has_oracle_maintained, DriverSettings())
 
@@ -107,7 +107,7 @@ class TestExecuteErrorPropagation:
         exc = _make_db_error("ORA-00936: missing expression", offset=0)
         cur = MagicMock()
         cur.execute = AsyncMock(side_effect=exc)
-        conn = MagicMock()
+        conn = MagicMock(spec=oracledb.AsyncConnection)
         conn.cursor.return_value = cur
         driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(DriverError, match="ORA-00936"):
@@ -117,7 +117,7 @@ class TestExecuteErrorPropagation:
         exc = _make_db_error("ORA-00936: missing expression", offset=7)
         cur = MagicMock()
         cur.execute = AsyncMock(side_effect=exc)
-        conn = MagicMock()
+        conn = MagicMock(spec=oracledb.AsyncConnection)
         conn.cursor.return_value = cur
         driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(DriverError, match=r"line 1, col 8"):
@@ -129,7 +129,7 @@ class TestExecuteErrorPropagation:
         exc = oracledb.DatabaseError(error)
         cur = MagicMock()
         cur.execute = AsyncMock(side_effect=exc)
-        conn = MagicMock()
+        conn = MagicMock(spec=oracledb.AsyncConnection)
         conn.cursor.return_value = cur
         driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(ConnectionLostError):
@@ -139,7 +139,7 @@ class TestExecuteErrorPropagation:
         exc = oracledb.InterfaceError("DPY-1001: not connected to the database")
         cur = MagicMock()
         cur.execute = AsyncMock(side_effect=exc)
-        conn = MagicMock()
+        conn = MagicMock(spec=oracledb.AsyncConnection)
         conn.cursor.return_value = cur
         driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(ConnectionLostError):
@@ -149,7 +149,7 @@ class TestExecuteErrorPropagation:
         exc = oracledb.InterfaceError("DPY-1001: not connected to the database")
         cur = MagicMock()
         cur.execute = AsyncMock(side_effect=exc)
-        conn = MagicMock()
+        conn = MagicMock(spec=oracledb.AsyncConnection)
         conn.cursor.return_value = cur
         driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(ConnectionLostError):
@@ -247,7 +247,7 @@ class TestExplainPlanExecute:
 
     @pytest.fixture()
     def explain_driver(self, explain_cur: MagicMock) -> OracleDriver:
-        conn = MagicMock()
+        conn = MagicMock(spec=oracledb.AsyncConnection)
         conn.cursor.return_value = explain_cur
         return OracleDriver({}, conn, True, DriverSettings())
 

@@ -380,9 +380,8 @@ name, type, nullability, primary key flag, default) and on
         col_details = await fetch_column_details(self._conn, schema, table)
         pk_cols = await fetch_pk_columns(self._conn, schema, table)
         all_indices = (await self._describe_indices(schema, table)).indices
-        excl, comp = await build_column_index_lists(
-            self._conn, schema, table, all_indices
-        )
+        fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
+        excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
 
         columns = []
@@ -415,9 +414,8 @@ name, type, nullability, primary key flag, default) and on
 
         pk_cols = await fetch_pk_columns(self._conn, schema, table)
         all_indices = (await self._describe_indices(schema, table)).indices
-        excl, comp = await build_column_index_lists(
-            self._conn, schema, table, all_indices
-        )
+        fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
+        excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
         sample = await fetch_column_sample(
             self._conn, schema, table, col_name, self._settings.column_sample_size

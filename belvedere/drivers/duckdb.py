@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import re
 from collections.abc import Callable
 from typing import Any, ClassVar, TypeVar
@@ -239,7 +240,24 @@ SELECT * FROM 'glob/**/*.parquet'
                 ``[schema, table, "indices"]`` for all indexes, or
                 ``[schema, table, "indices", index_name]`` for one index.
         """
-        return await self._run(self._explore_describe_sync, path)
+        match path:
+            case [schema, table, "columns"]:
+                base = await self._run(self._describe_columns_sync, schema, table)
+                columns = []
+                for col in base.columns:
+                    sample = await self._fetch_sample(schema, table, col.name)
+                    columns.append(dataclasses.replace(col, sample=sample))
+                return ColumnsDescription(columns=columns)
+            case [schema, table, "columns", col_name]:
+                base = await self._run(
+                    self._describe_column_sync, schema, table, col_name
+                )
+                if base is None:
+                    return None
+                sample = await self._fetch_sample(schema, table, col_name)
+                return dataclasses.replace(base, sample=sample)
+            case _:
+                return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
         match path:
@@ -310,12 +328,6 @@ SELECT * FROM 'glob/**/*.parquet'
                     ddl=sql,
                 )
 
-            case [schema, table, "columns"]:
-                return self._describe_columns_sync(schema, table)
-
-            case [schema, table, "columns", col_name]:
-                return self._describe_column_sync(schema, table, col_name)
-
             case _:
                 return None
 
@@ -377,16 +389,6 @@ SELECT * FROM 'glob/**/*.parquet'
         result = []
         for r in col_rows:
             cn = r[0]
-            try:
-                sample = [
-                    row[0]
-                    for row in self._conn.execute(
-                        f'SELECT DISTINCT "{cn}" FROM "{schema}"."{table}"'
-                        f' WHERE "{cn}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
-                    ).fetchall()
-                ]
-            except Exception:
-                sample = []
             result.append(
                 ColumnDescription(
                     name=cn,
@@ -396,7 +398,6 @@ SELECT * FROM 'glob/**/*.parquet'
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
                     comment=col_comments.get(cn),
-                    sample=sample,
                 )
             )
         return ColumnsDescription(columns=result)
@@ -444,17 +445,6 @@ SELECT * FROM 'glob/**/*.parquet'
         except Exception:
             pass
 
-        try:
-            sample = [
-                row[0]
-                for row in self._conn.execute(
-                    f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
-                    f' WHERE "{col_name}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
-                ).fetchall()
-            ]
-        except Exception:
-            sample = []
-
         return ColumnDescription(
             name=col_name,
             data_type=r[1] or "",
@@ -463,8 +453,28 @@ SELECT * FROM 'glob/**/*.parquet'
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
             comment=comment,
-            sample=sample,
         )
+
+    async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
+        try:
+            return await asyncio.wait_for(
+                self._run(self._fetch_sample_sync, schema, table, col_name),
+                timeout=self._settings.column_sample_timeout,
+            )
+        except asyncio.TimeoutError:
+            return []
+
+    def _fetch_sample_sync(self, schema: str, table: str, col_name: str) -> list[Any]:
+        try:
+            return [
+                row[0]
+                for row in self._conn.execute(
+                    f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
+                    f' WHERE "{col_name}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
+                ).fetchall()
+            ]
+        except Exception:
+            return []
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         try:

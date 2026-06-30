@@ -30,7 +30,6 @@ from .queries import (
     fetch_column_details,
     fetch_column_index_mapping,
     fetch_column_names_and_types,
-    fetch_column_sample,
     fetch_constraint_names_and_types,
     fetch_explain_plan,
     fetch_index_ddl,
@@ -42,6 +41,7 @@ from .queries import (
     fetch_index_names_and_types,
     fetch_join_tables_for_index,
     fetch_join_tables_for_table,
+    fetch_column_sample,
     fetch_pk_columns,
     fetch_schemas,
     fetch_tables_and_views,
@@ -388,9 +388,7 @@ name, type, nullability, primary key flag, default) and on
 
         columns = []
         for col in col_details:
-            sample = await fetch_column_sample(
-                self._conn, schema, table, col.name, self._settings.column_sample_size
-            )
+            sample = await self._fetch_sample(schema, table, col.name)
             columns.append(
                 ColumnDescription(
                     name=col.name,
@@ -419,9 +417,7 @@ name, type, nullability, primary key flag, default) and on
         fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
         excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
-        sample = await fetch_column_sample(
-            self._conn, schema, table, col_name, self._settings.column_sample_size
-        )
+        sample = await self._fetch_sample(schema, table, col_name)
 
         return ColumnDescription(
             name=col.name,
@@ -434,6 +430,23 @@ name, type, nullability, primary key flag, default) and on
             comment=comments.get(col_name),
             sample=sample,
         )
+
+    async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
+        import asyncio
+
+        try:
+            return await asyncio.wait_for(
+                fetch_column_sample(
+                    self._conn,
+                    schema,
+                    table,
+                    col_name,
+                    self._settings.column_sample_size,
+                ),
+                timeout=self._settings.column_sample_timeout,
+            )
+        except asyncio.TimeoutError:
+            return []
 
     async def _ensure_metadata_transform(self) -> None:
         if self._metadata_transform_set:

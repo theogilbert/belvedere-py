@@ -1,6 +1,7 @@
 """SQL Server driver — requires: pip install mssql-python"""
 
 import asyncio
+import dataclasses
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -296,7 +297,24 @@ column metadata (name, type, nullability, default).
         Returns:
             TableDescription, IndicesDescription, or IndexDescription depending on the path.
         """
-        return await self._run(self._explore_describe_sync, path)
+        match path:
+            case [schema, table, "columns"]:
+                base = await self._run(self._describe_columns_sync, schema, table)
+                columns = []
+                for col in base.columns:
+                    sample = await self._fetch_sample(schema, table, col.name)
+                    columns.append(dataclasses.replace(col, sample=sample))
+                return ColumnsDescription(columns=columns)
+            case [schema, table, "columns", col_name]:
+                base = await self._run(
+                    self._describe_column_sync, schema, table, col_name
+                )
+                if base is None:
+                    return None
+                sample = await self._fetch_sample(schema, table, col_name)
+                return dataclasses.replace(base, sample=sample)
+            case _:
+                return await self._run(self._explore_describe_sync, path)
 
     def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
 
@@ -356,12 +374,6 @@ column metadata (name, type, nullability, default).
 
             case [schema, table, "indices", index_name]:
                 return self._describe_index_sync(schema, table, index_name)
-
-            case [schema, table, "columns"]:
-                return self._describe_columns_sync(schema, table)
-
-            case [schema, table, "columns", col_name]:
-                return self._describe_column_sync(schema, table, col_name)
 
             case _:
                 return None
@@ -559,15 +571,6 @@ column metadata (name, type, nullability, default).
         result = []
         for r in col_rows:
             cn = r[0]
-            try:
-                cur.execute(
-                    f"SELECT TOP {self._settings.column_sample_size} [{cn}] FROM"
-                    f" (SELECT DISTINCT [{cn}] FROM [{schema}].[{table}]"
-                    f"  WHERE [{cn}] IS NOT NULL) AS _s"
-                )
-                sample: list[Any] = [row[0] for row in cur.fetchall()]  # ty: ignore[missing-argument]
-            except Exception:
-                sample = []
             result.append(
                 ColumnDescription(
                     name=cn,
@@ -578,7 +581,6 @@ column metadata (name, type, nullability, default).
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
                     comment=col_comments.get(cn),
-                    sample=sample,
                 )
             )
         return ColumnsDescription(columns=result)
@@ -639,16 +641,6 @@ column metadata (name, type, nullability, default).
             else:
                 composite_indices.append(idx_desc)
 
-        try:
-            cur.execute(
-                f"SELECT TOP {self._settings.column_sample_size} [{col_name}] FROM"
-                f" (SELECT DISTINCT [{col_name}] FROM [{schema}].[{table}]"
-                f"  WHERE [{col_name}] IS NOT NULL) AS _s"
-            )
-            sample: list[Any] = [row[0] for row in cur.fetchall()]  # ty: ignore[missing-argument]
-        except Exception:
-            sample = []
-
         return ColumnDescription(
             name=col_name,
             data_type=r[1] or "",
@@ -658,8 +650,28 @@ column metadata (name, type, nullability, default).
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
             comment=comment,
-            sample=sample,
         )
+
+    async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
+        try:
+            return await asyncio.wait_for(
+                self._run(self._fetch_sample_sync, schema, table, col_name),
+                timeout=self._settings.column_sample_timeout,
+            )
+        except asyncio.TimeoutError:
+            return []
+
+    def _fetch_sample_sync(self, schema: str, table: str, col_name: str) -> list[Any]:
+        cur = self._conn.cursor()
+        try:
+            cur.execute(
+                f"SELECT TOP {self._settings.column_sample_size} [{col_name}] FROM"
+                f" (SELECT DISTINCT [{col_name}] FROM [{schema}].[{table}]"
+                f"  WHERE [{col_name}] IS NOT NULL) AS _s"
+            )
+            return [row[0] for row in cur.fetchall()]  # ty: ignore[missing-argument]
+        except Exception:
+            return []
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         return await asyncio.get_running_loop().run_in_executor(

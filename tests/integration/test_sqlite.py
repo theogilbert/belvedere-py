@@ -396,3 +396,13 @@ class TestExploreDescribeColumn:
     async def test_unknown_column_returns_none(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         assert await driver.explore_describe(["t", "columns", "no_such_col"]) is None
+
+    async def test_sample_timeout_returns_empty(self) -> None:
+        driver = await SQLiteDriver.create(
+            {"database": ":memory:"}, DriverSettings(column_sample_timeout=0.0)
+        )
+        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
+        await driver.execute("INSERT INTO t VALUES (1, 'x')", [])
+        desc = await driver.explore_describe(["t", "columns", "val"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.sample == []

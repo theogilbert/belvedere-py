@@ -103,6 +103,12 @@ def parse_cli_args() -> CliArgs:
         default=3,
         help="Number of distinct non-null values sampled per column in describe results.",
     )
+    driver_stgs_grp.add_argument(
+        "--column-sample-timeout",
+        type=float,
+        default=5.0,
+        help="Seconds to wait for each column sample query before returning no sample.",
+    )
 
     args = parser.parse_args()
 
@@ -110,5 +116,8 @@ def parse_cli_args() -> CliArgs:
         max_concurrency=args.max_concurrency,
         log=args.log,
         verbose=args.verbose,
-        driver_settings=DriverSettings(column_sample_size=args.column_sample_size),
+        driver_settings=DriverSettings(
+            column_sample_size=args.column_sample_size,
+            column_sample_timeout=args.column_sample_timeout,
+        ),
     )

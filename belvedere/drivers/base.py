@@ -19,6 +19,9 @@ class DriverSettings:
     column_sample_size: int = 3
     """Number of distinct non-null values sampled per column in describe results."""
 
+    column_sample_timeout: float = 5.0
+    """Seconds to wait for each column sample query before returning no sample."""
+
 
 class DriverError(Exception):
     """Raised by drivers for errors that should be surfaced verbatim to the client."""

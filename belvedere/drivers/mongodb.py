@@ -408,12 +408,16 @@ async def _make_mongo_client(params: dict[str, Any]) -> pymongo.AsyncMongoClient
         kwargs["username"] = params["username"]
     if params.get("password"):
         kwargs["password"] = params["password"]
-    client = pymongo.AsyncMongoClient(params["uri"], **kwargs)
+    client: pymongo.AsyncMongoClient | None = None
     try:
+        # the constructor parses the URI eagerly and can raise (InvalidURI, ValueError,
+        # ConfigurationError, ...) before any connection is made
+        client = pymongo.AsyncMongoClient(params["uri"], **kwargs)
         # pymongo is lazy — force a connection to verify credentials
         await client.admin.command("ping")
     except Exception as exc:
-        await client.close()
+        if client is not None:
+            await client.close()
         raise DriverError(str(exc)) from exc
     return client
 

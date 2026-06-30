@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pymongo.errors
 import pytest
 
-from belvedere.drivers.base import ConnectionLostError, DriverSettings
-from belvedere.drivers.mongodb import MongoDriver
+from belvedere.drivers.base import ConnectionLostError, DriverError, DriverSettings
+from belvedere.drivers.mongodb import MongoDriver, _make_mongo_client
 
 _CLOSED_EXC = pymongo.errors.InvalidOperation("Cannot use AsyncMongoClient after close")
 
@@ -53,3 +53,19 @@ class TestConnectionLostAfterIdleClose:
         driver = _make_driver(_closed_client())
         with pytest.raises(ConnectionLostError):
             await driver.explore_preview(["db", "col"])
+
+
+class TestMakeMongoClientInvalidUri:
+    async def test_invalid_uri_raises_driver_error(self) -> None:
+        with pytest.raises(DriverError):
+            await _make_mongo_client({"uri": "mongodb://"})
+
+    async def test_invalid_uri_message_is_preserved(self) -> None:
+        with pytest.raises(DriverError, match="at least one hostname"):
+            await _make_mongo_client({"uri": "mongodb://"})
+
+    async def test_malformed_host_raises_driver_error(self) -> None:
+        # pymongo raises a plain ValueError (not InvalidURI) for unescaped
+        # reserved characters in the host portion of the URI.
+        with pytest.raises(DriverError, match="Reserved characters"):
+            await _make_mongo_client({"uri": "mongodb://localhost:270:1213:"})

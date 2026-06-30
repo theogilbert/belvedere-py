@@ -339,7 +339,7 @@ name, type, nullability, primary key flag, default) and on
             ddl = (
                 None
                 if meta.generated
-                else await self._get_index_ddl(meta.owner, meta.name)
+                else await self._get_index_ddl(meta.owner, meta.name, meta.index_type)
             )
             indices.append(
                 IndexDescription(
@@ -366,7 +366,11 @@ name, type, nullability, primary key flag, default) and on
         tables = await fetch_join_tables_for_index(
             self._conn, schema, index_name, table
         )
-        ddl = None if meta.generated else await self._get_index_ddl(schema, index_name)
+        ddl = (
+            None
+            if meta.generated
+            else await self._get_index_ddl(schema, index_name, meta.index_type)
+        )
 
         return IndexDescription(
             index=index_name,
@@ -454,18 +458,21 @@ name, type, nullability, primary key flag, default) and on
         await apply_metadata_transform(self._conn)
         self._metadata_transform_set = True
 
-    async def _get_index_ddl(self, schema: str, index_name: str) -> str | None:
+    async def _get_index_ddl(
+        self, schema: str, index_name: str, index_type: str | None
+    ) -> str:
         try:
             await self._ensure_metadata_transform()
             return await fetch_index_ddl(self._conn, schema, index_name)
         except Exception as exc:
             logger.debug(
-                "DBMS_METADATA.GET_DDL failed for index %s.%s: %s",
+                "DBMS_METADATA.GET_DDL failed for index %s.%s (index_type=%r): %s",
                 schema,
                 index_name,
+                index_type,
                 exc,
             )
-        return None
+            return f"-- DDL unavailable ({exc})"
 
 
 def _is_explain_plan(query: str) -> bool:

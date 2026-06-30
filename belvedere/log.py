@@ -1,4 +1,5 @@
 import logging
+import logging.handlers
 import pathlib
 from contextvars import ContextVar
 
@@ -15,9 +16,12 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+_10_MB = 10 * 1024 * 1024
+
+
 def configure(path: pathlib.Path, level: int) -> None:
     """Configure the root logger to write to path with request ID in every line."""
-    handler = logging.FileHandler(path)
+    handler = logging.handlers.RotatingFileHandler(path, maxBytes=_10_MB, backupCount=1)
     handler.addFilter(RequestIdFilter())
     handler.setFormatter(
         logging.Formatter("%(asctime)s - %(levelname)s - [%(request_id)s] %(message)s")

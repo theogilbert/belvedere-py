@@ -249,6 +249,13 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
         return WriteResult(rows_affected=result.deleted_count)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
+        try:
+            return await self._explore_list(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise
+
+    async def _explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
                 return [
@@ -279,6 +286,13 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
                 return []
 
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        try:
+            return await self._explore_preview(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise
+
+    async def _explore_preview(self, path: list[str]) -> ReadResult | None:
         match path:
             case [db_name, collection_name]:
                 db = self._client[db_name]
@@ -287,6 +301,13 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
                 return None
 
     async def explore_describe(self, path: list[str]) -> DescribeResult:
+        try:
+            return await self._explore_describe(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise
+
+    async def _explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
             case [db_name, collection_name, "indexes"]:
                 info = await self._client[db_name][collection_name].index_information()
@@ -406,4 +427,8 @@ def _maybe_raise_connection_lost(exc: Exception) -> None:
             pymongo.errors.NetworkTimeout,
         ),
     ):
+        raise ConnectionLostError(str(exc)) from exc
+    # The idle timer closes the client out-of-band; pymongo surfaces the next
+    # use as InvalidOperation rather than a network error.
+    if isinstance(exc, pymongo.errors.InvalidOperation) and "after close" in str(exc):
         raise ConnectionLostError(str(exc)) from exc

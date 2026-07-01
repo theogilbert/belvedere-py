@@ -6,6 +6,7 @@ from typing import Any
 
 import pymongo
 import pymongo.errors
+from bson import json_util
 
 from ..protocol import (
     DescribeResult,
@@ -33,6 +34,10 @@ class _Op(StrEnum):
     UPDATE_MANY = "updateMany"
     DELETE_ONE = "deleteOne"
     DELETE_MANY = "deleteMany"
+    CREATE_COLLECTION = "createCollection"
+    DROP_COLLECTION = "dropCollection"
+    CREATE_INDEX = "createIndex"
+    DROP_INDEX = "dropIndex"
 
 
 class MongoDriver(BaseDriver):
@@ -75,8 +80,8 @@ class MongoDriver(BaseDriver):
 | `username` | no       | Username (can also be embedded in the URI)                         |
 | `password` | no       | Password (masked; can also be embedded in the URI)                 |
 
-**Queries:** JSON command objects. `"db"` is required and names the target
-database. The top-level operation key names the collection.
+**Queries:** MongoDB Extended JSON command objects. `"db"` is required and
+names the target database. The top-level operation key names the collection.
 
 ```json
 {"find": "users", "db": "auth"}
@@ -105,6 +110,27 @@ to a limit of 1000 rows when `"limit"` is omitted.
 {"updateOne": "users", "db": "mydb", "filter": {"name": "Alice"}, "update": {"$set": {"age": 31}}}
 {"deleteOne": "orders", "db": "mydb", "filter": {"status": "cancelled"}}
 ```
+
+Document values support Extended JSON, so BSON types that plain JSON can't
+express — dates, ObjectIds, decimals — can be written directly:
+
+```json
+{"updateOne": "events", "db": "mydb",
+ "filter": {"_id": {"$oid": "5f8d0d55b54764421b7156c0"}},
+ "update": {"$set": {"occurredAt": {"$date": "2024-01-01T00:00:00Z"}}}}
+```
+
+**Collections and indexes:**
+
+```json
+{"createCollection": "events", "db": "mydb"}
+{"dropCollection": "old_events", "db": "mydb"}
+{"createIndex": "users", "db": "mydb", "keys": {"email": 1}, "options": {"unique": true}}
+{"dropIndex": "users", "db": "mydb", "name": "email_1"}
+```
+
+`options` is optional for both `createCollection` and `createIndex` and is
+passed through to the underlying pymongo call.
 
 Results are flattened with dot-notation column names (`address.city`, `address.zip`).
 
@@ -148,9 +174,10 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
         """Run a MongoDB command expressed as a JSON string.
 
         Args:
-            query: JSON object following MongoDB command syntax. The top-level key
-                selects the operation; its value is the collection name.
-                Supported operations:
+            query: MongoDB Extended JSON object following MongoDB command syntax
+                (``$date``, ``$oid``, ``$numberDecimal``, etc. are accepted in
+                addition to plain JSON). The top-level key selects the operation;
+                its value is the collection name. Supported operations:
 
                 - ``find``: ``{"find": "col", "filter": {}, "projection": {},
                   "sort": {}, "limit": N}``
@@ -161,21 +188,21 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
                 - ``updateMany``: ``{"updateMany": "col", "filter": {}, "update": {}}``
                 - ``deleteOne``: ``{"deleteOne": "col", "filter": {}}``
                 - ``deleteMany``: ``{"deleteMany": "col", "filter": {}}``
+                - ``createCollection``: ``{"createCollection": "col", "options": {}}``
+                - ``dropCollection``: ``{"dropCollection": "col"}``
+                - ``createIndex``: ``{"createIndex": "col", "keys": {}, "options": {}}``
+                - ``dropIndex``: ``{"dropIndex": "col", "name": "..."}``
 
                 ``"db"`` is required and names the target database.
             binds: Unused for MongoDB.
         """
         try:
-            cmd: dict[str, Any] = json.loads(query)
-        except json.JSONDecodeError as exc:
-            raise DriverError(f"MongoDB command must be valid JSON: {exc}") from exc
-
-        if "db" not in cmd:
-            raise DriverError(
-                'MongoDB command must include a "db" key specifying the target database'
-            )
-        db = self._client[cmd.pop("db")]
-        try:
+            cmd: dict[str, Any] = json_util.loads(query)
+            if "db" not in cmd:
+                raise DriverError(
+                    'MongoDB command must include a "db" key specifying the target database'
+                )
+            db = self._client[cmd.pop("db")]
             if _Op.FIND in cmd:
                 return await self._find(db, cmd)
             if _Op.AGGREGATE in cmd:
@@ -192,11 +219,21 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
                 return await self._delete_one(db, cmd)
             if _Op.DELETE_MANY in cmd:
                 return await self._delete_many(db, cmd)
+            if _Op.CREATE_COLLECTION in cmd:
+                return await self._create_collection(db, cmd)
+            if _Op.DROP_COLLECTION in cmd:
+                return await self._drop_collection(db, cmd)
+            if _Op.CREATE_INDEX in cmd:
+                return await self._create_index(db, cmd)
+            if _Op.DROP_INDEX in cmd:
+                return await self._drop_index(db, cmd)
             raise DriverError(f"Unsupported command keys: {list(cmd.keys())}")
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             if isinstance(exc, DriverError):
                 raise
+            if isinstance(exc, json.JSONDecodeError):
+                raise DriverError(f"MongoDB command must be valid JSON: {exc}") from exc
             raise DriverError(str(exc)) from exc
 
     async def _find(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
@@ -247,6 +284,27 @@ and returns the index key fields with their sort direction (`asc` / `desc`).
         col = db[cmd.pop(_Op.DELETE_MANY)]
         result = await col.delete_many(cmd.pop("filter", {}))
         return WriteResult(rows_affected=result.deleted_count)
+
+    async def _create_collection(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
+        name = cmd.pop(_Op.CREATE_COLLECTION)
+        await db.create_collection(name, **cmd.pop("options", {}))
+        return WriteResult(rows_affected=1)
+
+    async def _drop_collection(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
+        await db.drop_collection(cmd.pop(_Op.DROP_COLLECTION))
+        return WriteResult(rows_affected=1)
+
+    async def _create_index(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
+        col = db[cmd.pop(_Op.CREATE_INDEX)]
+        await col.create_index(
+            list(cmd.pop("keys", {}).items()), **cmd.pop("options", {})
+        )
+        return WriteResult(rows_affected=1)
+
+    async def _drop_index(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
+        col = db[cmd.pop(_Op.DROP_INDEX)]
+        await col.drop_index(cmd.pop("name"))
+        return WriteResult(rows_affected=1)
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         try:

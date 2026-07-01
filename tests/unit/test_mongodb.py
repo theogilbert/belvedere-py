@@ -1,5 +1,6 @@
 """Unit tests for MongoDriver — no live database required."""
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pymongo.errors
@@ -7,6 +8,7 @@ import pytest
 
 from belvedere.drivers.base import ConnectionLostError, DriverError, DriverSettings
 from belvedere.drivers.mongodb import MongoDriver, _make_mongo_client
+from belvedere.protocol import WriteResult
 
 _CLOSED_EXC = pymongo.errors.InvalidOperation("Cannot use AsyncMongoClient after close")
 
@@ -25,6 +27,21 @@ def _closed_client() -> MagicMock:
     client.__getitem__.return_value = db
     client.list_database_names = AsyncMock(side_effect=_CLOSED_EXC)
     return client
+
+
+def _open_client() -> tuple[MagicMock, MagicMock, MagicMock]:
+    """A client mock with a stubbed db/collection chain for happy-path execute() calls."""
+    col = MagicMock()
+    col.create_index = AsyncMock()
+    col.drop_index = AsyncMock()
+    col.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    db = MagicMock()
+    db.__getitem__.return_value = col
+    db.create_collection = AsyncMock()
+    db.drop_collection = AsyncMock()
+    client = MagicMock()
+    client.__getitem__.return_value = db
+    return client, db, col
 
 
 def _make_driver(client: MagicMock) -> MongoDriver:
@@ -69,3 +86,78 @@ class TestMakeMongoClientInvalidUri:
         # reserved characters in the host portion of the URI.
         with pytest.raises(DriverError, match="Reserved characters"):
             await _make_mongo_client({"uri": "mongodb://localhost:270:1213:"})
+
+
+class TestExecuteCollectionAndIndexOps:
+    async def test_create_collection(self) -> None:
+        client, db, _ = _open_client()
+        driver = _make_driver(client)
+        result = await driver.execute(
+            '{"createCollection": "events", "db": "mydb", "options": {"capped": true}}',
+            [],
+        )
+        db.create_collection.assert_awaited_once_with("events", capped=True)
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+    async def test_drop_collection(self) -> None:
+        client, db, _ = _open_client()
+        driver = _make_driver(client)
+        result = await driver.execute(
+            '{"dropCollection": "old_events", "db": "mydb"}', []
+        )
+        db.drop_collection.assert_awaited_once_with("old_events")
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+    async def test_create_index(self) -> None:
+        client, _, col = _open_client()
+        driver = _make_driver(client)
+        result = await driver.execute(
+            '{"createIndex": "users", "db": "mydb", "keys": {"email": 1}, '
+            '"options": {"unique": true}}',
+            [],
+        )
+        col.create_index.assert_awaited_once_with([("email", 1)], unique=True)
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+    async def test_drop_index(self) -> None:
+        client, _, col = _open_client()
+        driver = _make_driver(client)
+        result = await driver.execute(
+            '{"dropIndex": "users", "db": "mydb", "name": "email_1"}', []
+        )
+        col.drop_index.assert_awaited_once_with("email_1")
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+
+class TestExecuteExtendedJson:
+    async def test_update_one_parses_date_literal(self) -> None:
+        client, _, col = _open_client()
+        driver = _make_driver(client)
+        await driver.execute(
+            '{"updateOne": "events", "db": "mydb", "filter": {}, '
+            '"update": {"$set": {"occurredAt": {"$date": "2024-01-01T00:00:00Z"}}}}',
+            [],
+        )
+        _, update = col.update_one.call_args.args
+        occurred_at = update["$set"]["occurredAt"]
+        assert isinstance(occurred_at, datetime)
+        assert occurred_at.year == 2024
+
+
+class TestExecuteMalformedCommand:
+    async def test_invalid_json_raises_driver_error(self) -> None:
+        driver = _make_driver(_open_client()[0])
+        with pytest.raises(DriverError, match="must be valid JSON"):
+            await driver.execute("{not json", [])
+
+    async def test_invalid_oid_raises_driver_error(self) -> None:
+        driver = _make_driver(_open_client()[0])
+        with pytest.raises(DriverError):
+            await driver.execute(
+                '{"find": "users", "db": "mydb", "filter": {"_id": {"$oid": "bad"}}}',
+                [],
+            )

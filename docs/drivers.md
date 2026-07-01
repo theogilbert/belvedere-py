@@ -241,8 +241,8 @@ from the index mapping (name, type).
 | `username` | no | Username (can also be embedded in the URI) |
 | `password` | no | Password (masked; can also be embedded in the URI) |
 
-**Queries:** JSON command objects. `"db"` is required and names the target
-database. The top-level operation key names the collection.
+**Queries:** MongoDB Extended JSON command objects. `"db"` is required and
+names the target database. The top-level operation key names the collection.
 
 **Read:**
 
@@ -289,6 +289,27 @@ to a limit of 1000 rows when `"limit"` is omitted.
 ```json
 {"deleteMany": "orders", "db": "mydb", "filter": {"status": "cancelled"}}
 ```
+
+Document values support Extended JSON, so BSON types that plain JSON can't
+express — dates, ObjectIds, decimals — can be written directly:
+
+```json
+{"updateOne": "events", "db": "mydb",
+ "filter": {"_id": {"$oid": "5f8d0d55b54764421b7156c0"}},
+ "update": {"$set": {"occurredAt": {"$date": "2024-01-01T00:00:00Z"}}}}
+```
+
+**Collections and indexes:**
+
+```json
+{"createCollection": "events", "db": "mydb"}
+{"dropCollection": "old_events", "db": "mydb"}
+{"createIndex": "users", "db": "mydb", "keys": {"email": 1}, "options": {"unique": true}}
+{"dropIndex": "users", "db": "mydb", "name": "email_1"}
+```
+
+`options` is optional for both `createCollection` and `createIndex` and is
+passed through to the underlying pymongo call.
 
 Results are flattened with dot-notation column names (`address.city`,
 `address.zip`).

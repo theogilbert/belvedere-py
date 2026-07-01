@@ -195,6 +195,70 @@ class TestExecuteDML:
         assert result.rows_affected == 2
 
 
+class TestExecuteCreateCollection:
+    async def test_creates_collection(self, driver: MongoDriver) -> None:
+        db = _TEST_DB
+        await driver._client[db].drop_collection("new_events")
+        result = await driver.execute(_cmd(createCollection="new_events"), [])
+        assert isinstance(result, WriteResult)
+        names = await driver._client[db].list_collection_names()
+        assert "new_events" in names
+        await driver._client[db].drop_collection("new_events")
+
+
+class TestExecuteDropCollection:
+    async def test_drops_collection(self, driver: MongoDriver) -> None:
+        db = _TEST_DB
+        await driver._client[db].create_collection("temp_events")
+        result = await driver.execute(_cmd(dropCollection="temp_events"), [])
+        assert isinstance(result, WriteResult)
+        names = await driver._client[db].list_collection_names()
+        assert "temp_events" not in names
+
+
+class TestExecuteCreateIndex:
+    async def test_creates_index(self, driver: MongoDriver) -> None:
+        db = _TEST_DB
+        await driver._client[db]["users"].insert_one({"email": "a@example.com"})
+        result = await driver.execute(
+            _cmd(createIndex="users", keys={"email": 1}, options={"name": "email_idx"}),
+            [],
+        )
+        assert isinstance(result, WriteResult)
+        info = await driver._client[db]["users"].index_information()
+        assert "email_idx" in info
+
+
+class TestExecuteDropIndex:
+    async def test_drops_index(self, driver: MongoDriver) -> None:
+        db = _TEST_DB
+        await driver._client[db]["users"].create_index("email", name="email_idx")
+        result = await driver.execute(_cmd(dropIndex="users", name="email_idx"), [])
+        assert isinstance(result, WriteResult)
+        info = await driver._client[db]["users"].index_information()
+        assert "email_idx" not in info
+
+
+class TestExecuteExtendedJsonRoundTrip:
+    async def test_date_round_trips_through_insert_and_find(
+        self, driver: MongoDriver
+    ) -> None:
+        await driver.execute(
+            _cmd(
+                insertOne="users",
+                document={
+                    "name": "Dave",
+                    "joinedAt": {"$date": "2024-01-01T00:00:00Z"},
+                },
+            ),
+            [],
+        )
+        result = await driver.execute(_cmd(find="users", filter={"name": "Dave"}), [])
+        assert isinstance(result, ReadResult)
+        row = dict(zip(result.columns, result.rows[0]))
+        assert row["joinedAt"].startswith("2024-01-01")
+
+
 class TestExploreList:
     async def test_root_lists_databases(self, driver: MongoDriver) -> None:
         db = _TEST_DB

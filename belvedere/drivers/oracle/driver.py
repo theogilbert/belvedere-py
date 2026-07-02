@@ -329,7 +329,9 @@ name, type, nullability, primary key flag, default) and on
             ],
         )
 
-    async def _describe_indices(self, schema: str, table: str) -> IndicesDescription:
+    async def _describe_indices(
+        self, schema: str, table: str, *, fetch_ddl: bool = True
+    ) -> IndicesDescription:
         metas = await fetch_index_metas_for_table(self._conn, schema, table)
         fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
         join_tables = await fetch_join_tables_for_table(self._conn, schema, table)
@@ -337,9 +339,9 @@ name, type, nullability, primary key flag, default) and on
         indices = []
         for meta in metas:
             ddl = (
-                None
-                if meta.generated
-                else await self._get_index_ddl(meta.owner, meta.name, meta.index_type)
+                await self._get_index_ddl(meta.owner, meta.name, meta.index_type)
+                if fetch_ddl and not meta.generated
+                else None
             )
             indices.append(
                 IndexDescription(
@@ -385,7 +387,9 @@ name, type, nullability, primary key flag, default) and on
     async def _describe_columns(self, schema: str, table: str) -> ColumnsDescription:
         col_details = await fetch_column_details(self._conn, schema, table)
         pk_cols = await fetch_pk_columns(self._conn, schema, table)
-        all_indices = (await self._describe_indices(schema, table)).indices
+        all_indices = (
+            await self._describe_indices(schema, table, fetch_ddl=False)
+        ).indices
         fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
         excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
@@ -417,7 +421,9 @@ name, type, nullability, primary key flag, default) and on
             return None
 
         pk_cols = await fetch_pk_columns(self._conn, schema, table)
-        all_indices = (await self._describe_indices(schema, table)).indices
+        all_indices = (
+            await self._describe_indices(schema, table, fetch_ddl=False)
+        ).indices
         fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
         excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)

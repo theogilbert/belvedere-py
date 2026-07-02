@@ -472,7 +472,7 @@ name, type, nullability, primary key flag, default) and on
                 index_type,
                 exc,
             )
-            return f"-- DDL unavailable ({exc})"
+            return "-- DDL unavailable"
 
 
 def _is_explain_plan(query: str) -> bool:

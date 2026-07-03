@@ -240,6 +240,19 @@ class TestExploreDescribe:
         assert await driver.explore_describe([]) is None
         assert await driver.explore_describe(["main"]) is None
 
+    async def test_should_return_table_comment(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        await driver.execute("COMMENT ON TABLE t IS 'A test table comment'", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert isinstance(desc, TableDescription)
+        assert desc.comment == "A test table comment"
+
+    async def test_table_comment_defaults_to_none(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert isinstance(desc, TableDescription)
+        assert desc.comment is None
+
 
 class TestExploreDescribeIndex:
     async def test_basic_index_fields_and_direction(self, driver: DuckDBDriver) -> None:

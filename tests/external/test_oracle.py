@@ -377,6 +377,23 @@ class TestExploreDescribe:
 
     async def test_returns_none_for_unknown_path(self, driver: OracleDriver) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_comment(self, driver: OracleDriver, schema: str, table: str) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
+        await driver.execute(
+            f"COMMENT ON TABLE {schema}.{table} IS 'A test table comment'", []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, TableDescription)
+        assert desc.comment == "A test table comment"
+
+    async def test_comment_defaults_to_none(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, TableDescription)
+        assert desc.comment is None
         assert await driver.explore_describe(["SYS"]) is None
 
 

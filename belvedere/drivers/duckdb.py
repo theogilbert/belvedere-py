@@ -286,9 +286,24 @@ SELECT * FROM 'glob/**/*.parquet'
                     index_col_count[idx_name] = len(key_fields)
                     for key_field in key_fields:
                         col_indexes.setdefault(key_field.name, []).append(idx_name)
+                table_comment: str | None = None
+                try:
+                    comment_rows = self._conn.execute(
+                        "SELECT comment FROM duckdb_tables()"
+                        " WHERE schema_name = ? AND table_name = ?",
+                        [schema, table],
+                    ).fetchall()
+                    table_comment = (
+                        comment_rows[0][0]
+                        if comment_rows and comment_rows[0][0]
+                        else None
+                    )
+                except Exception:
+                    pass
                 return TableDescription(
                     table=table,
                     schema=schema,
+                    comment=table_comment,
                     columns=[
                         ColumnInfo(
                             name=r[0],

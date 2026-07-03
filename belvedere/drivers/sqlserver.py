@@ -347,9 +347,24 @@ column metadata (name, type, nullability, default).
                     col_indexes.setdefault(col_name, []).append(idx_name)
                     index_cols.setdefault(idx_name, set()).add(col_name)
                 index_col_count = {k: len(v) for k, v in index_cols.items()}
+                cur.execute(
+                    "SELECT CAST(ep.value AS NVARCHAR(MAX))"
+                    " FROM sys.objects o"
+                    " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+                    " LEFT JOIN sys.extended_properties ep"
+                    "  ON ep.major_id = o.object_id AND ep.minor_id = 0"
+                    "  AND ep.name = 'MS_Description'"
+                    " WHERE s.name = ? AND o.name = ?",
+                    (schema, table),
+                )
+                comment_row = cur.fetchone()  # ty: ignore[missing-argument]
+                table_comment: str | None = (
+                    comment_row[0].strip() if comment_row and comment_row[0] else None
+                )
                 return TableDescription(
                     table=table,
                     schema=schema,
+                    comment=table_comment,
                     columns=[
                         ColumnInfo(
                             name=r[0],

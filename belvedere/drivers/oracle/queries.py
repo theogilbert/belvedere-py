@@ -456,6 +456,20 @@ async def fetch_join_tables_for_index(
 
 
 @_conn_cache
+async def fetch_table_comment(
+    conn: AsyncConnection, schema: str, table: str
+) -> str | None:
+    """Return the table-level comment, or None if unsupported or not set."""
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT COMMENTS FROM ALL_TAB_COMMENTS WHERE OWNER = :1 AND TABLE_NAME = :2",
+        [schema, table],
+    )
+    row = await cur.fetchone()
+    return row[0].strip() if row and row[0] and row[0].strip() else None
+
+
+@_conn_cache
 async def fetch_all_column_comments(
     conn: AsyncConnection, schema: str, table: str
 ) -> dict[str, str | None]:

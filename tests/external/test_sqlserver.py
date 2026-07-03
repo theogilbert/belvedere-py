@@ -261,6 +261,27 @@ class TestExploreDescribe:
     ) -> None:
         assert await driver.explore_describe([]) is None
 
+    async def test_comment(self, driver: SQLServerDriver, table: str) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
+        await driver.execute(
+            "EXEC sp_addextendedproperty"
+            " @name = N'MS_Description', @value = N'A test table comment',"
+            " @level0type = N'Schema', @level0name = N'dbo',"
+            f" @level1type = N'Table', @level1name = N'{table}'",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, TableDescription)
+        assert desc.comment == "A test table comment"
+
+    async def test_comment_defaults_to_none(
+        self, driver: SQLServerDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, TableDescription)
+        assert desc.comment is None
+
 
 class TestExploreDescribeIndex:
     async def test_basic_fields_and_direction(

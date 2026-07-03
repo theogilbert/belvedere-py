@@ -44,6 +44,7 @@ from .queries import (
     fetch_column_sample,
     fetch_pk_columns,
     fetch_schemas,
+    fetch_table_comment,
     fetch_tables_and_views,
 )
 
@@ -301,6 +302,7 @@ name, type, nullability, primary key flag, default) and on
         col_details = await fetch_column_details(self._conn, schema, table)
         pk_cols = await fetch_pk_columns(self._conn, schema, table)
         col_index_map = await fetch_column_index_mapping(self._conn, schema, table)
+        comment = await fetch_table_comment(self._conn, schema, table)
 
         index_cols: dict[str, set[str]] = {}
         for col_name, idx_names in col_index_map.items():
@@ -311,6 +313,7 @@ name, type, nullability, primary key flag, default) and on
         return TableDescription(
             table=table,
             schema=schema,
+            comment=comment,
             columns=[
                 ColumnInfo(
                     name=col.name,
@@ -339,7 +342,7 @@ name, type, nullability, primary key flag, default) and on
         indices = []
         for meta in metas:
             ddl = (
-                await self._get_index_ddl(meta.owner, meta.name, meta.index_type)
+                await self._get_index_ddl(meta.owner, meta.name, meta.index_type, table)
                 if fetch_ddl and not meta.generated
                 else None
             )
@@ -371,7 +374,7 @@ name, type, nullability, primary key flag, default) and on
         ddl = (
             None
             if meta.generated
-            else await self._get_index_ddl(schema, index_name, meta.index_type)
+            else await self._get_index_ddl(schema, index_name, meta.index_type, table)
         )
 
         return IndexDescription(
@@ -465,16 +468,18 @@ name, type, nullability, primary key flag, default) and on
         self._metadata_transform_set = True
 
     async def _get_index_ddl(
-        self, schema: str, index_name: str, index_type: str | None
+        self, schema: str, index_name: str, index_type: str | None, table: str
     ) -> str:
         try:
             await self._ensure_metadata_transform()
             return await fetch_index_ddl(self._conn, schema, index_name)
         except Exception as exc:
             logger.debug(
-                "DBMS_METADATA.GET_DDL failed for index %s.%s (index_type=%r): %s",
+                "DBMS_METADATA.GET_DDL failed for index %s.%s on table %s.%s (index_type=%r): %s",
                 schema,
                 index_name,
+                schema,
+                table,
                 index_type,
                 exc,
             )

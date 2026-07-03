@@ -119,6 +119,8 @@ class TableDescription:
     """Ordered list of column metadata."""
     schema: str | None = None
     """Schema name, or None for databases without schema support."""
+    comment: str | None = None
+    """Table comment as stored in the database; None if unsupported or not set."""
     type: str = "table"
     """Discriminator — always ``"table"``."""
 

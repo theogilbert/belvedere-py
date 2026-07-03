@@ -106,7 +106,7 @@ def parse_cli_args() -> CliArgs:
     driver_stgs_grp.add_argument(
         "--column-sample-timeout",
         type=float,
-        default=1.0,
+        default=5.0,
         help="Seconds to wait for each column sample query before returning no sample.",
     )
 

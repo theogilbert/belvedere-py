@@ -2,8 +2,6 @@
 
 import asyncio
 import logging
-from datetime import date, time
-from decimal import Decimal
 from typing import Any
 
 import oracledb
@@ -24,7 +22,13 @@ from ...protocol import (
     TableDescription,
     WriteResult,
 )
-from ..base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
+from ..base import (
+    BaseDriver,
+    ConnectionLostError,
+    DriverError,
+    DriverSettings,
+    build_column_samples,
+)
 from .queries import (
     apply_metadata_transform,
     build_column_index_lists,
@@ -496,33 +500,6 @@ name, type, nullability, primary key flag, default) and on
                 exc,
             )
             return "-- DDL unavailable"
-
-
-_SAMPLEABLE_TYPES = (str, int, float, date, time, Decimal)
-"""Sample value types the wire protocol can serialise (``date`` covers ``datetime``).
-Others (LOB handles, bytes, intervals) are skipped."""
-
-
-def build_column_samples(
-    columns: list[str], rows: list[tuple], n: int
-) -> dict[str, list[Any]]:
-    """Map each column name to up to *n* distinct non-null values from *rows*.
-
-    Values whose type is not in :data:`_SAMPLEABLE_TYPES` are skipped. Sparse
-    or low-cardinality columns may yield fewer than *n* values.
-    """
-    samples: dict[str, list[Any]] = {name: [] for name in columns}
-    for i, name in enumerate(columns):
-        seen = samples[name]
-        for row in rows:
-            value = row[i]
-            if value is None or not isinstance(value, _SAMPLEABLE_TYPES):
-                continue
-            if value not in seen:
-                seen.append(value)
-                if len(seen) == n:
-                    break
-    return samples
 
 
 def _is_explain_plan(query: str) -> bool:

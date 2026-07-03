@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import date, time
+from decimal import Decimal
 from typing import Any, ClassVar, Self
 
 from ..protocol import (
@@ -138,3 +140,33 @@ class BaseDriver(ABC):
             Column metadata, or None if the path does not resolve to a node.
         """
         ...
+
+
+SAMPLE_SCAN_ROWS = 50
+"""Table rows a driver scans in one query to derive per-column samples."""
+
+_SAMPLEABLE_TYPES = (str, int, float, date, time, Decimal)
+"""Sample value types the wire protocol can serialise (``date`` covers ``datetime``).
+Others (LOB handles, bytes, intervals) are skipped."""
+
+
+def build_column_samples(
+    columns: list[str], rows: list[tuple], n: int
+) -> dict[str, list[Any]]:
+    """Map each column name to up to *n* distinct non-null values from *rows*.
+
+    Values whose type is not in :data:`_SAMPLEABLE_TYPES` are skipped. Sparse
+    or low-cardinality columns may yield fewer than *n* values.
+    """
+    samples: dict[str, list[Any]] = {name: [] for name in columns}
+    for i, name in enumerate(columns):
+        seen = samples[name]
+        for row in rows:
+            value = row[i]
+            if value is None or not isinstance(value, _SAMPLEABLE_TYPES):
+                continue
+            if value not in seen:
+                seen.append(value)
+                if len(seen) == n:
+                    break
+    return samples

@@ -24,7 +24,14 @@ from ..protocol import (
     TableDescription,
     WriteResult,
 )
-from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
+from .base import (
+    SAMPLE_SCAN_ROWS,
+    BaseDriver,
+    ConnectionLostError,
+    DriverError,
+    DriverSettings,
+    build_column_samples,
+)
 
 T = TypeVar("T")
 
@@ -300,11 +307,13 @@ column metadata (name, type, nullability, default).
         match path:
             case [schema, table, "columns"]:
                 base = await self._run(self._describe_columns_sync, schema, table)
-                columns = []
-                for col in base.columns:
-                    sample = await self._fetch_sample(schema, table, col.name)
-                    columns.append(dataclasses.replace(col, sample=sample))
-                return ColumnsDescription(columns=columns)
+                samples = await self._fetch_samples(schema, table)
+                return ColumnsDescription(
+                    columns=[
+                        dataclasses.replace(col, sample=samples.get(col.name, []))
+                        for col in base.columns
+                    ]
+                )
             case [schema, table, "columns", col_name]:
                 base = await self._run(
                     self._describe_column_sync, schema, table, col_name
@@ -687,6 +696,28 @@ column metadata (name, type, nullability, default).
             return [row[0] for row in cur.fetchall()]  # ty: ignore[missing-argument]
         except Exception:
             return []
+
+    async def _fetch_samples(self, schema: str, table: str) -> dict[str, list[Any]]:
+        try:
+            columns, rows = await asyncio.wait_for(
+                self._run(self._fetch_sample_rows_sync, schema, table),
+                timeout=self._settings.column_sample_timeout,
+            )
+        except asyncio.TimeoutError:
+            return {}
+        return build_column_samples(columns, rows, self._settings.column_sample_size)
+
+    def _fetch_sample_rows_sync(
+        self, schema: str, table: str
+    ) -> tuple[list[str], list[tuple]]:
+        cur = self._conn.cursor()
+        try:
+            cur.execute(f"SELECT TOP {SAMPLE_SCAN_ROWS} * FROM [{schema}].[{table}]")
+            columns = [d[0] for d in cur.description or []]
+            rows = cur.fetchall()  # ty: ignore[missing-argument]
+            return columns, [tuple(r) for r in rows]
+        except Exception:
+            return [], []
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         return await asyncio.get_running_loop().run_in_executor(

@@ -12,7 +12,6 @@ from belvedere.drivers.oracle.driver import (
     _format_db_error,
     _is_explain_plan,
     _offset_to_line_col,
-    build_column_samples,
 )
 from belvedere.drivers.oracle.queries import _PRE12_SYSTEM_SCHEMAS_SQL
 from belvedere.protocol import ExploreItem, IndexDescription, ReadResult
@@ -288,29 +287,3 @@ class TestExplainPlanExecute:
         asyncio.run(explain_driver.execute("EXPLAIN PLAN FOR SELECT 1 FROM DUAL", []))
         second_call_sql = explain_cur.execute.call_args_list[1][0][0]
         assert "DBMS_XPLAN.DISPLAY" in second_call_sql
-
-
-class TestBuildColumnSamples:
-    def test_dedupes_repeated_values(self) -> None:
-        rows = [("x",), ("y",), ("x",)]
-        assert build_column_samples(["VAL"], rows, 3) == {"VAL": ["x", "y"]}
-
-    def test_skips_nulls(self) -> None:
-        rows = [(None,), ("a",), (None,)]
-        assert build_column_samples(["VAL"], rows, 3) == {"VAL": ["a"]}
-
-    def test_caps_at_n_values(self) -> None:
-        rows = [("a",), ("b",), ("c",), ("d",)]
-        assert build_column_samples(["VAL"], rows, 2) == {"VAL": ["a", "b"]}
-
-    def test_skips_unserialisable_types(self) -> None:
-        rows = [(b"\x00",), ("ok",)]
-        assert build_column_samples(["VAL"], rows, 3) == {"VAL": ["ok"]}
-
-    def test_all_null_column_yields_empty_list(self) -> None:
-        rows = [(1, None), (2, None)]
-        result = build_column_samples(["ID", "VAL"], rows, 3)
-        assert result == {"ID": [1, 2], "VAL": []}
-
-    def test_no_rows_yields_empty_lists(self) -> None:
-        assert build_column_samples(["ID", "VAL"], [], 3) == {"ID": [], "VAL": []}

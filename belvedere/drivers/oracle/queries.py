@@ -8,6 +8,7 @@ from weakref import WeakKeyDictionary
 from oracledb import AsyncConnection, AsyncCursor
 
 from ...protocol import IndexDescription, IndexKeyField
+from ..base import SAMPLE_SCAN_ROWS
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
 
@@ -502,15 +503,11 @@ async def fetch_column_sample(
         return []
 
 
-_SAMPLE_SCAN_ROWS = 50
-"""Rows scanned by :func:`fetch_table_sample_rows` to derive per-column samples."""
-
-
 @_conn_cache
 async def fetch_table_sample_rows(
     conn: AsyncConnection, schema: str, table: str
 ) -> tuple[list[str], list[tuple]]:
-    """Return the column names and first :data:`_SAMPLE_SCAN_ROWS` rows of *table*.
+    """Return the column names and first :data:`SAMPLE_SCAN_ROWS` rows of *table*.
 
     A single scan replacing one ``SELECT DISTINCT`` round trip per column;
     per-column sample values are derived client-side by the driver.
@@ -519,7 +516,7 @@ async def fetch_table_sample_rows(
     try:
         await cur.execute(
             f'SELECT * FROM "{schema}"."{table}"'
-            f" FETCH FIRST {_SAMPLE_SCAN_ROWS} ROWS ONLY"
+            f" FETCH FIRST {SAMPLE_SCAN_ROWS} ROWS ONLY"
         )
         columns = [d[0] for d in cur.description or []]
         return columns, await cur.fetchall()

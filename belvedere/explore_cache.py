@@ -18,9 +18,19 @@ from .protocol import (
     IndexKeyField,
     IndicesDescription,
     TableDescription,
+    json_default,
 )
 
 logger = logging.getLogger(__name__)
+
+CachedDescribe = (
+    TableDescription
+    | IndexDescription
+    | IndicesDescription
+    | ColumnDescription
+    | ColumnsDescription
+)
+"""Non-None explore.describe results storable in the cache."""
 
 
 class CachingDriver(BaseDriver):
@@ -61,8 +71,12 @@ class CachingDriver(BaseDriver):
             logger.debug(f"explore.describe cache hit for path {path}")
             return self._cache.get_describe(path)
         desc = await self._inner.explore_describe(path)
-        if desc is not None:
-            self._cache.set_describe(path, desc)
+        if desc is None:
+            return None
+        entries: list[tuple[list[str], CachedDescribe]] = [(path, desc)]
+        if isinstance(desc, ColumnsDescription):
+            entries += [([*path, col.name], col) for col in desc.columns]
+        self._cache.set_describes(entries)
         return desc
 
     def reset_cache(self, path: list[str]) -> None:
@@ -104,14 +118,7 @@ class ConnectionCache:
         """Path to the backing JSON cache file."""
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
         """In-memory cache mapping path tuples to their explore.list results."""
-        self._describe: dict[
-            tuple[str, ...],
-            TableDescription
-            | IndexDescription
-            | IndicesDescription
-            | ColumnDescription
-            | ColumnsDescription,
-        ] = {}
+        self._describe: dict[tuple[str, ...], CachedDescribe] = {}
         """In-memory cache mapping path tuples to their explore.describe results."""
         self._load()
 
@@ -170,22 +177,23 @@ class ConnectionCache:
         """Return cached explore.describe results for path, or None on a miss."""
         return self._describe.get(tuple(path))
 
-    def set_describe(
-        self,
-        path: list[str],
-        desc: TableDescription
-        | IndexDescription
-        | IndicesDescription
-        | ColumnDescription
-        | ColumnsDescription,
-    ) -> None:
+    def set_describe(self, path: list[str], desc: CachedDescribe) -> None:
         """Store explore.describe results for path and persist to disk.
 
         Args:
             path: Path segments identifying the node.
             desc: Description to cache.
         """
-        self._describe[tuple(path)] = desc
+        self.set_describes([(path, desc)])
+
+    def set_describes(self, entries: list[tuple[list[str], CachedDescribe]]) -> None:
+        """Store several explore.describe results, persisting to disk once.
+
+        Args:
+            entries: ``(path, description)`` pairs to cache.
+        """
+        for path, desc in entries:
+            self._describe[tuple(path)] = desc
         self._persist()
 
     def _load(self) -> None:
@@ -204,6 +212,10 @@ class ConnectionCache:
                     self._describe[key] = _deserialize_index(desc)
                 elif desc.get("type") == "indices":
                     self._describe[key] = _deserialize_indices(desc)
+                elif desc.get("type") == "column":
+                    self._describe[key] = _deserialize_column(desc)
+                elif desc.get("type") == "columns":
+                    self._describe[key] = _deserialize_columns(desc)
                 else:
                     self._describe[key] = _deserialize_table(desc)
         except Exception:
@@ -229,7 +241,7 @@ class ConnectionCache:
                 },
             }
             tmp = self._path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, indent=2))
+            tmp.write_text(json.dumps(data, indent=2, default=json_default))
             tmp.replace(self._path)
         except Exception:
             logger.warning(f"Failed to persist explore cache to {self._path}")
@@ -255,9 +267,34 @@ def _deserialize_indices(d: dict[str, Any]) -> IndicesDescription:
     )
 
 
+def _deserialize_column(d: dict[str, Any]) -> ColumnDescription:
+    return ColumnDescription(
+        name=d["name"],
+        data_type=d["data_type"],
+        nullable=d.get("nullable"),
+        pk=d.get("pk", False),
+        default=d.get("default"),
+        exclusive_indices=[
+            _deserialize_index(i) for i in d.get("exclusive_indices", [])
+        ],
+        composite_indices=[
+            _deserialize_index(i) for i in d.get("composite_indices", [])
+        ],
+        comment=d.get("comment"),
+        sample=d.get("sample", []),
+    )
+
+
+def _deserialize_columns(d: dict[str, Any]) -> ColumnsDescription:
+    return ColumnsDescription(
+        columns=[_deserialize_column(c) for c in d.get("columns", [])]
+    )
+
+
 def _deserialize_table(d: dict[str, Any]) -> TableDescription:
     return TableDescription(
         table=d["table"],
         schema=d.get("schema"),
+        comment=d.get("comment"),
         columns=[ColumnInfo(**col) for col in d.get("columns", [])],
     )

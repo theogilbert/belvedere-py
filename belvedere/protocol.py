@@ -319,6 +319,25 @@ Args:
 """
 
 
+def json_default(obj: Any) -> Any:
+    """Convert database values ``json.dumps`` cannot handle natively.
+
+    Pass as the ``default`` argument to ``json.dumps`` wherever protocol
+    types (and the sample values they carry) are serialized.
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, time):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def encode(msg: Response) -> bytes:
     """Serialize a response message to a newline-terminated JSON byte string.
 
@@ -328,22 +347,8 @@ def encode(msg: Response) -> bytes:
     Returns:
         UTF-8 encoded JSON line ending with ``\\n``.
     """
-
-    def _default(obj: Any) -> Any:
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        if isinstance(obj, date):
-            return obj.isoformat()
-        if isinstance(obj, time):
-            return obj.isoformat()
-        if isinstance(obj, Decimal):
-            return float(obj)
-        if isinstance(obj, UUID):
-            return str(obj)
-        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
     return (
-        json.dumps(asdict(msg), separators=(",", ":"), default=_default) + "\n"
+        json.dumps(asdict(msg), separators=(",", ":"), default=json_default) + "\n"
     ).encode()
 
 

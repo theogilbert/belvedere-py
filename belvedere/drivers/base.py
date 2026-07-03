@@ -133,6 +133,11 @@ class BaseDriver(ABC):
     async def explore_describe(self, path: list[str]) -> DescribeResult:
         """Return column metadata for the node at the given path.
 
+        Contract: when a path yields a ``ColumnsDescription``, describing the
+        child path ``[*path, column_name]`` must yield an equivalent
+        ``ColumnDescription`` — the explore cache pre-populates per-column
+        entries from the columns result relying on this.
+
         Args:
             path: Ordered path segments identifying a node.
 

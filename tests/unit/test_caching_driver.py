@@ -1,17 +1,40 @@
 import pathlib
+from datetime import datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
 
 from belvedere.explore_cache import CachingDriver, ConnectionCache
-from belvedere.protocol import ExploreItem, IndexDescription, TableDescription
+from belvedere.protocol import (
+    ColumnDescription,
+    ColumnsDescription,
+    ExploreItem,
+    IndexDescription,
+    IndexKeyField,
+    TableDescription,
+)
+
+PARAMS = {"driver": "sqlite", "database": ":memory:"}
+
+
+def _columns_desc() -> ColumnsDescription:
+    idx = IndexDescription(
+        index="i1", fields=[IndexKeyField(name="ID", direction="asc")], unique=True
+    )
+    return ColumnsDescription(
+        columns=[
+            ColumnDescription(
+                name="ID", data_type="NUMBER", pk=True, exclusive_indices=[idx]
+            ),
+            ColumnDescription(name="VAL", data_type="VARCHAR2", sample=["a", "b"]),
+        ]
+    )
 
 
 @pytest.fixture
 def cache(tmp_path: pathlib.Path) -> ConnectionCache:
-    return ConnectionCache(
-        {"driver": "sqlite", "database": ":memory:"}, tmp_path / "c.json"
-    )
+    return ConnectionCache(PARAMS, tmp_path / "c.json")
 
 
 @pytest.fixture
@@ -92,6 +115,83 @@ class TestExploreDescribeCaching:
         result = await driver.explore_describe(["s", "t", "indices", "idx"])
         assert isinstance(result, IndexDescription)
         inner.explore_describe.assert_awaited_once()
+
+
+class TestColumnsFanOut:
+    async def test_columns_result_populates_per_column_entries(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_describe.return_value = _columns_desc()
+        await driver.explore_describe(["s", "t", "columns"])
+        col = await driver.explore_describe(["s", "t", "columns", "ID"])
+        assert col == _columns_desc().columns[0]
+        inner.explore_describe.assert_awaited_once()
+
+    async def test_all_columns_served_from_fan_out(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_describe.return_value = _columns_desc()
+        await driver.explore_describe(["s", "t", "columns"])
+        val = await driver.explore_describe(["s", "t", "columns", "VAL"])
+        assert val == _columns_desc().columns[1]
+        inner.explore_describe.assert_awaited_once()
+
+    async def test_reset_clears_fanned_out_entries(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_describe.return_value = _columns_desc()
+        await driver.explore_describe(["s", "t", "columns"])
+        driver.reset_cache(["s", "t", "columns"])
+        await driver.explore_describe(["s", "t", "columns", "ID"])
+        assert inner.explore_describe.await_count == 2
+
+
+class TestDescribeDiskRoundTrip:
+    def test_columns_description_round_trips(self, tmp_path: pathlib.Path) -> None:
+        path = tmp_path / "c.json"
+        ConnectionCache(PARAMS, path).set_describe(
+            ["s", "t", "columns"], _columns_desc()
+        )
+        reloaded = ConnectionCache(PARAMS, path)
+        assert reloaded.get_describe(["s", "t", "columns"]) == _columns_desc()
+
+    def test_column_description_round_trips(self, tmp_path: pathlib.Path) -> None:
+        path = tmp_path / "c.json"
+        col = _columns_desc().columns[0]
+        ConnectionCache(PARAMS, path).set_describe(["s", "t", "columns", "ID"], col)
+        reloaded = ConnectionCache(PARAMS, path)
+        assert reloaded.get_describe(["s", "t", "columns", "ID"]) == col
+
+    def test_columns_entry_does_not_poison_other_entries(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        path = tmp_path / "c.json"
+        cache = ConnectionCache(PARAMS, path)
+        cache.set_describe(["s", "t"], TableDescription(table="t", columns=[]))
+        cache.set_describe(["s", "t", "columns"], _columns_desc())
+        reloaded = ConnectionCache(PARAMS, path)
+        assert reloaded.get_describe(["s", "t"]) == TableDescription(
+            table="t", columns=[]
+        )
+
+    def test_non_json_sample_values_persist(self, tmp_path: pathlib.Path) -> None:
+        path = tmp_path / "c.json"
+        col = ColumnDescription(
+            name="TS", data_type="DATE", sample=[datetime(2024, 1, 1), Decimal("1.5")]
+        )
+        ConnectionCache(PARAMS, path).set_describe(["s", "t", "columns", "TS"], col)
+        reloaded = ConnectionCache(PARAMS, path).get_describe(
+            ["s", "t", "columns", "TS"]
+        )
+        assert isinstance(reloaded, ColumnDescription)
+        assert reloaded.sample == ["2024-01-01T00:00:00", 1.5]
+
+    def test_table_comment_round_trips(self, tmp_path: pathlib.Path) -> None:
+        path = tmp_path / "c.json"
+        desc = TableDescription(table="t", columns=[], comment="a comment")
+        ConnectionCache(PARAMS, path).set_describe(["s", "t"], desc)
+        reloaded = ConnectionCache(PARAMS, path)
+        assert reloaded.get_describe(["s", "t"]) == desc
 
 
 class TestResetCache:

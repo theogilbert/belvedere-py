@@ -502,6 +502,31 @@ async def fetch_column_sample(
         return []
 
 
+_SAMPLE_SCAN_ROWS = 50
+"""Rows scanned by :func:`fetch_table_sample_rows` to derive per-column samples."""
+
+
+@_conn_cache
+async def fetch_table_sample_rows(
+    conn: AsyncConnection, schema: str, table: str
+) -> tuple[list[str], list[tuple]]:
+    """Return the column names and first :data:`_SAMPLE_SCAN_ROWS` rows of *table*.
+
+    A single scan replacing one ``SELECT DISTINCT`` round trip per column;
+    per-column sample values are derived client-side by the driver.
+    """
+    cur = conn.cursor()
+    try:
+        await cur.execute(
+            f'SELECT * FROM "{schema}"."{table}"'
+            f" FETCH FIRST {_SAMPLE_SCAN_ROWS} ROWS ONLY"
+        )
+        columns = [d[0] for d in cur.description or []]
+        return columns, await cur.fetchall()
+    except Exception:
+        return [], []
+
+
 def build_column_index_lists(
     fields_by_index: dict[str, list[IndexKeyField]],
     all_indices: list[IndexDescription],

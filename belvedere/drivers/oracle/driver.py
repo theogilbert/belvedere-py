@@ -1,6 +1,9 @@
 """Oracle driver — requires: pip install oracledb"""
 
+import asyncio
 import logging
+from datetime import date, time
+from decimal import Decimal
 from typing import Any
 
 import oracledb
@@ -45,6 +48,7 @@ from .queries import (
     fetch_pk_columns,
     fetch_schemas,
     fetch_table_comment,
+    fetch_table_sample_rows,
     fetch_tables_and_views,
 )
 
@@ -396,11 +400,10 @@ name, type, nullability, primary key flag, default) and on
         fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
         excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
+        samples = await self._fetch_samples(schema, table)
 
-        columns = []
-        for col in col_details:
-            sample = await self._fetch_sample(schema, table, col.name)
-            columns.append(
+        return ColumnsDescription(
+            columns=[
                 ColumnDescription(
                     name=col.name,
                     data_type=col.type,
@@ -410,10 +413,11 @@ name, type, nullability, primary key flag, default) and on
                     exclusive_indices=excl.get(col.name, []),
                     composite_indices=comp.get(col.name, []),
                     comment=comments.get(col.name),
-                    sample=sample,
+                    sample=samples.get(col.name, []),
                 )
-            )
-        return ColumnsDescription(columns=columns)
+                for col in col_details
+            ]
+        )
 
     async def _describe_column(
         self, schema: str, table: str, col_name: str
@@ -445,8 +449,6 @@ name, type, nullability, primary key flag, default) and on
         )
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
-        import asyncio
-
         try:
             return await asyncio.wait_for(
                 fetch_column_sample(
@@ -460,6 +462,16 @@ name, type, nullability, primary key flag, default) and on
             )
         except asyncio.TimeoutError:
             return []
+
+    async def _fetch_samples(self, schema: str, table: str) -> dict[str, list[Any]]:
+        try:
+            columns, rows = await asyncio.wait_for(
+                fetch_table_sample_rows(self._conn, schema, table),
+                timeout=self._settings.column_sample_timeout,
+            )
+        except asyncio.TimeoutError:
+            return {}
+        return build_column_samples(columns, rows, self._settings.column_sample_size)
 
     async def _ensure_metadata_transform(self) -> None:
         if self._metadata_transform_set:
@@ -484,6 +496,33 @@ name, type, nullability, primary key flag, default) and on
                 exc,
             )
             return "-- DDL unavailable"
+
+
+_SAMPLEABLE_TYPES = (str, int, float, date, time, Decimal)
+"""Sample value types the wire protocol can serialise (``date`` covers ``datetime``).
+Others (LOB handles, bytes, intervals) are skipped."""
+
+
+def build_column_samples(
+    columns: list[str], rows: list[tuple], n: int
+) -> dict[str, list[Any]]:
+    """Map each column name to up to *n* distinct non-null values from *rows*.
+
+    Values whose type is not in :data:`_SAMPLEABLE_TYPES` are skipped. Sparse
+    or low-cardinality columns may yield fewer than *n* values.
+    """
+    samples: dict[str, list[Any]] = {name: [] for name in columns}
+    for i, name in enumerate(columns):
+        seen = samples[name]
+        for row in rows:
+            value = row[i]
+            if value is None or not isinstance(value, _SAMPLEABLE_TYPES):
+                continue
+            if value not in seen:
+                seen.append(value)
+                if len(seen) == n:
+                    break
+    return samples
 
 
 def _is_explain_plan(query: str) -> bool:

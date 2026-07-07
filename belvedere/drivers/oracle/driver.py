@@ -45,10 +45,12 @@ from .queries import (
     fetch_index_fields_for_table,
     fetch_index_meta,
     fetch_index_metas_for_table,
+    fetch_incoming_references,
     fetch_index_names_and_types,
     fetch_join_tables_for_index,
     fetch_join_tables_for_table,
     fetch_column_sample,
+    fetch_outgoing_references,
     fetch_pk_columns,
     fetch_schemas,
     fetch_table_comment,
@@ -318,6 +320,9 @@ name, type, nullability, primary key flag, default) and on
                 index_cols.setdefault(idx_name, set()).add(col_name)
         index_col_count = {k: len(v) for k, v in index_cols.items()}
 
+        outgoing_references = await fetch_outgoing_references(self._conn, schema, table)
+        incoming_references = await fetch_incoming_references(self._conn, schema, table)
+
         return TableDescription(
             table=table,
             schema=schema,
@@ -338,6 +343,8 @@ name, type, nullability, primary key flag, default) and on
                 )
                 for col in col_details
             ],
+            outgoing_references=outgoing_references,
+            incoming_references=incoming_references,
         )
 
     async def _describe_indices(

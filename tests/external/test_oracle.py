@@ -27,6 +27,7 @@ from belvedere.protocol import (
     IndicesDescription,
     ReadResult,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 
@@ -395,6 +396,61 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.comment is None
         assert await driver.explore_describe(["SYS"]) is None
+
+    async def test_returns_outgoing_references(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  id NUMBER, parent_id NUMBER,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == [
+            TableReference(
+                column="PARENT_ID", table=parent, ref_column="ID", schema=schema
+            )
+        ]
+        assert desc.incoming_references == []
+
+    async def test_returns_incoming_references(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  id NUMBER, parent_id NUMBER,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references == [
+            TableReference(
+                column="ID", table=child, ref_column="PARENT_ID", schema=schema
+            )
+        ]
+        assert desc.outgoing_references == []
+
+    async def test_references_default_to_empty(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == []
+        assert desc.incoming_references == []
 
 
 class TestExploreDescribeIndex:

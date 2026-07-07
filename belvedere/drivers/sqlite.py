@@ -18,6 +18,7 @@ from ..protocol import (
     ParamType,
     ReadResult,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 from .base import BaseDriver, DriverError, DriverSettings
@@ -264,6 +265,8 @@ metadata (name, type, nullability, primary key flag).
                         )
                         for r in cols
                     ],
+                    outgoing_references=self._outgoing_references_sync(table),
+                    incoming_references=self._incoming_references_sync(table),
                 )
 
             case [table, "indices"]:
@@ -374,6 +377,27 @@ metadata (name, type, nullability, primary key flag).
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
         )
+
+    def _outgoing_references_sync(self, table: str) -> list[TableReference]:
+        rows = self._conn.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+        return [TableReference(column=r[3], table=r[2], ref_column=r[4]) for r in rows]
+
+    def _incoming_references_sync(self, table: str) -> list[TableReference]:
+        other_tables = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name != ?",
+            (table,),
+        ).fetchall()
+        references = []
+        for (other_table,) in other_tables:
+            rows = self._conn.execute(
+                f"PRAGMA foreign_key_list({other_table})"
+            ).fetchall()
+            references.extend(
+                TableReference(column=r[4], table=other_table, ref_column=r[3])
+                for r in rows
+                if r[2].lower() == table.lower()
+            )
+        return references
 
     async def _fetch_sample(self, table: str, col_name: str) -> list[Any]:
         try:

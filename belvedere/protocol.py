@@ -110,6 +110,20 @@ class ColumnInfo:
 
 
 @dataclass
+class TableReference:
+    """One column-level leg of a foreign key relating this table to another."""
+
+    column: str
+    """Local column participating in the relationship."""
+    table: str
+    """Name of the other table."""
+    ref_column: str
+    """Column on the other table."""
+    schema: str | None = None
+    """Schema of the other table, or None for databases without schema support."""
+
+
+@dataclass
 class TableDescription:
     """Full column metadata for a table returned by explore.describe."""
 
@@ -121,6 +135,10 @@ class TableDescription:
     """Schema name, or None for databases without schema support."""
     comment: str | None = None
     """Table comment as stored in the database; None if unsupported or not set."""
+    outgoing_references: list[TableReference] = field(default_factory=list)
+    """Foreign keys defined on this table that reference other tables in the same schema."""
+    incoming_references: list[TableReference] = field(default_factory=list)
+    """Foreign keys on other tables in the same schema that reference this table."""
     type: str = "table"
     """Discriminator — always ``"table"``."""
 

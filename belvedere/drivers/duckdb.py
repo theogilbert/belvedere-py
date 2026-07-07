@@ -20,6 +20,7 @@ from ..protocol import (
     ParamType,
     ReadResult,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 from .base import BaseDriver, DriverError, DriverSettings
@@ -321,6 +322,8 @@ SELECT * FROM 'glob/**/*.parquet'
                         )
                         for r in col_rows
                     ],
+                    outgoing_references=self._outgoing_references_sync(schema, table),
+                    incoming_references=self._incoming_references_sync(schema, table),
                 )
 
             case [schema, table, "indices"]:
@@ -469,6 +472,40 @@ SELECT * FROM 'glob/**/*.parquet'
             composite_indices=composite_indices,
             comment=comment,
         )
+
+    def _outgoing_references_sync(
+        self, schema: str, table: str
+    ) -> list[TableReference]:
+        rows = self._conn.execute(
+            "SELECT constraint_column_names, referenced_table, referenced_column_names"
+            " FROM duckdb_constraints()"
+            " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'FOREIGN KEY'",
+            [schema, table],
+        ).fetchall()
+        return [
+            TableReference(
+                column=src_col, table=fk_table, ref_column=ref_col, schema=schema
+            )
+            for src_cols, fk_table, fk_cols in rows
+            for src_col, ref_col in zip(src_cols, fk_cols)
+        ]
+
+    def _incoming_references_sync(
+        self, schema: str, table: str
+    ) -> list[TableReference]:
+        rows = self._conn.execute(
+            "SELECT table_name, constraint_column_names, referenced_column_names"
+            " FROM duckdb_constraints()"
+            " WHERE schema_name = ? AND referenced_table = ? AND constraint_type = 'FOREIGN KEY'",
+            [schema, table],
+        ).fetchall()
+        return [
+            TableReference(
+                column=ref_col, table=other_table, ref_column=fk_col, schema=schema
+            )
+            for other_table, fk_cols, ref_cols in rows
+            for fk_col, ref_col in zip(fk_cols, ref_cols)
+        ]
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
         try:

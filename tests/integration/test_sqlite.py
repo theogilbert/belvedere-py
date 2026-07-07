@@ -11,6 +11,7 @@ from belvedere.protocol import (
     IndexDescription,
     ReadResult,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 
@@ -208,6 +209,52 @@ class TestExploreDescribe:
         by_name = {c.name: c for c in desc.columns}
         assert by_name["val"].exclusive_index is True
         assert by_name["val"].composite_index is True
+
+    async def test_should_return_outgoing_references(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == [
+            TableReference(column="parent_id", table="parent", ref_column="id")
+        ]
+        assert desc.incoming_references == []
+
+    async def test_should_return_empty_outgoing_references_when_none_exist(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["t"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == []
+
+    async def test_should_return_incoming_references(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references == [
+            TableReference(column="id", table="child", ref_column="parent_id")
+        ]
+        assert desc.outgoing_references == []
+
+    async def test_should_return_empty_incoming_references_when_none_exist(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["t"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references == []
 
     async def test_should_return_none_when_path_is_invalid(
         self, driver: SQLiteDriver

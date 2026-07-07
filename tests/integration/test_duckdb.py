@@ -11,6 +11,7 @@ from belvedere.protocol import (
     IndexDescription,
     ReadResult,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 
@@ -252,6 +253,56 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(["main", "t"])
         assert isinstance(desc, TableDescription)
         assert desc.comment is None
+
+    async def test_should_return_outgoing_references(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == [
+            TableReference(
+                column="parent_id", table="parent", ref_column="id", schema="main"
+            )
+        ]
+        assert desc.incoming_references == []
+
+    async def test_should_return_empty_outgoing_references_when_none_exist(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == []
+
+    async def test_should_return_incoming_references(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references == [
+            TableReference(
+                column="id", table="child", ref_column="parent_id", schema="main"
+            )
+        ]
+        assert desc.outgoing_references == []
+
+    async def test_should_return_empty_incoming_references_when_none_exist(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["main", "t"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references == []
 
 
 class TestExploreDescribeIndex:

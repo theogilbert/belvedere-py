@@ -7,7 +7,7 @@ from weakref import WeakKeyDictionary
 
 from oracledb import AsyncConnection, AsyncCursor
 
-from ...protocol import IndexDescription, IndexKeyField
+from ...protocol import IndexDescription, IndexKeyField, TableReference
 from ..base import SAMPLE_SCAN_ROWS
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
@@ -272,6 +272,58 @@ async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> se
         [schema, table],
     )
     return {r[0] for r in await cur.fetchall()}
+
+
+@_conn_cache
+async def fetch_outgoing_references(
+    conn: AsyncConnection, schema: str, table: str
+) -> list[TableReference]:
+    """Return foreign keys defined on *table* that reference other tables."""
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT lc.COLUMN_NAME, rcon.OWNER, rcon.TABLE_NAME, rc.COLUMN_NAME"
+        " FROM ALL_CONSTRAINTS con"
+        " JOIN ALL_CONS_COLUMNS lc"
+        "  ON con.OWNER = lc.OWNER AND con.CONSTRAINT_NAME = lc.CONSTRAINT_NAME"
+        " JOIN ALL_CONSTRAINTS rcon"
+        "  ON con.R_OWNER = rcon.OWNER AND con.R_CONSTRAINT_NAME = rcon.CONSTRAINT_NAME"
+        " JOIN ALL_CONS_COLUMNS rc"
+        "  ON rcon.OWNER = rc.OWNER AND rcon.CONSTRAINT_NAME = rc.CONSTRAINT_NAME"
+        "  AND lc.POSITION = rc.POSITION"
+        " WHERE con.CONSTRAINT_TYPE = 'R' AND con.OWNER = :1 AND con.TABLE_NAME = :2"
+        " ORDER BY con.CONSTRAINT_NAME, lc.POSITION",
+        [schema, table],
+    )
+    return [
+        TableReference(column=r[0], schema=r[1], table=r[2], ref_column=r[3])
+        for r in await cur.fetchall()
+    ]
+
+
+@_conn_cache
+async def fetch_incoming_references(
+    conn: AsyncConnection, schema: str, table: str
+) -> list[TableReference]:
+    """Return foreign keys on other tables in *schema* that reference *table*."""
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT rc.COLUMN_NAME, con.OWNER, con.TABLE_NAME, lc.COLUMN_NAME"
+        " FROM ALL_CONSTRAINTS con"
+        " JOIN ALL_CONS_COLUMNS lc"
+        "  ON con.OWNER = lc.OWNER AND con.CONSTRAINT_NAME = lc.CONSTRAINT_NAME"
+        " JOIN ALL_CONSTRAINTS rcon"
+        "  ON con.R_OWNER = rcon.OWNER AND con.R_CONSTRAINT_NAME = rcon.CONSTRAINT_NAME"
+        " JOIN ALL_CONS_COLUMNS rc"
+        "  ON rcon.OWNER = rc.OWNER AND rcon.CONSTRAINT_NAME = rc.CONSTRAINT_NAME"
+        "  AND lc.POSITION = rc.POSITION"
+        " WHERE con.CONSTRAINT_TYPE = 'R' AND rcon.OWNER = :1 AND rcon.TABLE_NAME = :2"
+        " ORDER BY con.CONSTRAINT_NAME, lc.POSITION",
+        [schema, table],
+    )
+    return [
+        TableReference(column=r[0], schema=r[1], table=r[2], ref_column=r[3])
+        for r in await cur.fetchall()
+    ]
 
 
 @_conn_cache

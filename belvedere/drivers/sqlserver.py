@@ -22,6 +22,7 @@ from ..protocol import (
     ParamType,
     ReadResult,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 from .base import (
@@ -391,6 +392,8 @@ column metadata (name, type, nullability, default).
                         )
                         for r in col_rows
                     ],
+                    outgoing_references=self._outgoing_references_sync(schema, table),
+                    incoming_references=self._incoming_references_sync(schema, table),
                 )
 
             case [schema, table, "indices"]:
@@ -675,6 +678,54 @@ column metadata (name, type, nullability, default).
             composite_indices=composite_indices,
             comment=comment,
         )
+
+    def _outgoing_references_sync(
+        self, schema: str, table: str
+    ) -> list[TableReference]:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT pc.name, rs.name, ro.name, rc.name"
+            " FROM sys.foreign_keys fk"
+            " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
+            " JOIN sys.objects po ON fk.parent_object_id = po.object_id"
+            " JOIN sys.schemas ps ON po.schema_id = ps.schema_id"
+            " JOIN sys.columns pc"
+            "  ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id"
+            " JOIN sys.objects ro ON fk.referenced_object_id = ro.object_id"
+            " JOIN sys.schemas rs ON ro.schema_id = rs.schema_id"
+            " JOIN sys.columns rc"
+            "  ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id"
+            " WHERE ps.name = ? AND po.name = ?",
+            (schema, table),
+        )
+        return [
+            TableReference(column=r[0], table=r[2], ref_column=r[3], schema=r[1])
+            for r in cur.fetchall()  # ty: ignore[missing-argument]
+        ]
+
+    def _incoming_references_sync(
+        self, schema: str, table: str
+    ) -> list[TableReference]:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT rc.name, ps.name, po.name, pc.name"
+            " FROM sys.foreign_keys fk"
+            " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
+            " JOIN sys.objects po ON fk.parent_object_id = po.object_id"
+            " JOIN sys.schemas ps ON po.schema_id = ps.schema_id"
+            " JOIN sys.columns pc"
+            "  ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id"
+            " JOIN sys.objects ro ON fk.referenced_object_id = ro.object_id"
+            " JOIN sys.schemas rs ON ro.schema_id = rs.schema_id"
+            " JOIN sys.columns rc"
+            "  ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id"
+            " WHERE rs.name = ? AND ro.name = ?",
+            (schema, table),
+        )
+        return [
+            TableReference(column=r[0], table=r[2], ref_column=r[3], schema=r[1])
+            for r in cur.fetchall()  # ty: ignore[missing-argument]
+        ]
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
         try:

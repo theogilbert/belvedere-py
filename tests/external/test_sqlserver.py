@@ -26,6 +26,7 @@ from belvedere.protocol import (
     IndexDescription,
     ReadResult,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 
@@ -281,6 +282,61 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(["dbo", table])
         assert isinstance(desc, TableDescription)
         assert desc.comment is None
+
+    async def test_returns_outgoing_references(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == [
+            TableReference(
+                column="parent_id", table=parent, ref_column="id", schema="dbo"
+            )
+        ]
+        assert desc.incoming_references == []
+
+    async def test_returns_incoming_references(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references == [
+            TableReference(
+                column="id", table=child, ref_column="parent_id", schema="dbo"
+            )
+        ]
+        assert desc.outgoing_references == []
+
+    async def test_references_default_to_empty(
+        self, driver: SQLServerDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references == []
+        assert desc.incoming_references == []
 
 
 class TestExploreDescribeIndex:

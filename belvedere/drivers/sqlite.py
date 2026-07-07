@@ -177,16 +177,13 @@ metadata (name, type, nullability, primary key flag).
                 ]
 
             case [table, "foreign_keys"]:
-                rows = self._conn.execute(
-                    f"PRAGMA foreign_key_list({table})"
-                ).fetchall()
                 return [
                     ExploreItem(
-                        name=f"{r[3]} → {r[2]}.{r[4]}",
+                        name=f"{ref.column} → {ref.table}.{ref.ref_column}",
                         type="foreign_key",
                         expandable=False,
                     )
-                    for r in rows
+                    for ref in self._outgoing_references_sync(table)
                 ]
 
             case _:

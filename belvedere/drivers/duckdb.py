@@ -201,14 +201,10 @@ SELECT * FROM 'glob/**/*.parquet'
                 ]
 
             case [schema, table, "foreign_keys"]:
-                rows = self._conn.execute(
-                    "SELECT constraint_column_names, referenced_table, referenced_column_names"
-                    " FROM duckdb_constraints()"
-                    " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'FOREIGN KEY'",
-                    [schema, table],
-                ).fetchall()
                 items = []
-                for src_cols, fk_table, fk_cols in rows:
+                for src_cols, fk_table, fk_cols in self._outgoing_fk_rows_sync(
+                    schema, table
+                ):
                     src = ", ".join(src_cols)
                     ref = ", ".join(fk_cols)
                     items.append(
@@ -473,15 +469,21 @@ SELECT * FROM 'glob/**/*.parquet'
             comment=comment,
         )
 
-    def _outgoing_references_sync(
+    def _outgoing_fk_rows_sync(
         self, schema: str, table: str
-    ) -> list[TableReference]:
-        rows = self._conn.execute(
+    ) -> list[tuple[list[str], str, list[str]]]:
+        """Raw (local_columns, ref_table, ref_columns) rows for a table's foreign keys."""
+        return self._conn.execute(
             "SELECT constraint_column_names, referenced_table, referenced_column_names"
             " FROM duckdb_constraints()"
             " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'FOREIGN KEY'",
             [schema, table],
         ).fetchall()
+
+    def _outgoing_references_sync(
+        self, schema: str, table: str
+    ) -> list[TableReference]:
+        rows = self._outgoing_fk_rows_sync(schema, table)
         return [
             TableReference(
                 column=src_col, table=fk_table, ref_column=ref_col, schema=schema

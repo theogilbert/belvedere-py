@@ -17,6 +17,7 @@ class RegisteredDriver:
 _REGISTRY: list[RegisteredDriver] = [
     # SQL drivers — ordered by pick priority for the "sql" filetype.
     RegisteredDriver(module="oracle", class_name="OracleDriver"),
+    RegisteredDriver(module="postgres", class_name="PostgresDriver"),
     RegisteredDriver(module="sqlserver", class_name="SQLServerDriver"),
     RegisteredDriver(module="sqlite", class_name="SQLiteDriver"),
     RegisteredDriver(module="duckdb", class_name="DuckDBDriver"),

@@ -12,4 +12,5 @@ external-tests:
 	scripts/run-mongodb-tests.sh
 	scripts/run-neo4j-tests.sh
 	scripts/run-oracle-tests.sh
+	scripts/run-postgres-tests.sh
 	scripts/run-sqlserver-tests.sh

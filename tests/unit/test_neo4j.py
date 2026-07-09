@@ -9,8 +9,9 @@ from belvedere.drivers.neo4j import (
     Neo4jDriver,
     _plan_keyword,
     _plan_to_result,
+    _serialize,
 )
-from belvedere.protocol import ReadResult
+from belvedere.protocol import LobPlaceholder, ReadResult
 
 
 def _make_driver(summary: MagicMock) -> Neo4jDriver:
@@ -151,3 +152,19 @@ class TestExecuteProfile:
         result = asyncio.run(driver.execute("PROFILE MATCH (n) RETURN n", []))
         assert isinstance(result, ReadResult)
         assert result.columns == ["operator", "rows", "db_hits", "identifiers"]
+
+
+class TestSerialize:
+    def test_passes_through_plain_values(self) -> None:
+        assert _serialize("hello") == "hello"
+        assert _serialize(42) == 42
+        assert _serialize(None) is None
+
+    def test_renders_byte_array_as_byte_count(self) -> None:
+        assert _serialize(bytearray(b"\x01\x02\x03")) == LobPlaceholder(
+            text="ByteArray (3 bytes)"
+        )
+
+    def test_renders_byte_array_nested_in_list(self) -> None:
+        result = _serialize([bytearray(b"\x00\x01")])
+        assert result == [LobPlaceholder(text="ByteArray (2 bytes)")]

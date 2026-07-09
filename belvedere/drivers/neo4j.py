@@ -13,6 +13,7 @@ from ..protocol import (
     IndexKeyField,
     IndicesDescription,
     Language,
+    LobPlaceholder,
     ParamType,
     ReadResult,
     WriteResult,
@@ -305,6 +306,8 @@ def _serialize(value: Any) -> Any:
         return [_serialize(v) for v in value]
     if isinstance(value, dict):
         return {k: _serialize(v) for k, v in value.items()}
+    if isinstance(value, (bytes, bytearray)):
+        return LobPlaceholder(text=f"ByteArray ({len(value)} bytes)")
     return value
 
 

@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import faulthandler
 import logging
 import os
 import pathlib
@@ -16,6 +17,8 @@ logger = logging.getLogger()
 
 def main() -> None:
     args = parse_cli_args()
+
+    _enable_faulthandler()
 
     if args.log:
         log_path = _log_path()
@@ -52,6 +55,14 @@ def _log_path() -> pathlib.Path:
         "XDG_STATE_HOME", os.path.join(os.path.expanduser("~"), ".local", "state")
     )
     return pathlib.Path(state_home) / "belvedere" / "server.log"
+
+
+def _enable_faulthandler() -> None:
+    """Dump the C stack to a file on fatal signals (segfaults in native drivers)."""
+    crash_path = _log_path().with_name("crash.log")
+    crash_path.parent.mkdir(parents=True, exist_ok=True)
+    crash_file = crash_path.open("a")
+    faulthandler.enable(file=crash_file)
 
 
 @dataclass

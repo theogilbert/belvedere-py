@@ -31,6 +31,7 @@ class Method(StrEnum):
     EXPLORE_LIST = "explore.list"
     EXPLORE_DESCRIBE = "explore.describe"
     EXPLORE_PREVIEW = "explore.preview"
+    EXPLORE_DIAGRAM = "explore.diagram"
 
 
 @dataclass

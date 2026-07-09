@@ -574,6 +574,50 @@ class TestExploreDescribe:
         assert result == {"details": None}
 
 
+class TestExploreDiagram:
+    async def test_should_return_ascii_diagram_from_driver_describe(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_describe.return_value = TableDescription(
+            table="t", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        result = await disp.dispatch(
+            Method.EXPLORE_DIAGRAM,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
+        )
+        assert "t" in result["diagram"]
+        assert "id" in result["diagram"]
+
+    async def test_should_raise_when_path_does_not_resolve_to_a_table(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_describe.return_value = None
+        with pytest.raises(DispatchError):
+            await disp.dispatch(
+                Method.EXPLORE_DIAGRAM,
+                {"connection_id": conn_id, "path": ["t"]},
+                noop_progress,
+            )
+
+    async def test_reconnects_when_connection_is_lost(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_describe.side_effect = [
+            ConnectionLostError(),
+            TableDescription(table="t", columns=[]),
+        ]
+        await disp.dispatch(
+            Method.EXPLORE_DIAGRAM,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
+        )
+        driver.reconnect.assert_awaited_once()
+
+
 class TestConcurrency:
     async def test_should_serialise_concurrent_requests_on_same_connection(
         self, tmp_path: pathlib.Path, mock_driver: AsyncMock

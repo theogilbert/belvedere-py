@@ -15,6 +15,7 @@ from ..protocol import (
     IndexKeyField,
     IndicesDescription,
     Language,
+    LobPlaceholder,
     ParamType,
     ReadResult,
     TableDescription,
@@ -130,7 +131,9 @@ metadata (name, type, nullability, primary key flag).
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
-            rows: list[list[Any]] = [list(r) for r in cur.fetchall()]
+            rows: list[list[Any]] = [
+                [_render_lob(v) for v in r] for r in cur.fetchall()
+            ]
             return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
         return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
@@ -424,3 +427,15 @@ metadata (name, type, nullability, primary key flag).
             )
         except sqlite3.Error as exc:
             raise DriverError(str(exc)) from exc
+
+
+def _render_lob(value: Any) -> Any:
+    """Render a BLOB value as a :class:`LobPlaceholder` instead of inlining it in the row.
+
+    sqlite3 fully materializes BLOB columns as plain ``bytes``, but ``bytes``
+    still isn't JSON-serialisable and can be arbitrarily large, so it's
+    swapped for a placeholder like Oracle's CLOB/BLOB handling.
+    """
+    if not isinstance(value, (bytes, bytearray)):
+        return value
+    return LobPlaceholder(text=f"BLOB ({len(value)} bytes)")

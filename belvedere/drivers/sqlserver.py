@@ -19,6 +19,7 @@ from ..protocol import (
     IndexKeyField,
     IndicesDescription,
     Language,
+    LobPlaceholder,
     ParamType,
     ReadResult,
     TableDescription,
@@ -187,7 +188,10 @@ column metadata (name, type, nullability, default).
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
-            rows: list[list[Any]] = [list(r) for r in cur.fetchall()]  # ty: ignore[missing-argument]
+            rows: list[list[Any]] = [
+                [_render_lob(v) for v in r]
+                for r in cur.fetchall()  # ty: ignore[missing-argument]
+            ]
             return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
         return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
 
@@ -774,6 +778,19 @@ column metadata (name, type, nullability, default).
         return await asyncio.get_running_loop().run_in_executor(
             None, lambda: fn(*args, **kwargs)
         )
+
+
+def _render_lob(value: Any) -> Any:
+    """Render a binary value as a :class:`LobPlaceholder` instead of inlining it in the row.
+
+    mssql-python fully materializes BINARY/VARBINARY/IMAGE columns as plain
+    ``bytes`` — unlike Oracle's streaming LOB locators — but ``bytes`` still
+    isn't JSON-serialisable and can be arbitrarily large, so it's swapped for
+    a placeholder like Oracle's CLOB/BLOB handling.
+    """
+    if not isinstance(value, (bytes, bytearray)):
+        return value
+    return LobPlaceholder(text=f"VARBINARY ({len(value)} bytes)")
 
 
 def _build_sqlserver_ddl(

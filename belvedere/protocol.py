@@ -238,13 +238,28 @@ DescribeResult = (
 
 
 @dataclass
+class LobPlaceholder:
+    """Stands in for a large object cell value a driver did not inline into a row.
+
+    Tagging the value with an object — rather than a formatted string — lets
+    clients distinguish it from a real string cell without pattern-matching
+    cell contents.
+    """
+
+    text: str
+    """Server-formatted placeholder text to display, e.g. ``"CLOB (3423 chars)"``."""
+    type: str = "lob"
+    """Discriminator — always ``"lob"``."""
+
+
+@dataclass
 class ReadResult:
     """Result of a read-only query."""
 
     columns: list[str]
     """Column names in order."""
     rows: list[list[Any]]
-    """Each row as a list of values."""
+    """Each row as a list of values; a value may be a :class:`LobPlaceholder`."""
     rows_total: int
     """Total number of rows matching the query (may exceed len(rows) when the driver applies a default limit)."""
 

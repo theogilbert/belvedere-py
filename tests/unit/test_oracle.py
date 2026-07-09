@@ -13,8 +13,16 @@ from belvedere.drivers.oracle.driver import (
     _is_explain_plan,
     _offset_to_line_col,
 )
-from belvedere.drivers.oracle.queries import _PRE12_SYSTEM_SCHEMAS_SQL
-from belvedere.protocol import ExploreItem, IndexDescription, ReadResult
+from belvedere.drivers.oracle.queries import _PRE12_SYSTEM_SCHEMAS_SQL, render_lob
+from belvedere.protocol import ExploreItem, IndexDescription, LobPlaceholder, ReadResult
+
+
+def _make_lob(type_name: str, size: int) -> MagicMock:
+    lob = MagicMock()
+    lob.read = AsyncMock()
+    lob.type.name = type_name
+    lob.size = AsyncMock(return_value=size)
+    return lob
 
 
 def _make_index_driver(index_row: tuple | None, col_rows: list) -> OracleDriver:
@@ -100,6 +108,35 @@ class TestFormatDbError:
         exc = _make_db_error("ORA-00936: missing expression", offset=7)
         result = _format_db_error(exc, query)
         assert result == "ORA-00936: missing expression (line 2, col 1)"
+
+
+class TestRenderLob:
+    def test_passes_through_non_lob_values(self) -> None:
+        assert asyncio.run(render_lob("hello")) == "hello"
+        assert asyncio.run(render_lob(42)) == 42
+
+    def test_renders_clob_as_char_count(self) -> None:
+        lob = _make_lob("DB_TYPE_CLOB", 3423)
+        assert asyncio.run(render_lob(lob)) == LobPlaceholder(text="CLOB (3423 chars)")
+
+    def test_renders_blob_as_byte_count(self) -> None:
+        lob = _make_lob("DB_TYPE_BLOB", 128)
+        assert asyncio.run(render_lob(lob)) == LobPlaceholder(text="BLOB (128 bytes)")
+
+
+class TestExecuteRendersLobs:
+    def test_replaces_lob_values_with_placeholders(self) -> None:
+        lob = _make_lob("DB_TYPE_CLOB", 3423)
+        cur = MagicMock()
+        cur.execute = AsyncMock()
+        cur.description = [("ID",), ("NOTES",)]
+        cur.fetchall = AsyncMock(return_value=[(1, lob)])
+        conn = MagicMock(spec=oracledb.AsyncConnection)
+        conn.cursor.return_value = cur
+        driver = OracleDriver({}, conn, True, DriverSettings())
+        result = asyncio.run(driver.execute("SELECT id, notes FROM t", []))
+        assert isinstance(result, ReadResult)
+        assert result.rows == [[1, LobPlaceholder(text="CLOB (3423 chars)")]]
 
 
 class TestExecuteErrorPropagation:

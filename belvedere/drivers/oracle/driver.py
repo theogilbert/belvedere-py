@@ -56,6 +56,7 @@ from .queries import (
     fetch_table_comment,
     fetch_table_sample_rows,
     fetch_tables_and_views,
+    render_lob,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,7 +201,9 @@ name, type, nullability, primary key flag, default) and on
                 )
             if cur.description is not None:
                 columns = [d[0] for d in cur.description]
-                rows = [list(r) for r in await cur.fetchall()]
+                rows = [
+                    [await render_lob(v) for v in row] for row in await cur.fetchall()
+                ]
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
             invalidate_cache(self._conn)
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)

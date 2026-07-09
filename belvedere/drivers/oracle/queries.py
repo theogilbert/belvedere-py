@@ -7,7 +7,7 @@ from weakref import WeakKeyDictionary
 
 from oracledb import AsyncConnection, AsyncCursor
 
-from ...protocol import IndexDescription, IndexKeyField, TableReference
+from ...protocol import IndexDescription, IndexKeyField, LobPlaceholder, TableReference
 from ..base import SAMPLE_SCAN_ROWS
 
 _CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
@@ -550,7 +550,7 @@ async def fetch_column_sample(
             f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
             f' WHERE "{col_name}" IS NOT NULL FETCH FIRST {n} ROWS ONLY'
         )
-        return [r[0] for r in await cur.fetchall()]
+        return [await render_lob(r[0]) for r in await cur.fetchall()]
     except Exception:
         return []
 
@@ -558,7 +558,7 @@ async def fetch_column_sample(
 @_conn_cache
 async def fetch_table_sample_rows(
     conn: AsyncConnection, schema: str, table: str
-) -> tuple[list[str], list[tuple]]:
+) -> tuple[list[str], list[list[Any]]]:
     """Return the column names and first :data:`SAMPLE_SCAN_ROWS` rows of *table*.
 
     A single scan replacing one ``SELECT DISTINCT`` round trip per column;
@@ -571,9 +571,24 @@ async def fetch_table_sample_rows(
             f" FETCH FIRST {SAMPLE_SCAN_ROWS} ROWS ONLY"
         )
         columns = [d[0] for d in cur.description or []]
-        return columns, await cur.fetchall()
+        rows = [[await render_lob(v) for v in row] for row in await cur.fetchall()]
+        return columns, rows
     except Exception:
         return [], []
+
+
+async def render_lob(value: Any) -> Any:
+    """Render a LOB locator as a :class:`LobPlaceholder` instead of reading its content.
+
+    CLOB/BLOB values can be arbitrarily large, and a locator that outlives its
+    cursor crashes the process if read later (e.g. during response serialization) —
+    a placeholder sidesteps both, at the cost of one cheap ``size()`` round trip.
+    """
+    if not hasattr(value, "read"):
+        return value
+    type_name = value.type.name.removeprefix("DB_TYPE_")
+    unit = "bytes" if type_name == "BLOB" else "chars"
+    return LobPlaceholder(text=f"{type_name} ({await value.size()} {unit})")
 
 
 def build_column_index_lists(

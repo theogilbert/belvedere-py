@@ -7,7 +7,7 @@ from weakref import WeakKeyDictionary
 
 from psycopg import AsyncConnection, sql
 
-from ...protocol import IndexDescription, IndexKeyField, TableReference
+from ...protocol import IndexDescription, IndexKeyField, LobPlaceholder, TableReference
 from ..base import SAMPLE_SCAN_ROWS
 
 _CONSTRAINT_TYPE = {
@@ -571,3 +571,15 @@ async def fetch_table_sample_rows(
         return columns, await cur.fetchall()
     except Exception:
         return [], []
+
+
+def render_lob(value: Any) -> Any:
+    """Render a BYTEA value as a :class:`LobPlaceholder` instead of inlining it in the row.
+
+    psycopg fully materializes BYTEA columns as plain ``bytes``, but ``bytes``
+    still isn't JSON-serialisable and can be arbitrarily large, so it's
+    swapped for a placeholder like Oracle's CLOB/BLOB handling.
+    """
+    if not isinstance(value, (bytes, bytearray)):
+        return value
+    return LobPlaceholder(text=f"BYTEA ({len(value)} bytes)")

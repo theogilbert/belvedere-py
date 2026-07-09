@@ -12,7 +12,8 @@ from belvedere.drivers.postgres.driver import (
     PostgresDriver,
     _maybe_raise_connection_lost,
 )
-from belvedere.protocol import ExploreItem, ReadResult, WriteResult
+from belvedere.drivers.postgres.queries import render_lob
+from belvedere.protocol import ExploreItem, LobPlaceholder, ReadResult, WriteResult
 
 
 def _make_driver(
@@ -72,6 +73,25 @@ class TestExecuteResults:
         result = asyncio.run(driver.execute("CREATE TABLE t (id integer)"))
         assert isinstance(result, WriteResult)
         assert result.rows_affected == 0
+
+    def test_replaces_bytea_values_with_placeholders(self) -> None:
+        driver, _ = _make_driver(
+            description=[SimpleNamespace(name="id"), SimpleNamespace(name="data")],
+            rows=[(1, b"\x00\x01")],
+        )
+        result = asyncio.run(driver.execute("SELECT id, data FROM t"))
+        assert isinstance(result, ReadResult)
+        assert result.rows == [[1, LobPlaceholder(text="BYTEA (2 bytes)")]]
+
+
+class TestRenderLob:
+    def test_passes_through_non_binary_values(self) -> None:
+        assert render_lob("hello") == "hello"
+        assert render_lob(42) == 42
+        assert render_lob(None) is None
+
+    def test_renders_bytes_as_byte_count(self) -> None:
+        assert render_lob(b"\x01\x02\x03") == LobPlaceholder(text="BYTEA (3 bytes)")
 
 
 class TestExecuteErrorPropagation:

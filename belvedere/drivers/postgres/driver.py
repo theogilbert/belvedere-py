@@ -52,6 +52,7 @@ from .queries import (
     fetch_table_sample_rows,
     fetch_tables_and_views,
     invalidate_cache,
+    render_lob,
 )
 
 
@@ -180,7 +181,7 @@ uniqueness, INCLUDE columns, and DDL as reported by `pg_indexes`).
             await cur.execute(sql.SQL(query), params)  # ty: ignore[invalid-argument-type]
             if cur.description is not None:
                 columns = [d.name for d in cur.description]
-                rows = [list(r) for r in await cur.fetchall()]
+                rows = [[render_lob(v) for v in r] for r in await cur.fetchall()]
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
             invalidate_cache(self._conn)
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)

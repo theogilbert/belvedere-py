@@ -171,7 +171,10 @@ name, type, nullability, primary key flag, default) and on
         self._metadata_transform_set = False
 
     async def disconnect(self) -> None:
-        await self._conn.close()
+        try:
+            await self._conn.close()
+        except oracledb.InterfaceError:
+            pass
 
     async def execute(
         self, query: str, binds: list[Any] | None = None

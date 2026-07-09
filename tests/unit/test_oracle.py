@@ -193,6 +193,25 @@ class TestExecuteErrorPropagation:
             asyncio.run(driver.explore_describe(["MYSCHEMA", "MYTABLE"]))
 
 
+class TestDisconnect:
+    def test_closes_connection(self) -> None:
+        conn = MagicMock(spec=oracledb.AsyncConnection)
+        conn.close = AsyncMock()
+        driver = OracleDriver({}, conn, True, DriverSettings())
+        asyncio.run(driver.disconnect())
+        conn.close.assert_awaited_once()
+
+    def test_swallows_not_connected_error(self) -> None:
+        conn = MagicMock(spec=oracledb.AsyncConnection)
+        conn.close = AsyncMock(
+            side_effect=oracledb.InterfaceError(
+                "DPY-1001: not connected to the database"
+            )
+        )
+        driver = OracleDriver({}, conn, True, DriverSettings())
+        asyncio.run(driver.disconnect())  # must not raise
+
+
 class TestExploreDescribeIndex:
     def test_returns_index_description(self) -> None:
         driver = _make_index_driver(

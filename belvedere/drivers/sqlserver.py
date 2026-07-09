@@ -177,10 +177,7 @@ column metadata (name, type, nullability, default).
         try:
             return await self._run(self._execute_sync, query, binds)
         except Exception as exc:
-            if isinstance(
-                exc, (mssql_python.OperationalError, mssql_python.InterfaceError)
-            ):
-                raise ConnectionLostError(str(exc)) from exc
+            _maybe_raise_connection_lost(exc)
             raise DriverError(str(exc)) from exc
 
     def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | WriteResult:
@@ -205,7 +202,11 @@ column metadata (name, type, nullability, default).
         Returns:
             Child nodes, or an empty list if the path is unrecognised.
         """
-        return await self._run(self._explore_list_sync, path)
+        try:
+            return await self._run(self._explore_list_sync, path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise DriverError(str(exc)) from exc
 
     def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
 
@@ -309,6 +310,13 @@ column metadata (name, type, nullability, default).
         Returns:
             TableDescription, IndicesDescription, or IndexDescription depending on the path.
         """
+        try:
+            return await self._explore_describe(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise DriverError(str(exc)) from exc
+
+    async def _explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
             case [schema, table, "columns"]:
                 base = await self._run(self._describe_columns_sync, schema, table)
@@ -778,6 +786,11 @@ column metadata (name, type, nullability, default).
         return await asyncio.get_running_loop().run_in_executor(
             None, lambda: fn(*args, **kwargs)
         )
+
+
+def _maybe_raise_connection_lost(exc: Exception) -> None:
+    if isinstance(exc, (mssql_python.OperationalError, mssql_python.InterfaceError)):
+        raise ConnectionLostError(str(exc)) from exc
 
 
 def _render_lob(value: Any) -> Any:

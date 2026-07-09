@@ -3,9 +3,19 @@
 import asyncio
 from unittest.mock import MagicMock
 
-from belvedere.drivers.base import DriverSettings
+import mssql_python
+import pytest
+
+from belvedere.drivers.base import ConnectionLostError, DriverSettings
 from belvedere.drivers.sqlserver import SQLServerDriver, _render_lob
 from belvedere.protocol import LobPlaceholder, ReadResult
+
+
+def _closed_connection_error() -> mssql_python.InterfaceError:
+    return mssql_python.InterfaceError(
+        driver_error="Cannot create cursor on closed connection",
+        ddbc_error="Cannot create cursor on closed connection",
+    )
 
 
 def _make_driver(cur: MagicMock) -> SQLServerDriver:
@@ -38,3 +48,26 @@ class TestExecuteRendersLobs:
         result = asyncio.run(driver.execute("SELECT id, data FROM t", []))
         assert isinstance(result, ReadResult)
         assert result.rows == [[1, LobPlaceholder(text="VARBINARY (2 bytes)")]]
+
+
+class TestConnectionLostTranslation:
+    def test_execute_raises_connection_lost(self) -> None:
+        conn = MagicMock()
+        conn.execute.side_effect = _closed_connection_error()
+        driver = SQLServerDriver({}, conn, DriverSettings())
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.execute("SELECT 1", []))
+
+    def test_explore_list_raises_connection_lost(self) -> None:
+        conn = MagicMock()
+        conn.cursor.side_effect = _closed_connection_error()
+        driver = SQLServerDriver({}, conn, DriverSettings())
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.explore_list([]))
+
+    def test_explore_describe_raises_connection_lost(self) -> None:
+        conn = MagicMock()
+        conn.cursor.side_effect = _closed_connection_error()
+        driver = SQLServerDriver({}, conn, DriverSettings())
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.explore_describe(["dbo", "orders"]))

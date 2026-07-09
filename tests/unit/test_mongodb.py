@@ -7,8 +7,8 @@ import pymongo.errors
 import pytest
 
 from belvedere.drivers.base import ConnectionLostError, DriverError, DriverSettings
-from belvedere.drivers.mongodb import MongoDriver, _make_mongo_client
-from belvedere.protocol import WriteResult
+from belvedere.drivers.mongodb import MongoDriver, _make_mongo_client, _serialize
+from belvedere.protocol import LobPlaceholder, WriteResult
 
 _CLOSED_EXC = pymongo.errors.InvalidOperation("Cannot use AsyncMongoClient after close")
 
@@ -146,6 +146,22 @@ class TestExecuteExtendedJson:
         occurred_at = update["$set"]["occurredAt"]
         assert isinstance(occurred_at, datetime)
         assert occurred_at.year == 2024
+
+
+class TestSerialize:
+    def test_passes_through_plain_values(self) -> None:
+        assert _serialize("hello") == "hello"
+        assert _serialize(42) == 42
+        assert _serialize(None) is None
+
+    def test_renders_binary_as_byte_count(self) -> None:
+        assert _serialize(b"\x01\x02\x03") == LobPlaceholder(
+            text="BSON Binary (3 bytes)"
+        )
+
+    def test_renders_binary_nested_in_dict(self) -> None:
+        result = _serialize({"blob": b"\x00\x01"})
+        assert result == {"blob": LobPlaceholder(text="BSON Binary (2 bytes)")}
 
 
 class TestExecuteMalformedCommand:

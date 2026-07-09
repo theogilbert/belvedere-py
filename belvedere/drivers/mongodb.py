@@ -15,6 +15,7 @@ from ..protocol import (
     IndexDescription,
     IndexKeyField,
     IndicesDescription,
+    LobPlaceholder,
     ParamType,
     ReadResult,
     WriteResult,
@@ -453,6 +454,8 @@ def _serialize(value: Any) -> Any:
         pass
     if hasattr(value, "isoformat"):
         return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return LobPlaceholder(text=f"BSON Binary ({len(value)} bytes)")
     if isinstance(value, dict):
         return {k: _serialize(v) for k, v in value.items()}
     if isinstance(value, list):

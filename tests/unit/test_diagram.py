@@ -147,6 +147,58 @@ class TestBuildDiagram:
         with pytest.raises(DiagramError):
             await build_diagram(["i"], describe)
 
+    async def test_non_key_columns_are_collapsed_to_an_ellipsis(self) -> None:
+        desc = TableDescription(
+            table="users",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="name", type="TEXT"),
+                ColumnInfo(name="email", type="TEXT"),
+            ],
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+        assert "..." in result.diagram
+        assert "name" not in result.diagram
+        assert "email" not in result.diagram
+
+    async def test_incoming_fk_column_is_kept(self) -> None:
+        users = TableDescription(
+            table="users",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="username", type="TEXT"),
+                ColumnInfo(name="bio", type="TEXT"),
+            ],
+            incoming_references=[
+                TableReference(column="username", table="posts", ref_column="author")
+            ],
+        )
+        posts = TableDescription(
+            table="posts", columns=[ColumnInfo(name="author", type="TEXT")]
+        )
+        describe = _describe_from({("users",): users, ("posts",): posts})
+        result = await build_diagram(["users"], describe)
+        assert "username" in result.diagram
+        assert "bio" not in result.diagram
+        assert "..." in result.diagram
+
+    async def test_no_ellipsis_when_all_columns_are_keys(self) -> None:
+        desc = TableDescription(
+            table="orders",
+            columns=[
+                ColumnInfo(name="user_id", type="INTEGER"),
+                ColumnInfo(name="product_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="user_id", table="users", ref_column="id"),
+                TableReference(column="product_id", table="products", ref_column="id"),
+            ],
+        )
+        describe = _describe_from({("orders",): desc})
+        result = await build_diagram(["orders"], describe)
+        assert "..." not in result.diagram
+
 
 class TestBuildDiagramRegions:
     async def test_table_header_region_resolves_to_table_path(self) -> None:
@@ -205,6 +257,22 @@ class TestBuildDiagramRegions:
             line = result.diagram.splitlines()[region.row]
             span = line.encode()[region.col_start : region.col_end].decode()
             assert span == "users"
+
+    async def test_ellipsis_region_resolves_to_the_table_column_list(self) -> None:
+        desc = TableDescription(
+            table="users",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="name", type="TEXT"),
+            ],
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        region = next(r for r in result.regions if r.path == ["users", "columns"])
+        line = result.diagram.splitlines()[region.row]
+        span = line.encode()[region.col_start : region.col_end].decode()
+        assert span == "..."
 
     async def test_unresolved_reference_still_gets_a_region(self) -> None:
         desc = TableDescription(

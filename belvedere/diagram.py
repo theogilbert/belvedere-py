@@ -80,6 +80,8 @@ class _Node:
     columns: list[ColumnInfo]
     fk_columns: set[str]
     """Names of columns covered by an outgoing foreign key."""
+    ref_columns: set[str]
+    """Names of columns covered by an incoming foreign key (referenced by another table)."""
     children: list[_Edge] = field(default_factory=list)
 
 
@@ -118,6 +120,7 @@ async def _visit(
         path=path,
         columns=desc.columns,
         fk_columns={r.column for r in desc.outgoing_references},
+        ref_columns={r.column for r in desc.incoming_references},
     )
     for direction, ref in _iter_refs(desc):
         ref_path = _ref_path(desc, ref)
@@ -208,22 +211,31 @@ def _render_children(edges: list[_Edge], prefix: str) -> list[_Line]:
 
 
 def _render_box(node: _Node) -> list[_Line]:
+    display_cols = [
+        col
+        for col in node.columns
+        if col.pk or col.name in node.fk_columns or col.name in node.ref_columns
+    ]
+    hidden = len(display_cols) < len(node.columns)
+
     if not node.columns:
         content_lines = ["(no columns)"]
     else:
         rows = []
-        for col in node.columns:
+        for col in display_cols:
             markers = []
             if col.pk:
                 markers.append("PK")
             if col.name in node.fk_columns:
                 markers.append("FK")
             rows.append((col.name, col.type, ",".join(markers)))
-        name_w = max(len(r[0]) for r in rows)
-        type_w = max(len(r[1]) for r in rows)
+        name_w = max((len(r[0]) for r in rows), default=0)
+        type_w = max((len(r[1]) for r in rows), default=0)
         content_lines = [
             f"{n:<{name_w}}  {t:<{type_w}}  {m}".rstrip() for n, t, m in rows
         ]
+        if hidden:
+            content_lines.append("...")
 
     inner_w = max(len(node.name) + 2, max(len(line) for line in content_lines))
     top: _Line = [
@@ -237,12 +249,23 @@ def _render_box(node: _Node) -> list[_Line]:
     if not node.columns:
         body.append([_Segment(f"│ {content_lines[0]:<{inner_w}} │")])
     else:
-        for col, content in zip(node.columns, content_lines):
+        for col, content in zip(display_cols, content_lines):
             padded = f"{content:<{inner_w}}"
             rest = padded[len(col.name) :]
             col_path = [*node.path, "columns", col.name]
             body.append(
                 [_Segment("│ "), _Segment(col.name, col_path), _Segment(rest + " │")]
+            )
+        if hidden:
+            ellipsis = content_lines[-1]
+            padded = f"{ellipsis:<{inner_w}}"
+            cols_path = [*node.path, "columns"]
+            body.append(
+                [
+                    _Segment("│ "),
+                    _Segment(ellipsis, cols_path),
+                    _Segment(padded[len(ellipsis) :] + " │"),
+                ]
             )
 
     return [top, *body, bottom]

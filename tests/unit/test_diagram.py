@@ -79,7 +79,6 @@ class TestBuildDiagram:
         describe = _describe_from({("orders",): orders, ("users",): users})
         result = await build_diagram(["orders"], describe)
         assert "users" in result.diagram
-        assert "user_id → users.id" in result.diagram
 
     async def test_incoming_reference_renders_connected_table(self) -> None:
         users = TableDescription(
@@ -95,7 +94,6 @@ class TestBuildDiagram:
         describe = _describe_from({("users",): users, ("orders",): orders})
         result = await build_diagram(["users"], describe)
         assert "orders" in result.diagram
-        assert "orders.user_id → id" in result.diagram
 
     async def test_self_reference_is_not_duplicated(self) -> None:
         desc = TableDescription(
@@ -237,7 +235,7 @@ class TestBuildDiagramRegions:
         # byte offset must reflect that, not the character index.
         assert region.col_start == 4
 
-    async def test_edge_label_region_names_the_referenced_table(self) -> None:
+    async def test_branch_attaches_directly_to_the_child_box(self) -> None:
         orders = TableDescription(
             table="orders",
             columns=[ColumnInfo(name="user_id", type="INTEGER")],
@@ -252,11 +250,12 @@ class TestBuildDiagramRegions:
         result = await build_diagram(["orders"], describe)
 
         matches = [r for r in result.regions if r.path == ["users"]]
-        assert len(matches) == 2  # once in the users box header, once in the edge label
-        for region in matches:
-            line = result.diagram.splitlines()[region.row]
-            span = line.encode()[region.col_start : region.col_end].decode()
-            assert span == "users"
+        assert len(matches) == 1  # the box header names the table; no separate line
+        region = matches[0]
+        line = result.diagram.splitlines()[region.row]
+        assert line.startswith("└── ┌─ users")
+        span = line.encode()[region.col_start : region.col_end].decode()
+        assert span == "users"
 
     async def test_ellipsis_region_resolves_to_the_table_column_list(self) -> None:
         desc = TableDescription(

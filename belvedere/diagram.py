@@ -3,7 +3,7 @@ as an ASCII box-and-tree diagram.
 
 Layout is a vertical tree: the source table's box is printed first, then each
 related table is nested underneath, indented like the ``tree`` command, and
-connected to its parent with an edge label describing the join. Tables already
+connected to its parent with a branch line naming it. Tables already
 rendered elsewhere in the tree (cycles, diamond references) are not
 re-rendered — they appear as a plain reference line pointing back to them.
 
@@ -61,8 +61,6 @@ _Line = list[_Segment]
 
 @dataclass
 class _Edge:
-    label: _Line
-    """Join description shown next to the branch, e.g. ``user_id → users.id``."""
     node: "_Node | None"
     """Child node, or None if the target was already rendered elsewhere (or unavailable)."""
     ref_name: str
@@ -122,53 +120,32 @@ async def _visit(
         fk_columns={r.column for r in desc.outgoing_references},
         ref_columns={r.column for r in desc.incoming_references},
     )
-    for direction, ref in _iter_refs(desc):
+    for ref in _iter_refs(desc):
         ref_path = _ref_path(desc, ref)
         ref_name = f"{ref.schema}.{ref.table}" if ref.schema else ref.table
-        label = _edge_label(ref, direction, path, ref_path)
 
         if tuple(ref_path) == tuple(path):
             continue  # self-reference — already fully described by this box
 
         if tuple(ref_path) in visited or depth >= _MAX_DEPTH:
-            node.children.append(
-                _Edge(label=label, node=None, ref_name=ref_name, ref_path=ref_path)
-            )
+            node.children.append(_Edge(node=None, ref_name=ref_name, ref_path=ref_path))
             continue
 
         visited.add(tuple(ref_path))
         child_desc = await describe(ref_path)
         if not isinstance(child_desc, TableDescription):
-            node.children.append(
-                _Edge(label=label, node=None, ref_name=ref_name, ref_path=ref_path)
-            )
+            node.children.append(_Edge(node=None, ref_name=ref_name, ref_path=ref_path))
             continue
 
         child = await _visit(ref_path, child_desc, describe, visited, depth + 1)
-        node.children.append(
-            _Edge(label=label, node=child, ref_name=ref_name, ref_path=ref_path)
-        )
+        node.children.append(_Edge(node=child, ref_name=ref_name, ref_path=ref_path))
 
     return node
 
 
 def _iter_refs(desc: TableDescription):
-    for ref in desc.outgoing_references:
-        yield "out", ref
-    for ref in desc.incoming_references:
-        yield "in", ref
-
-
-def _edge_label(
-    ref: TableReference, direction: str, local_path: list[str], target_path: list[str]
-) -> _Line:
-    target = f"{ref.schema}.{ref.table}" if ref.schema else ref.table
-    local_col = _Segment(ref.column, [*local_path, "columns", ref.column])
-    target_name = _Segment(target, target_path)
-    target_col = _Segment(ref.ref_column, [*target_path, "columns", ref.ref_column])
-    if direction == "out":
-        return [local_col, _Segment(" → "), target_name, _Segment("."), target_col]
-    return [target_name, _Segment("."), target_col, _Segment(" → "), local_col]
+    yield from desc.outgoing_references
+    yield from desc.incoming_references
 
 
 def _ref_path(desc: TableDescription, ref: TableReference) -> list[str]:
@@ -193,19 +170,14 @@ def _render_children(edges: list[_Edge], prefix: str) -> list[_Line]:
         cont = _BLANK if is_last else _PIPE
 
         if edge.node is None:
-            line: _Line = [
-                _Segment(f"{prefix}{branch}"),
-                _Segment(edge.ref_name, edge.ref_path),
-            ]
-            line.append(_Segment("  ("))
-            line += edge.label
-            line.append(_Segment(")"))
-            lines.append(line)
+            lines.append(
+                [_Segment(f"{prefix}{branch}"), _Segment(edge.ref_name, edge.ref_path)]
+            )
             continue
 
-        lines.append([_Segment(f"{prefix}{branch}"), *edge.label])
         box_lines = _render_box(edge.node)
-        lines += [[_Segment(f"{prefix}{cont}"), *bl] for bl in box_lines]
+        lines.append([_Segment(f"{prefix}{branch}"), *box_lines[0]])
+        lines += [[_Segment(f"{prefix}{cont}"), *bl] for bl in box_lines[1:]]
         lines += _render_children(edge.node.children, prefix + cont)
     return lines
 

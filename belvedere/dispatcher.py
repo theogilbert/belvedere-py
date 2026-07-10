@@ -309,10 +309,10 @@ class Dispatcher:
             )
 
         try:
-            diagram = await build_diagram(path, describe)
+            result = await build_diagram(path, describe)
         except DiagramError as exc:
             raise DispatchError(str(exc)) from exc
-        return {"diagram": diagram}
+        return {"diagram": result.diagram, "regions": result.regions}
 
     async def _reconnect_and_retry(
         self,

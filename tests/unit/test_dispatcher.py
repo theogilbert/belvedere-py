@@ -589,6 +589,8 @@ class TestExploreDiagram:
         )
         assert "t" in result["diagram"]
         assert "id" in result["diagram"]
+        assert any(r.path == ["t"] for r in result["regions"])
+        assert any(r.path == ["t", "columns", "id"] for r in result["regions"])
 
     async def test_should_raise_when_path_does_not_resolve_to_a_table(
         self, connected: tuple[Dispatcher, str, AsyncMock]

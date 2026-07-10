@@ -254,6 +254,22 @@ class LobPlaceholder:
 
 
 @dataclass
+class DiagramRegion:
+    """One span in the ``diagram`` string returned by explore.diagram that names a
+    table or column, letting a client resolve a cursor position to an
+    explore.describe path without parsing the diagram text itself."""
+
+    row: int
+    """0-indexed line number within ``diagram`` (lines split on ``\\n``)."""
+    col_start: int
+    """0-indexed byte offset (not codepoints) where the span starts."""
+    col_end: int
+    """0-indexed byte offset where the span ends (exclusive)."""
+    path: list[str]
+    """Path to pass as explore.describe's ``path`` param to describe this table or column."""
+
+
+@dataclass
 class ReadResult:
     """Result of a read-only query."""
 

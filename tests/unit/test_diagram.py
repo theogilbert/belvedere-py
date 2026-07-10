@@ -33,14 +33,14 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
-        assert "users" in result
-        assert "id" in result
+        assert "users" in result.diagram
+        assert "id" in result.diagram
 
     async def test_schema_qualified_table_shows_schema_dot_table(self) -> None:
         desc = TableDescription(schema="dbo", table="users", columns=[])
         describe = _describe_from({("dbo", "users"): desc})
         result = await build_diagram(["dbo", "users"], describe)
-        assert "dbo.users" in result
+        assert "dbo.users" in result.diagram
 
     async def test_pk_column_is_marked(self) -> None:
         desc = TableDescription(
@@ -48,7 +48,7 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
-        assert "PK" in result
+        assert "PK" in result.diagram
 
     async def test_fk_column_is_marked(self) -> None:
         desc = TableDescription(
@@ -63,7 +63,7 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("orders",): desc, ("users",): users})
         result = await build_diagram(["orders"], describe)
-        assert "FK" in result
+        assert "FK" in result.diagram
 
     async def test_outgoing_reference_renders_connected_table(self) -> None:
         orders = TableDescription(
@@ -78,8 +78,8 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("orders",): orders, ("users",): users})
         result = await build_diagram(["orders"], describe)
-        assert "users" in result
-        assert "user_id → users.id" in result
+        assert "users" in result.diagram
+        assert "user_id → users.id" in result.diagram
 
     async def test_incoming_reference_renders_connected_table(self) -> None:
         users = TableDescription(
@@ -94,8 +94,8 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("users",): users, ("orders",): orders})
         result = await build_diagram(["users"], describe)
-        assert "orders" in result
-        assert "orders.user_id → id" in result
+        assert "orders" in result.diagram
+        assert "orders.user_id → id" in result.diagram
 
     async def test_self_reference_is_not_duplicated(self) -> None:
         desc = TableDescription(
@@ -107,7 +107,7 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("employees",): desc})
         result = await build_diagram(["employees"], describe)
-        assert result.count("┌─ employees") == 1
+        assert result.diagram.count("┌─ employees") == 1
 
     async def test_cycle_does_not_recurse_infinitely(self) -> None:
         a = TableDescription(
@@ -126,8 +126,8 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("a",): a, ("b",): b})
         result = await build_diagram(["a"], describe)
-        assert result.count("┌─ a") == 1
-        assert result.count("┌─ b") == 1
+        assert result.diagram.count("┌─ a") == 1
+        assert result.diagram.count("┌─ b") == 1
 
     async def test_unresolvable_reference_is_shown_without_a_box(self) -> None:
         desc = TableDescription(
@@ -139,10 +139,85 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("orders",): desc})
         result = await build_diagram(["orders"], describe)
-        assert "users" in result
-        assert "┌─ users" not in result
+        assert "users" in result.diagram
+        assert "┌─ users" not in result.diagram
 
     async def test_non_table_describe_result_raises(self) -> None:
         describe = _describe_from({("i",): IndexDescription(index="i", fields=[])})
         with pytest.raises(DiagramError):
             await build_diagram(["i"], describe)
+
+
+class TestBuildDiagramRegions:
+    async def test_table_header_region_resolves_to_table_path(self) -> None:
+        desc = TableDescription(schema="dbo", table="users", columns=[])
+        describe = _describe_from({("dbo", "users"): desc})
+        result = await build_diagram(["dbo", "users"], describe)
+
+        region = next(r for r in result.regions if r.path == ["dbo", "users"])
+        line = result.diagram.splitlines()[region.row]
+        span = line.encode()[region.col_start : region.col_end].decode()
+        assert span == "dbo.users"
+
+    async def test_column_region_resolves_to_column_path(self) -> None:
+        desc = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        region = next(r for r in result.regions if r.path == ["users", "columns", "id"])
+        line = result.diagram.splitlines()[region.row]
+        span = line.encode()[region.col_start : region.col_end].decode()
+        assert span == "id"
+
+    async def test_column_region_offset_accounts_for_multibyte_box_chars(self) -> None:
+        desc = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        region = next(r for r in result.regions if r.path == ["users", "columns", "id"])
+        line = result.diagram.splitlines()[region.row]
+        assert line.startswith("│ id")
+        # "│ " is 4 bytes (│ is 3-byte UTF-8) but only 2 characters — the
+        # byte offset must reflect that, not the character index.
+        assert region.col_start == 4
+
+    async def test_edge_label_region_names_the_referenced_table(self) -> None:
+        orders = TableDescription(
+            table="orders",
+            columns=[ColumnInfo(name="user_id", type="INTEGER")],
+            outgoing_references=[
+                TableReference(column="user_id", table="users", ref_column="id")
+            ],
+        )
+        users = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("orders",): orders, ("users",): users})
+        result = await build_diagram(["orders"], describe)
+
+        matches = [r for r in result.regions if r.path == ["users"]]
+        assert len(matches) == 2  # once in the users box header, once in the edge label
+        for region in matches:
+            line = result.diagram.splitlines()[region.row]
+            span = line.encode()[region.col_start : region.col_end].decode()
+            assert span == "users"
+
+    async def test_unresolved_reference_still_gets_a_region(self) -> None:
+        desc = TableDescription(
+            table="orders",
+            columns=[ColumnInfo(name="user_id", type="INTEGER")],
+            outgoing_references=[
+                TableReference(column="user_id", table="users", ref_column="id")
+            ],
+        )
+        describe = _describe_from({("orders",): desc})
+        result = await build_diagram(["orders"], describe)
+
+        region = next(r for r in result.regions if r.path == ["users"])
+        line = result.diagram.splitlines()[region.row]
+        span = line.encode()[region.col_start : region.col_end].decode()
+        assert span == "users"

@@ -6,7 +6,7 @@ import pytest
 from belvedere.dispatcher import Dispatcher
 from belvedere.drivers.base import DriverSettings
 from belvedere.explore_cache import cache_file
-from belvedere.protocol import ExploreItem, Method, TableDescription
+from belvedere.protocol import ExploreItem, Method, TableDescription, TableReference
 
 
 async def noop_progress(status: str, message: str) -> None:
@@ -179,3 +179,47 @@ class TestDiskCache:
 
         assert cache_file(params_a, tmp_path) != cache_file(params_b, tmp_path)
         assert len(list(tmp_path.iterdir())) == 2
+
+    async def test_should_persist_table_references_across_reload(
+        self, mock_driver: AsyncMock, tmp_path: pathlib.Path
+    ) -> None:
+        mock_driver.explore_describe.return_value = TableDescription(
+            table="t",
+            columns=[],
+            outgoing_references=[
+                TableReference(column="fk", table="other", ref_column="id")
+            ],
+            incoming_references=[
+                TableReference(column="id", table="child", ref_column="parent_fk")
+            ],
+        )
+
+        # first session: populate and persist
+        disp1 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
+        conn_id = await connect(disp1, mock_driver, PARAMS)
+        await disp1.dispatch(
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t"]},
+            noop_progress,
+        )
+        await disp1.dispatch(
+            Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
+        )
+
+        # second session: loaded from disk, driver not called again
+        disp2 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
+        conn_id2 = await connect(disp2, mock_driver, PARAMS)
+        result = await disp2.dispatch(
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id2, "path": ["t"]},
+            noop_progress,
+        )
+
+        mock_driver.explore_describe.assert_awaited_once()
+        details = result["details"]
+        assert details.outgoing_references == [
+            TableReference(column="fk", table="other", ref_column="id")
+        ]
+        assert details.incoming_references == [
+            TableReference(column="id", table="child", ref_column="parent_fk")
+        ]

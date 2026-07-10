@@ -18,6 +18,7 @@ from .protocol import (
     IndexKeyField,
     IndicesDescription,
     TableDescription,
+    TableReference,
     json_default,
 )
 
@@ -297,4 +298,10 @@ def _deserialize_table(d: dict[str, Any]) -> TableDescription:
         schema=d.get("schema"),
         comment=d.get("comment"),
         columns=[ColumnInfo(**col) for col in d.get("columns", [])],
+        outgoing_references=[
+            TableReference(**ref) for ref in d.get("outgoing_references", [])
+        ],
+        incoming_references=[
+            TableReference(**ref) for ref in d.get("incoming_references", [])
+        ],
     )

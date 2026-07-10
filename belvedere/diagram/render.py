@@ -18,6 +18,12 @@ _BOX_GAP = 1
 """Blank rows between boxes stacked within the same rank."""
 _BAND_GAP = 3
 """Blank rows between vertically-stacked bands, hosting wrap-around connectors."""
+_ALIGN_SWEEPS = 2
+"""Rounds of vertical alignment; each round pulls every rank toward its left
+neighbors, then every rank toward its right neighbors."""
+_DUMMY_PRIORITY = 1_000_000
+"""Alignment priority of dummy bend-points — always above any real box's degree,
+so long edges straighten out and boxes move out of their way."""
 
 
 def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramRegion]]:
@@ -154,28 +160,37 @@ def _place(
 
     lane_count = {boundary: max(len(hops), 1) for boundary, hops in lane_index.items()}
 
-    # y-offset of every node within its rank's vertical stack, and each rank's
-    # total stacked height.
+    height = {
+        nid: box_size[nid][0] if nid in box_size else 1 for nid in layout.positions
+    }
+
+    # y-offset of every node within its band: stack top-down first, then nudge
+    # nodes toward their neighbors' rows so edges run straight where possible.
     y_within: dict[int, int] = {}
-    rank_height: dict[int, int] = {}
-    for r, ids in by_rank.items():
+    for ids in by_rank.values():
         y = 0
         for nid in ids:
             y_within[nid] = y
-            h = box_size[nid][0] if nid in box_size else 1
-            y += h + _BOX_GAP
-        rank_height[r] = max(0, y - _BOX_GAP)
+            y += height[nid] + _BOX_GAP
+
+    _align_rows(layout, by_rank, y_within, height, band_size)
 
     max_rank = max(by_rank)
     bands = sorted({r // band_size for r in by_rank})
 
     band_top: dict[int, int] = {}
+    band_height: dict[int, int] = {}
     y_cursor = 0
     for band in bands:
+        in_band = [
+            nid for r, ids in by_rank.items() if r // band_size == band for nid in ids
+        ]
+        shift = min(y_within[nid] for nid in in_band)
+        for nid in in_band:
+            y_within[nid] -= shift
         band_top[band] = y_cursor
-        ranks_in_band = [r for r in by_rank if r // band_size == band]
-        band_top_height = max(rank_height.get(r, 0) for r in ranks_in_band)
-        y_cursor += band_top_height + _BAND_GAP
+        band_height[band] = max(y_within[nid] + height[nid] for nid in in_band)
+        y_cursor += band_height[band] + _BAND_GAP
 
     rank_left: dict[int, int] = {}
     channel_left: dict[int, int] = {}
@@ -207,9 +222,7 @@ def _place(
         )
         if is_wrap:
             band = boundary // band_size
-            base = band_top[band] + max(
-                rank_height.get(r, 0) for r in by_rank if r // band_size == band
-            )
+            base = band_top[band] + band_height[band]
             lane_coord[boundary] = {
                 hop: base + _CHANNEL_PADDING + idx for hop, idx in hops.items()
             }
@@ -218,6 +231,101 @@ def _place(
             lane_coord[boundary] = {hop: base + idx for hop, idx in hops.items()}
 
     return coords, lane_coord
+
+
+def _align_rows(
+    layout: Layout,
+    by_rank: dict[int, list[int]],
+    y_within: dict[int, int],
+    height: dict[int, int],
+    band_size: int,
+) -> None:
+    """Nudges nodes up or down within their rank so edge endpoints land on the
+    same row wherever possible, giving edges a straight corridor instead of a
+    detour around the boxes of intermediate ranks. Priority method: dummy nodes
+    are pure bend points, so they outrank real boxes and push them aside; among
+    real boxes, the better-connected one wins."""
+    left_partners: dict[int, list[int]] = defaultdict(list)
+    right_partners: dict[int, list[int]] = defaultdict(list)
+    for redge in layout.routed_edges:
+        for u, v in zip(redge.nodes, redge.nodes[1:]):
+            ru, rv = layout.positions[u].rank, layout.positions[v].rank
+            if ru // band_size != rv // band_size:
+                continue  # wrap hop — routed vertically, row alignment is moot
+            lo, hi = (u, v) if ru < rv else (v, u)
+            right_partners[lo].append(hi)
+            left_partners[hi].append(lo)
+
+    priority = {
+        nid: _DUMMY_PRIORITY
+        if pos.dummy
+        else len(left_partners[nid]) + len(right_partners[nid])
+        for nid, pos in layout.positions.items()
+    }
+
+    def anchor(nid: int) -> int:
+        return y_within[nid] + height[nid] // 2
+
+    def pull(ids: list[int], partners: dict[int, list[int]]) -> None:
+        for nid in sorted(ids, key=lambda n: -priority[n]):
+            refs = [anchor(p) for p in partners[nid]]
+            if not refs:
+                continue
+            desired = round(sum(refs) / len(refs)) - height[nid] // 2
+            _nudge(ids, ids.index(nid), desired, y_within, height, priority)
+
+    ranks = sorted(by_rank)
+    for _ in range(_ALIGN_SWEEPS):
+        for r in ranks:
+            pull(by_rank[r], left_partners)
+        for r in reversed(ranks):
+            pull(by_rank[r], right_partners)
+
+
+def _nudge(
+    ids: list[int],
+    i: int,
+    desired: int,
+    y: dict[int, int],
+    height: dict[int, int],
+    priority: dict[int, int],
+) -> None:
+    """Moves ``ids[i]`` as close to ``desired`` as its rank-mates allow: strictly
+    lower-priority nodes in the way get pushed along, while an equal-or-higher
+    priority node is a hard barrier."""
+    nid = ids[i]
+    if desired > y[nid]:
+        limit = desired
+        needed = height[nid] + _BOX_GAP
+        for k in range(i + 1, len(ids)):
+            if priority[ids[k]] >= priority[nid]:
+                limit = min(limit, y[ids[k]] - needed)
+                break
+            needed += height[ids[k]] + _BOX_GAP
+        if limit <= y[nid]:
+            return
+        y[nid] = limit
+        for k in range(i + 1, len(ids)):
+            floor = y[ids[k - 1]] + height[ids[k - 1]] + _BOX_GAP
+            if y[ids[k]] >= floor:
+                break
+            y[ids[k]] = floor
+    elif desired < y[nid]:
+        limit = desired
+        needed = 0
+        for k in range(i - 1, -1, -1):
+            if priority[ids[k]] >= priority[nid]:
+                limit = max(limit, y[ids[k]] + height[ids[k]] + _BOX_GAP + needed)
+                break
+            needed += height[ids[k]] + _BOX_GAP
+        if limit >= y[nid]:
+            return
+        y[nid] = limit
+        for k in range(i - 1, -1, -1):
+            ceiling = y[ids[k + 1]] - height[ids[k]] - _BOX_GAP
+            if y[ids[k]] <= ceiling:
+                break
+            y[ids[k]] = ceiling
 
 
 def _anchor(

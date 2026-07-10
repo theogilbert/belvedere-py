@@ -1,3 +1,4 @@
+import re
 from collections.abc import Awaitable, Callable, Mapping
 
 import pytest
@@ -238,6 +239,64 @@ class TestBuildDiagram:
         )
         result = await build_diagram(["root"], describe)
         assert result.diagram.count("┌─ shared") == 1
+
+    async def test_edge_between_boxes_of_different_heights_is_straight(self) -> None:
+        tall = TableDescription(
+            table="tall",
+            columns=[
+                ColumnInfo(name=f"k{i}", type="INTEGER", pk=True) for i in range(4)
+            ]
+            + [ColumnInfo(name="small_id", type="INTEGER")],
+            outgoing_references=[
+                TableReference(column="small_id", table="small", ref_column="id")
+            ],
+        )
+        small = TableDescription(
+            table="small", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("tall",): tall, ("small",): small})
+        result = await build_diagram(["tall"], describe)
+        # small is nudged down so both anchors share a row — one straight
+        # border-to-border line, no jog in the channel.
+        assert re.search(r"│─+│", result.diagram)
+
+    async def test_skip_edge_intermediate_box_is_nudged_off_the_corridor(self) -> None:
+        root = TableDescription(
+            table="root",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="mid_id", type="INTEGER"),
+                ColumnInfo(name="leaf_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="mid_id", table="mid", ref_column="id"),
+                TableReference(column="leaf_id", table="leaf", ref_column="id"),
+            ],
+        )
+        mid = TableDescription(
+            table="mid",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="leaf_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="leaf_id", table="leaf", ref_column="id")
+            ],
+        )
+        leaf = TableDescription(
+            table="leaf", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("root",): root, ("mid",): mid, ("leaf",): leaf})
+        result = await build_diagram(["root"], describe)
+        # The root→leaf edge crosses mid's rank; mid must move up out of the
+        # corridor instead of the edge detouring around it, which puts mid's
+        # header above root's.
+        lines = result.diagram.splitlines()
+        row_of = {
+            t: next(r for r, s in enumerate(lines) if f"┌─ {t} " in s)
+            for t in ("root", "mid")
+        }
+        assert row_of["mid"] < row_of["root"]
 
     async def test_long_chain_wraps_into_a_new_band(self) -> None:
         tables: dict[tuple[str, ...], TableDescription] = {}

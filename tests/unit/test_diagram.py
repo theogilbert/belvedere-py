@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 
 import pytest
 
@@ -14,7 +14,7 @@ from belvedere.protocol import (
 Describe = Callable[[list[str]], Awaitable[DescribeResult]]
 
 
-def _describe_from(table_by_path: dict[tuple[str, ...], DescribeResult]) -> Describe:
+def _describe_from(table_by_path: Mapping[tuple[str, ...], DescribeResult]) -> Describe:
     async def describe(path: list[str]) -> DescribeResult:
         return table_by_path.get(tuple(path))
 
@@ -127,7 +127,7 @@ class TestBuildDiagram:
         assert result.diagram.count("┌─ a") == 1
         assert result.diagram.count("┌─ b") == 1
 
-    async def test_unresolvable_reference_is_shown_without_a_box(self) -> None:
+    async def test_unresolvable_reference_gets_a_placeholder_box(self) -> None:
         desc = TableDescription(
             table="orders",
             columns=[ColumnInfo(name="user_id", type="INTEGER")],
@@ -137,8 +137,8 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("orders",): desc})
         result = await build_diagram(["orders"], describe)
-        assert "users" in result.diagram
-        assert "┌─ users" not in result.diagram
+        assert "┌─ users" in result.diagram
+        assert "(unavailable)" in result.diagram
 
     async def test_non_table_describe_result_raises(self) -> None:
         describe = _describe_from({("i",): IndexDescription(index="i", fields=[])})
@@ -197,6 +197,84 @@ class TestBuildDiagram:
         result = await build_diagram(["orders"], describe)
         assert "..." not in result.diagram
 
+    async def test_diamond_reference_draws_exactly_one_box(self) -> None:
+        root = TableDescription(
+            table="root",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="a_id", type="INTEGER"),
+                ColumnInfo(name="b_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="a_id", table="a", ref_column="id"),
+                TableReference(column="b_id", table="b", ref_column="id"),
+            ],
+        )
+        a = TableDescription(
+            table="a",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="shared_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="shared_id", table="shared", ref_column="id")
+            ],
+        )
+        b = TableDescription(
+            table="b",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="shared_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="shared_id", table="shared", ref_column="id")
+            ],
+        )
+        shared = TableDescription(
+            table="shared", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from(
+            {("root",): root, ("a",): a, ("b",): b, ("shared",): shared}
+        )
+        result = await build_diagram(["root"], describe)
+        assert result.diagram.count("┌─ shared") == 1
+
+    async def test_long_chain_wraps_into_a_new_band(self) -> None:
+        tables: dict[tuple[str, ...], TableDescription] = {}
+        for i in range(8):
+            columns = [ColumnInfo(name="id", type="INTEGER", pk=True)]
+            outgoing = []
+            if i > 0:
+                columns.append(ColumnInfo(name="prev_id", type="INTEGER"))
+                outgoing.append(
+                    TableReference(column="prev_id", table=f"t{i - 1}", ref_column="id")
+                )
+            tables[(f"t{i}",)] = TableDescription(
+                table=f"t{i}", columns=columns, outgoing_references=outgoing
+            )
+        for i in range(8):
+            for ref in tables[(f"t{i}",)].outgoing_references:
+                tables[(ref.table,)].incoming_references.append(
+                    TableReference(
+                        column=ref.ref_column, table=f"t{i}", ref_column=ref.column
+                    )
+                )
+        describe = _describe_from(tables)
+        result = await build_diagram(["t0"], describe)
+
+        lines = result.diagram.splitlines()
+        col_of = {}
+        for i in range(8):
+            marker = f"┌─ t{i} "
+            row = next(r for r, line in enumerate(lines) if marker in line)
+            col_of[i] = lines[row].index(marker)
+
+        # t0..t4 form the first band (5 columns), each strictly to the right
+        # of the previous; t5 wraps back to a low column instead of
+        # continuing to grow wider.
+        assert col_of[4] > col_of[0]
+        assert col_of[5] < col_of[4]
+
 
 class TestBuildDiagramRegions:
     async def test_table_header_region_resolves_to_table_path(self) -> None:
@@ -235,27 +313,49 @@ class TestBuildDiagramRegions:
         # byte offset must reflect that, not the character index.
         assert region.col_start == 4
 
-    async def test_branch_attaches_directly_to_the_child_box(self) -> None:
-        orders = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
+    async def test_table_referenced_twice_still_gets_exactly_one_region(self) -> None:
+        root = TableDescription(
+            table="root",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="a_id", type="INTEGER"),
+                ColumnInfo(name="b_id", type="INTEGER"),
+            ],
             outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id")
+                TableReference(column="a_id", table="a", ref_column="id"),
+                TableReference(column="b_id", table="b", ref_column="id"),
             ],
         )
-        users = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        a = TableDescription(
+            table="a",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="shared_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="shared_id", table="shared", ref_column="id")
+            ],
         )
-        describe = _describe_from({("orders",): orders, ("users",): users})
-        result = await build_diagram(["orders"], describe)
+        b = TableDescription(
+            table="b",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="shared_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="shared_id", table="shared", ref_column="id")
+            ],
+        )
+        shared = TableDescription(
+            table="shared", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from(
+            {("root",): root, ("a",): a, ("b",): b, ("shared",): shared}
+        )
+        result = await build_diagram(["root"], describe)
 
-        matches = [r for r in result.regions if r.path == ["users"]]
-        assert len(matches) == 1  # the box header names the table; no separate line
-        region = matches[0]
-        line = result.diagram.splitlines()[region.row]
-        assert line.startswith("└── ┌─ users")
-        span = line.encode()[region.col_start : region.col_end].decode()
-        assert span == "users"
+        matches = [r for r in result.regions if r.path == ["shared"]]
+        assert len(matches) == 1
 
     async def test_ellipsis_region_resolves_to_the_table_column_list(self) -> None:
         desc = TableDescription(

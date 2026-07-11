@@ -304,6 +304,52 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.incoming_references == []
 
+    async def test_should_mark_outgoing_reference_unique_when_fk_column_is_unique(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (parent_id INTEGER UNIQUE REFERENCES parent(id))", []
+        )
+        desc = await driver.explore_describe(["main", "child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is True
+
+    async def test_should_mark_outgoing_reference_not_unique_by_default(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is False
+
+    async def test_should_mark_incoming_reference_unique_when_fk_column_is_unique(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (parent_id INTEGER UNIQUE REFERENCES parent(id))", []
+        )
+        desc = await driver.explore_describe(["main", "parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is True
+
+    async def test_should_mark_incoming_reference_not_unique_by_default(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is False
+
 
 class TestExploreDescribeIndex:
     async def test_basic_index_fields_and_direction(self, driver: DuckDBDriver) -> None:

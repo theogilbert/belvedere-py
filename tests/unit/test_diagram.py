@@ -90,6 +90,40 @@ class TestBuildDiagram:
         result = await build_diagram(["orders"], describe)
         assert "FK" in result.diagram
 
+    async def test_many_to_one_edge_shows_star_and_one_markers(self) -> None:
+        orders = TableDescription(
+            table="orders",
+            columns=[ColumnInfo(name="user_id", type="INTEGER")],
+            outgoing_references=[
+                TableReference(column="user_id", table="users", ref_column="id")
+            ],
+        )
+        users = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("orders",): orders, ("users",): users})
+        result = await build_diagram(["orders"], describe)
+        # "*" (many) at the FK side, "1" at the referenced side.
+        assert re.search(r"│\*─*1│", result.diagram)
+
+    async def test_one_to_one_edge_shows_one_markers_on_both_ends(self) -> None:
+        orders = TableDescription(
+            table="orders",
+            columns=[ColumnInfo(name="user_id", type="INTEGER")],
+            outgoing_references=[
+                TableReference(
+                    column="user_id", table="users", ref_column="id", unique=True
+                )
+            ],
+        )
+        users = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("orders",): orders, ("users",): users})
+        result = await build_diagram(["orders"], describe)
+        # FK column is itself unique, so both ends show "1" instead of "*".
+        assert re.search(r"│1─*1│", result.diagram)
+
     async def test_outgoing_reference_renders_connected_table(self) -> None:
         orders = TableDescription(
             table="orders",
@@ -281,8 +315,10 @@ class TestBuildDiagram:
         describe = _describe_from({("tall",): tall, ("small",): small})
         result = await build_diagram(["tall"], describe)
         # small is nudged down so both anchors share a row — one straight
-        # border-to-border line, no jog in the channel.
-        assert re.search(r"│─+│", result.diagram)
+        # border-to-border line, no jog in the channel. Endpoints carry
+        # cardinality markers: "*" (many) at the FK side, "1" at the
+        # referenced side.
+        assert re.search(r"│\*─*1│", result.diagram)
 
     async def test_skip_edge_intermediate_box_is_nudged_off_the_corridor(self) -> None:
         root = TableDescription(
@@ -358,7 +394,10 @@ class TestBuildDiagram:
         right = lines[top].index("┐", left)
         bottom = next(r for r in range(top + 1, len(lines)) if lines[r][left] == "└")
         center = left + (right - left + 1) // 2
-        assert lines[bottom + 1].ljust(center + 1)[center] == "│"
+        # t3 is the referenced ("1") side of the relationship, so the wrap
+        # connector's first cell below t3's border is the "1" marker rather
+        # than a plain vertical line.
+        assert lines[bottom + 1].ljust(center + 1)[center] == "1"
 
     async def test_wrap_connected_box_sinks_below_its_rank_siblings(self) -> None:
         tables = _chain_tables(6)

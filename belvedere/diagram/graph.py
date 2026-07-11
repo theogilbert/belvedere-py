@@ -6,8 +6,13 @@ even if it can't be expanded further (depth cap) or resolved (describe failure).
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Literal
 
 from ..protocol import ColumnInfo, DescribeResult, TableDescription, TableReference
+
+FkSide = Literal["source", "target"]
+"""Which endpoint of a ``GraphEdge`` owns the FK column — the "many" side of
+the relationship; the other endpoint is the referenced ("one") side."""
 
 Describe = Callable[[list[str]], Awaitable[DescribeResult]]
 """Fetches the description for a path, as ``Dispatcher._handle_explore_diagram`` does
@@ -44,6 +49,11 @@ class GraphNode:
 class GraphEdge:
     source: int
     target: int
+    fk_side: FkSide = "source"
+    """Which of ``source``/``target`` owns the FK column."""
+    one_to_one: bool = False
+    """Whether the FK column is itself constrained unique, making this a
+    one-to-one relationship rather than many-to-one."""
 
 
 async def discover(
@@ -70,7 +80,7 @@ async def discover(
 
     while queue:
         cur_path, cur_desc, cur_id, depth = queue.popleft()
-        for ref in _iter_refs(cur_desc):
+        for ref, fk_side in _iter_refs(cur_desc):
             ref_path = _ref_path(cur_desc, ref)
             if tuple(ref_path) == tuple(cur_path):
                 continue  # self-reference — already fully described by this box
@@ -91,14 +101,21 @@ async def discover(
             pair = frozenset((cur_id, target_id))
             if pair not in seen_pairs:
                 seen_pairs.add(pair)
-                edges.append(GraphEdge(cur_id, target_id))
+                edges.append(
+                    GraphEdge(cur_id, target_id, fk_side=fk_side, one_to_one=ref.unique)
+                )
 
     return nodes, edges
 
 
 def _iter_refs(desc: TableDescription):
-    yield from desc.outgoing_references
-    yield from desc.incoming_references
+    """Yields every reference alongside which side ``desc``'s own table sits
+    on: it owns the FK column for its ``outgoing_references``, and is the
+    referenced ("one") side for its ``incoming_references``."""
+    for ref in desc.outgoing_references:
+        yield ref, "source"
+    for ref in desc.incoming_references:
+        yield ref, "target"
 
 
 def _ref_path(desc: TableDescription, ref: TableReference) -> list[str]:

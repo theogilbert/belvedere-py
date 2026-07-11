@@ -41,7 +41,12 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
         canvas.blit_box(lines, top, left)
 
     for redge in layout.routed_edges:
-        canvas.draw_edge(_route(redge, layout, coords, box_size, dummy_set, lane_coord))
+        points = _route(redge, layout, coords, box_size, dummy_set, lane_coord)
+        if redge.one_to_one:
+            start, end = "1", "1"
+        else:
+            start, end = ("*", "1") if redge.fk_at_start else ("1", "*")
+        canvas.draw_edge(points, start=start, end=end)
 
     return canvas.render()
 

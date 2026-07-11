@@ -37,6 +37,10 @@ class RoutedEdge:
     nodes: list[int]
     """Node ids from source to target, inclusive, one hop per adjacent rank —
     intermediate entries (if any) are dummy node ids."""
+    fk_at_start: bool = True
+    """Whether ``nodes[0]`` (rather than ``nodes[-1]``) owns the FK column."""
+    one_to_one: bool = False
+    """Whether the FK column is itself constrained unique."""
 
 
 @dataclass
@@ -61,7 +65,13 @@ def compute_layout(
     routed_edges: list[RoutedEdge] = []
     for edge in edges:
         chain, next_id = _decompose(edge, rank, next_id, band_size)
-        routed_edges.append(RoutedEdge(nodes=chain))
+        routed_edges.append(
+            RoutedEdge(
+                nodes=chain,
+                fk_at_start=edge.fk_side == "source",
+                one_to_one=edge.one_to_one,
+            )
+        )
 
     nodes_by_rank: dict[int, list[int]] = defaultdict(list)
     for node_id in sorted(rank, key=lambda i: (rank[i], i)):

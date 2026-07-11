@@ -338,6 +338,78 @@ class TestExploreDescribe:
         assert desc.outgoing_references == []
         assert desc.incoming_references == []
 
+    async def test_outgoing_reference_is_unique_when_fk_column_has_unique_constraint(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  parent_id INT CONSTRAINT uq_{child} UNIQUE"
+            f"    CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is True
+
+    async def test_outgoing_reference_is_not_unique_by_default(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is False
+
+    async def test_incoming_reference_is_unique_when_fk_column_has_unique_constraint(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  parent_id INT CONSTRAINT uq_{child} UNIQUE"
+            f"    CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is True
+
+    async def test_incoming_reference_is_not_unique_by_default(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is False
+
 
 class TestExploreDescribeIndex:
     async def test_basic_fields_and_direction(

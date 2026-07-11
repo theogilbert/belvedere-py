@@ -51,6 +51,9 @@ class Canvas:
     _cells: dict[tuple[int, int], str] = field(default_factory=dict)
     _line_dirs: dict[tuple[int, int], set[str]] = field(default_factory=dict)
     _char_regions: list[_CharRegion] = field(default_factory=list)
+    _labels: dict[tuple[int, int], str] = field(default_factory=dict)
+    """Cardinality markers drawn at an edge's endpoints, keyed by canvas cell;
+    override the line-direction glyph but never a box cell."""
 
     def blit_box(self, box_lines: list[_Line], top: int, left: int) -> None:
         """Writes a pre-rendered box's lines at ``(top, left)``, translating each
@@ -69,18 +72,35 @@ class Canvas:
                         )
                     )
 
-    def draw_edge(self, points: list[tuple[int, int]]) -> None:
+    def draw_edge(
+        self,
+        points: list[tuple[int, int]],
+        *,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> None:
         """Draws an orthogonal connector through ``points`` (row, col) — waypoints
         of a polyline, each consecutive pair sharing a row or column. Every unit
         cell along each straight run gets marked, not just the waypoints. Cells
         already occupied by a box are left untouched — boxes always win over
-        routed lines."""
+        routed lines. ``start``/``end`` optionally mark the first/last cell with
+        a cardinality glyph instead of the usual line character."""
         cells = _expand(points)
         for i, point in enumerate(cells):
             if i > 0:
                 self._add_direction(point, _direction_to(cells[i - 1], point))
             if i < len(cells) - 1:
                 self._add_direction(point, _direction_to(cells[i + 1], point))
+        if cells:
+            if start is not None:
+                self._set_label(cells[0], start)
+            if end is not None:
+                self._set_label(cells[-1], end)
+
+    def _set_label(self, point: tuple[int, int], char: str) -> None:
+        if point in self._cells:
+            return  # a box border already owns this cell
+        self._labels[point] = char
 
     def _add_direction(self, point: tuple[int, int], direction: str) -> None:
         if point in self._cells:
@@ -100,6 +120,8 @@ class Canvas:
             for c in range(max_col + 1):
                 if (r, c) in self._cells:
                     chars.append(self._cells[(r, c)])
+                elif (r, c) in self._labels:
+                    chars.append(self._labels[(r, c)])
                 elif (r, c) in self._line_dirs:
                     chars.append(
                         _LINE_CHARS.get(frozenset(self._line_dirs[(r, c)]), " ")

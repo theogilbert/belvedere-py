@@ -275,6 +275,28 @@ async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> se
 
 
 @_conn_cache
+async def fetch_unique_columns(
+    conn: AsyncConnection, schema: str, table: str
+) -> set[str]:
+    """Return columns constrained to unique values by a single-column PK or
+    UNIQUE constraint."""
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT con.CONSTRAINT_NAME, cc.COLUMN_NAME"
+        " FROM ALL_CONSTRAINTS con"
+        " JOIN ALL_CONS_COLUMNS cc"
+        "  ON con.OWNER = cc.OWNER AND con.CONSTRAINT_NAME = cc.CONSTRAINT_NAME"
+        " WHERE con.OWNER = :1 AND con.TABLE_NAME = :2"
+        " AND con.CONSTRAINT_TYPE IN ('P', 'U')",
+        [schema, table],
+    )
+    by_constraint: dict[str, set[str]] = {}
+    for constraint_name, col_name in await cur.fetchall():
+        by_constraint.setdefault(constraint_name, set()).add(col_name)
+    return {next(iter(cols)) for cols in by_constraint.values() if len(cols) == 1}
+
+
+@_conn_cache
 async def fetch_outgoing_references(
     conn: AsyncConnection, schema: str, table: str
 ) -> list[TableReference]:
@@ -294,9 +316,17 @@ async def fetch_outgoing_references(
         " ORDER BY con.CONSTRAINT_NAME, lc.POSITION",
         [schema, table],
     )
+    rows = await cur.fetchall()
+    unique_cols = await fetch_unique_columns(conn, schema, table)
     return [
-        TableReference(column=r[0], schema=r[1], table=r[2], ref_column=r[3])
-        for r in await cur.fetchall()
+        TableReference(
+            column=r[0],
+            schema=r[1],
+            table=r[2],
+            ref_column=r[3],
+            unique=r[0] in unique_cols,
+        )
+        for r in rows
     ]
 
 
@@ -320,10 +350,20 @@ async def fetch_incoming_references(
         " ORDER BY con.CONSTRAINT_NAME, lc.POSITION",
         [schema, table],
     )
-    return [
-        TableReference(column=r[0], schema=r[1], table=r[2], ref_column=r[3])
-        for r in await cur.fetchall()
-    ]
+    references = []
+    for r in await cur.fetchall():
+        fk_schema, fk_table, fk_col = r[1], r[2], r[3]
+        unique_cols = await fetch_unique_columns(conn, fk_schema, fk_table)
+        references.append(
+            TableReference(
+                column=r[0],
+                schema=fk_schema,
+                table=fk_table,
+                ref_column=fk_col,
+                unique=fk_col in unique_cols,
+            )
+        )
+    return references
 
 
 @_conn_cache

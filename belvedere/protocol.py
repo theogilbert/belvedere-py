@@ -122,6 +122,12 @@ class TableReference:
     """Column on the other table."""
     schema: str | None = None
     """Schema of the other table, or None for databases without schema support."""
+    unique: bool = False
+    """Whether the column that owns the FK constraint is itself constrained to unique
+    values (by a PK or a single-column UNIQUE index), making the relationship
+    one-to-one rather than many-to-one. For ``outgoing_references`` this checks
+    ``column``; for ``incoming_references`` it checks the other table's FK column
+    (``ref_column``), since that is the side owning the FK there."""
 
 
 @dataclass

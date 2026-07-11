@@ -452,6 +452,78 @@ class TestExploreDescribe:
         assert desc.outgoing_references == []
         assert desc.incoming_references == []
 
+    async def test_outgoing_reference_is_unique_when_fk_column_has_unique_constraint(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  parent_id NUMBER UNIQUE,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is True
+
+    async def test_outgoing_reference_is_not_unique_by_default(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  id NUMBER, parent_id NUMBER,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is False
+
+    async def test_incoming_reference_is_unique_when_fk_column_has_unique_constraint(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  parent_id NUMBER UNIQUE,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is True
+
+    async def test_incoming_reference_is_not_unique_by_default(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  id NUMBER, parent_id NUMBER,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is False
+
 
 class TestExploreDescribeIndex:
     async def test_basic_fields_and_type(

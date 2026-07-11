@@ -485,9 +485,14 @@ SELECT * FROM 'glob/**/*.parquet'
         self, schema: str, table: str
     ) -> list[TableReference]:
         rows = self._outgoing_fk_rows_sync(schema, table)
+        unique_cols = self._unique_columns_sync(schema, table)
         return [
             TableReference(
-                column=src_col, table=fk_table, ref_column=ref_col, schema=schema
+                column=src_col,
+                table=fk_table,
+                ref_column=ref_col,
+                schema=schema,
+                unique=src_col in unique_cols,
             )
             for src_cols, fk_table, fk_cols in rows
             for src_col, ref_col in zip(src_cols, fk_cols)
@@ -502,13 +507,32 @@ SELECT * FROM 'glob/**/*.parquet'
             " WHERE schema_name = ? AND referenced_table = ? AND constraint_type = 'FOREIGN KEY'",
             [schema, table],
         ).fetchall()
-        return [
-            TableReference(
-                column=ref_col, table=other_table, ref_column=fk_col, schema=schema
+        references = []
+        for other_table, fk_cols, ref_cols in rows:
+            unique_cols = self._unique_columns_sync(schema, other_table)
+            references.extend(
+                TableReference(
+                    column=ref_col,
+                    table=other_table,
+                    ref_column=fk_col,
+                    schema=schema,
+                    unique=fk_col in unique_cols,
+                )
+                for fk_col, ref_col in zip(fk_cols, ref_cols)
             )
-            for other_table, fk_cols, ref_cols in rows
-            for fk_col, ref_col in zip(fk_cols, ref_cols)
-        ]
+        return references
+
+    def _unique_columns_sync(self, schema: str, table: str) -> set[str]:
+        """Columns constrained to unique values by a single-column PK or
+        UNIQUE constraint. DuckDB doesn't back these with a listed entry in
+        ``duckdb_indexes()``, so ``duckdb_constraints()`` is the source of truth."""
+        rows = self._conn.execute(
+            "SELECT constraint_column_names FROM duckdb_constraints()"
+            " WHERE schema_name = ? AND table_name = ?"
+            " AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')",
+            [schema, table],
+        ).fetchall()
+        return {cols[0] for (cols,) in rows if len(cols) == 1}
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
         try:

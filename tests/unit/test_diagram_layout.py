@@ -32,6 +32,22 @@ class TestRankAssignment:
         assert layout.positions[2].rank != layout.positions[0].rank
 
 
+class TestCardinalityPropagation:
+    def test_fk_side_and_one_to_one_carry_through_to_the_routed_edge(self) -> None:
+        nodes = [_node(0, 0), _node(1, 1)]
+        edges = [GraphEdge(0, 1, fk_side="target", one_to_one=True)]
+        layout = compute_layout(nodes, edges)
+        assert layout.routed_edges[0].fk_at_start is False
+        assert layout.routed_edges[0].one_to_one is True
+
+    def test_defaults_to_fk_at_start_and_not_one_to_one(self) -> None:
+        nodes = [_node(0, 0), _node(1, 1)]
+        edges = [GraphEdge(0, 1)]
+        layout = compute_layout(nodes, edges)
+        assert layout.routed_edges[0].fk_at_start is True
+        assert layout.routed_edges[0].one_to_one is False
+
+
 class TestLongEdgeDecomposition:
     def test_adjacent_rank_edge_is_not_decomposed(self) -> None:
         nodes = [_node(0, 0), _node(1, 1)]

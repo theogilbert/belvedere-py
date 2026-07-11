@@ -237,6 +237,27 @@ async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> se
 
 
 @_conn_cache
+async def fetch_unique_columns(
+    conn: AsyncConnection, schema: str, table: str
+) -> set[str]:
+    """Return columns covered by a single-column UNIQUE index (PKs included,
+    since Postgres backs every PK with a unique index)."""
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT a.attname"
+        " FROM pg_index ix"
+        " JOIN pg_class ic ON ic.oid = ix.indexrelid"
+        " JOIN pg_class tc ON tc.oid = ix.indrelid"
+        " JOIN pg_namespace n ON n.oid = tc.relnamespace"
+        " JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = ix.indkey[0]"
+        " WHERE n.nspname = %s AND tc.relname = %s"
+        " AND ix.indisunique AND array_length(ix.indkey, 1) = 1",
+        [schema, table],
+    )
+    return {r[0] for r in await cur.fetchall()}
+
+
+@_conn_cache
 async def fetch_outgoing_references(
     conn: AsyncConnection, schema: str, table: str
 ) -> list[TableReference]:
@@ -249,8 +270,15 @@ async def fetch_outgoing_references(
         " ORDER BY con.conname, u.ord",
         [schema, table],
     )
+    unique_cols = await fetch_unique_columns(conn, schema, table)
     return [
-        TableReference(column=r[0], schema=r[1], table=r[2], ref_column=r[3])
+        TableReference(
+            column=r[0],
+            schema=r[1],
+            table=r[2],
+            ref_column=r[3],
+            unique=r[0] in unique_cols,
+        )
         for r in await cur.fetchall()
     ]
 
@@ -268,10 +296,20 @@ async def fetch_incoming_references(
         " ORDER BY con.conname, u.ord",
         [schema, table],
     )
-    return [
-        TableReference(column=r[0], schema=r[1], table=r[2], ref_column=r[3])
-        for r in await cur.fetchall()
-    ]
+    references = []
+    for r in await cur.fetchall():
+        ref_col, fk_schema, fk_table, fk_col = r
+        unique_cols = await fetch_unique_columns(conn, fk_schema, fk_table)
+        references.append(
+            TableReference(
+                column=ref_col,
+                schema=fk_schema,
+                table=fk_table,
+                ref_column=fk_col,
+                unique=fk_col in unique_cols,
+            )
+        )
+    return references
 
 
 @_conn_cache

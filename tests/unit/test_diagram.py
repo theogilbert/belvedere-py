@@ -22,6 +22,30 @@ def _describe_from(table_by_path: Mapping[tuple[str, ...], DescribeResult]) -> D
     return describe
 
 
+def _chain_tables(n: int) -> dict[tuple[str, ...], TableDescription]:
+    """Tables t0..t{n-1} where each t{i} has a foreign key to t{i-1}."""
+    tables: dict[tuple[str, ...], TableDescription] = {}
+    for i in range(n):
+        columns = [ColumnInfo(name="id", type="INTEGER", pk=True)]
+        outgoing = []
+        if i > 0:
+            columns.append(ColumnInfo(name="prev_id", type="INTEGER"))
+            outgoing.append(
+                TableReference(column="prev_id", table=f"t{i - 1}", ref_column="id")
+            )
+        tables[(f"t{i}",)] = TableDescription(
+            table=f"t{i}", columns=columns, outgoing_references=outgoing
+        )
+    for path, desc in tables.items():
+        for ref in desc.outgoing_references:
+            tables[(ref.table,)].incoming_references.append(
+                TableReference(
+                    column=ref.ref_column, table=path[0], ref_column=ref.column
+                )
+            )
+    return tables
+
+
 class TestBuildDiagram:
     async def test_raises_when_path_does_not_resolve_to_a_table(self) -> None:
         describe = _describe_from({})
@@ -299,26 +323,7 @@ class TestBuildDiagram:
         assert row_of["mid"] < row_of["root"]
 
     async def test_long_chain_wraps_into_a_new_band(self) -> None:
-        tables: dict[tuple[str, ...], TableDescription] = {}
-        for i in range(8):
-            columns = [ColumnInfo(name="id", type="INTEGER", pk=True)]
-            outgoing = []
-            if i > 0:
-                columns.append(ColumnInfo(name="prev_id", type="INTEGER"))
-                outgoing.append(
-                    TableReference(column="prev_id", table=f"t{i - 1}", ref_column="id")
-                )
-            tables[(f"t{i}",)] = TableDescription(
-                table=f"t{i}", columns=columns, outgoing_references=outgoing
-            )
-        for i in range(8):
-            for ref in tables[(f"t{i}",)].outgoing_references:
-                tables[(ref.table,)].incoming_references.append(
-                    TableReference(
-                        column=ref.ref_column, table=f"t{i}", ref_column=ref.column
-                    )
-                )
-        describe = _describe_from(tables)
+        describe = _describe_from(_chain_tables(8))
         result = await build_diagram(["t0"], describe)
 
         lines = result.diagram.splitlines()
@@ -329,10 +334,61 @@ class TestBuildDiagram:
             col_of[i] = lines[row].index(marker)
 
         # t0..t4 form the first band (5 columns), each strictly to the right
-        # of the previous; t5 wraps back to a low column instead of
-        # continuing to grow wider.
+        # of the previous; t5 wraps into a snaking second band, landing
+        # directly below t4 instead of jumping back to the far left.
         assert col_of[4] > col_of[0]
-        assert col_of[5] < col_of[4]
+        assert col_of[5] == col_of[4]
+
+    async def test_adjacent_band_edge_connects_via_the_wrap_lane(self) -> None:
+        tables = _chain_tables(6)
+        tables[("t5",)].outgoing_references.append(
+            TableReference(column="t3_id", table="t3", ref_column="id")
+        )
+        tables[("t3",)].incoming_references.append(
+            TableReference(column="id", table="t5", ref_column="t3_id")
+        )
+        describe = _describe_from(tables)
+        result = await build_diagram(["t0"], describe)
+
+        # t5 wraps into the band below t3's; their edge leaves t3 through its
+        # bottom border instead of crowding the channel on t3's right.
+        lines = result.diagram.splitlines()
+        top = next(r for r, s in enumerate(lines) if "┌─ t3 " in s)
+        left = lines[top].index("┌─ t3 ")
+        right = lines[top].index("┐", left)
+        bottom = next(r for r in range(top + 1, len(lines)) if lines[r][left] == "└")
+        center = left + (right - left + 1) // 2
+        assert lines[bottom + 1].ljust(center + 1)[center] == "│"
+
+    async def test_wrap_connected_box_sinks_below_its_rank_siblings(self) -> None:
+        tables = _chain_tables(6)
+        tables[("t5",)].outgoing_references.append(
+            TableReference(column="t3_id", table="t3", ref_column="id")
+        )
+        tables[("t3",)].incoming_references.append(
+            TableReference(column="id", table="t5", ref_column="t3_id")
+        )
+        tables[("u3",)] = TableDescription(
+            table="u3",
+            columns=[ColumnInfo(name="prev_id", type="INTEGER")],
+            outgoing_references=[
+                TableReference(column="prev_id", table="t2", ref_column="id")
+            ],
+        )
+        tables[("t2",)].incoming_references.append(
+            TableReference(column="id", table="u3", ref_column="prev_id")
+        )
+        describe = _describe_from(tables)
+        result = await build_diagram(["t0"], describe)
+
+        # t3's edge to t5 (band below) drops from t3's bottom border, so its
+        # rank-mate u3 must not sit between t3 and the band's lower edge.
+        lines = result.diagram.splitlines()
+        row_of = {
+            t: next(r for r, s in enumerate(lines) if f"┌─ {t} " in s)
+            for t in ("t3", "u3")
+        }
+        assert row_of["t3"] > row_of["u3"]
 
 
 class TestBuildDiagramRegions:

@@ -2,7 +2,9 @@
 BFS-derived depth), decomposes long edges into per-rank hops through dummy
 nodes, orders nodes within each rank to reduce line crossings (best-effort,
 not optimal), and chunks ranks into vertically-stacked bands once a row would
-grow past ``band_size`` columns wide.
+grow past ``band_size`` columns wide. Bands snake: odd bands run right-to-left,
+so a wrapped rank lands directly below its neighbor instead of jumping back to
+the far-left edge of the diagram.
 
 Pure functions over plain graph data — no rendering or canvas concerns, so the
 algorithm can be tested against small synthetic graphs directly.
@@ -22,7 +24,8 @@ class LayoutNode:
     band: int
     """Which vertically-stacked band this node's rank falls into."""
     col: int
-    """Column within its band (``rank % band_size``)."""
+    """Display column within its band. Bands snake, so even bands run
+    left-to-right (``rank % band_size``) and odd bands right-to-left."""
     row: int
     """Order among the other nodes sharing this rank — determines vertical position."""
     dummy: bool
@@ -57,7 +60,7 @@ def compute_layout(
     next_id = max(rank) + 1
     routed_edges: list[RoutedEdge] = []
     for edge in edges:
-        chain, next_id = _decompose(edge, rank, next_id)
+        chain, next_id = _decompose(edge, rank, next_id, band_size)
         routed_edges.append(RoutedEdge(nodes=chain))
 
     nodes_by_rank: dict[int, list[int]] = defaultdict(list)
@@ -65,6 +68,7 @@ def compute_layout(
         nodes_by_rank[rank[node_id]].append(node_id)
 
     _order_ranks(nodes_by_rank, routed_edges, rank)
+    _order_wrap_nodes(nodes_by_rank, routed_edges, rank, band_size)
 
     positions = _assign_positions(nodes_by_rank, real_ids, band_size)
     return Layout(positions=positions, routed_edges=routed_edges, band_size=band_size)
@@ -81,9 +85,14 @@ def _bump_same_rank_edges(rank: dict[int, int], edges: list[GraphEdge]) -> None:
 
 
 def _decompose(
-    edge: GraphEdge, rank: dict[int, int], next_id: int
+    edge: GraphEdge, rank: dict[int, int], next_id: int, band_size: int
 ) -> tuple[list[int], int]:
     source_rank, target_rank = rank[edge.source], rank[edge.target]
+    if abs(source_rank // band_size - target_rank // band_size) == 1:
+        # Adjacent-band edge: routed as one hop along the wrap lane between
+        # the bands (entering/leaving via top/bottom borders), so it needs no
+        # per-rank bend points.
+        return [edge.source, edge.target], next_id
     step = 1 if target_rank > source_rank else -1
     chain = [edge.source]
     for r in range(source_rank + step, target_rank, step):
@@ -136,16 +145,44 @@ def _order_ranks(
                 position[node_id] = i
 
 
+def _order_wrap_nodes(
+    nodes_by_rank: dict[int, list[int]],
+    routed_edges: list[RoutedEdge],
+    rank: dict[int, int],
+    band_size: int,
+) -> None:
+    """A wrap hop leaves its upper node through the bottom border and enters
+    its lower node through the top border, dropping straight through the node's
+    column. Sink nodes with downward wrap hops to the bottom of their rank's
+    stack (and float upward-wrapped ones to the top) so no rank-mate sits in
+    the drop's path. Runs after the barycenter ordering and overrides it."""
+    down: set[int] = set()
+    up: set[int] = set()
+    for redge in routed_edges:
+        for u, v in zip(redge.nodes, redge.nodes[1:]):
+            band_u, band_v = rank[u] // band_size, rank[v] // band_size
+            if band_u == band_v:
+                continue
+            upper, lower = (u, v) if band_u < band_v else (v, u)
+            down.add(upper)
+            up.add(lower)
+
+    for ids in nodes_by_rank.values():
+        ids.sort(key=lambda n: (n in down) - (n in up))
+
+
 def _assign_positions(
     nodes_by_rank: dict[int, list[int]], real_ids: set[int], band_size: int
 ) -> dict[int, LayoutNode]:
     positions: dict[int, LayoutNode] = {}
     for r, ids in nodes_by_rank.items():
+        band, offset = divmod(r, band_size)
+        col = band_size - 1 - offset if band % 2 else offset
         for row, node_id in enumerate(ids):
             positions[node_id] = LayoutNode(
                 rank=r,
-                band=r // band_size,
-                col=r % band_size,
+                band=band,
+                col=col,
                 row=row,
                 dummy=node_id not in real_ids,
             )

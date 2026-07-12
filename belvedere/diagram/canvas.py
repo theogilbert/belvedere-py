@@ -33,6 +33,8 @@ class _Segment:
     text: str
     path: list[str] | None = None
     """Path this span resolves to via explore.describe; None for unlabeled text."""
+    kind: str | None = None
+    """``"table"`` or ``"column"``; None for unlabeled text (``path`` is also None then)."""
 
 
 _Line = list[_Segment]
@@ -43,6 +45,7 @@ class _CharRegion:
     row: int
     char_start: int
     char_end: int
+    kind: str
     path: list[str]
 
 
@@ -68,7 +71,11 @@ class Canvas:
                 if seg.path is not None:
                     self._char_regions.append(
                         _CharRegion(
-                            row=top + r, char_start=start, char_end=col, path=seg.path
+                            row=top + r,
+                            char_start=start,
+                            char_end=col,
+                            kind=seg.kind or "table",
+                            path=seg.path,
                         )
                     )
 
@@ -78,13 +85,16 @@ class Canvas:
         *,
         start: str | None = None,
         end: str | None = None,
+        path: list[str] | None = None,
     ) -> None:
         """Draws an orthogonal connector through ``points`` (row, col) — waypoints
         of a polyline, each consecutive pair sharing a row or column. Every unit
         cell along each straight run gets marked, not just the waypoints. Cells
         already occupied by a box are left untouched — boxes always win over
         routed lines. ``start``/``end`` optionally mark the first/last cell with
-        a cardinality glyph instead of the usual line character."""
+        a cardinality glyph instead of the usual line character. ``path``, if
+        given, records an ``"edge"``-kind region per row the connector touches,
+        all sharing that path."""
         cells = _expand(points)
         for i, point in enumerate(cells):
             if i > 0:
@@ -96,11 +106,36 @@ class Canvas:
                 self._set_label(cells[0], start)
             if end is not None:
                 self._set_label(cells[-1], end)
+        if path is not None:
+            self._record_edge_regions(cells, path)
 
     def _set_label(self, point: tuple[int, int], char: str) -> None:
         if point in self._cells:
             return  # a box border already owns this cell
         self._labels[point] = char
+
+    def _record_edge_regions(
+        self, cells: list[tuple[int, int]], path: list[str]
+    ) -> None:
+        """Groups the connector's cells into one region per contiguous run
+        within a row (skipping cells a box border already owns)."""
+        run_row: int | None = None
+        run_start = 0
+        run_end = 0
+        for row, col in cells:
+            if (row, col) in self._cells:
+                continue  # a box border already owns this cell
+            if row != run_row:
+                if run_row is not None:
+                    self._char_regions.append(
+                        _CharRegion(run_row, run_start, run_end, "edge", path)
+                    )
+                run_row, run_start = row, col
+            run_end = col + 1
+        if run_row is not None:
+            self._char_regions.append(
+                _CharRegion(run_row, run_start, run_end, "edge", path)
+            )
 
     def _add_direction(self, point: tuple[int, int], direction: str) -> None:
         if point in self._cells:
@@ -137,7 +172,11 @@ class Canvas:
             byte_end = len(line[: cr.char_end].encode())
             regions.append(
                 DiagramRegion(
-                    row=cr.row, col_start=byte_start, col_end=byte_end, path=cr.path
+                    row=cr.row,
+                    col_start=byte_start,
+                    col_end=byte_end,
+                    kind=cr.kind,
+                    path=cr.path,
                 )
             )
         return "\n".join(rows), regions

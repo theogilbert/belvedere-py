@@ -542,3 +542,64 @@ class TestBuildDiagramRegions:
         line = result.diagram.splitlines()[region.row]
         span = line.encode()[region.col_start : region.col_end].decode()
         assert span == "users"
+
+    async def test_table_header_region_has_table_kind(self) -> None:
+        desc = TableDescription(table="users", columns=[])
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        region = next(r for r in result.regions if r.path == ["users"])
+        assert region.kind == "table"
+
+    async def test_column_region_has_column_kind(self) -> None:
+        desc = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        region = next(r for r in result.regions if r.path == ["users", "columns", "id"])
+        assert region.kind == "column"
+
+    async def test_relationship_gets_an_edge_kind_region(self) -> None:
+        orders = TableDescription(
+            table="orders",
+            columns=[ColumnInfo(name="user_id", type="INTEGER")],
+            outgoing_references=[
+                TableReference(column="user_id", table="users", ref_column="id")
+            ],
+        )
+        users = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("orders",): orders, ("users",): users})
+        result = await build_diagram(["orders"], describe)
+
+        edge_regions = [r for r in result.regions if r.kind == "edge"]
+        assert len(edge_regions) == 1
+        region = edge_regions[0]
+        assert region.path == ["orders", "relationships", "user_id"]
+        line = result.diagram.splitlines()[region.row]
+        span = line.encode()[region.col_start : region.col_end].decode()
+        assert span == "*─1"
+
+    async def test_multi_row_edge_regions_share_the_same_path(self) -> None:
+        tables = _chain_tables(6)
+        tables[("t5",)].outgoing_references.append(
+            TableReference(column="t3_id", table="t3", ref_column="id")
+        )
+        tables[("t3",)].incoming_references.append(
+            TableReference(column="id", table="t5", ref_column="t3_id")
+        )
+        describe = _describe_from(tables)
+        result = await build_diagram(["t0"], describe)
+
+        edge_regions = [
+            r
+            for r in result.regions
+            if r.kind == "edge" and r.path == ["t5", "relationships", "t3_id"]
+        ]
+        # The wrap edge from t5 to t3 spans several rows; every row it
+        # touches gets its own region, all sharing the same path.
+        assert len(edge_regions) > 1
+        assert len({r.row for r in edge_regions}) == len(edge_regions)

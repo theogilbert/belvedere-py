@@ -28,6 +28,7 @@ from ..base import (
     DriverError,
     DriverSettings,
     build_column_samples,
+    build_relationship_description,
 )
 from .queries import (
     apply_metadata_transform,
@@ -309,6 +310,12 @@ name, type, nullability, primary key flag, default) and on
             case [schema, table, "columns", col_name]:
                 return await self._describe_column(
                     schema.upper(), table.upper(), col_name.upper()
+                )
+
+            case [schema, table, "relationships", column]:
+                desc = await self._describe_table(schema.upper(), table.upper())
+                return build_relationship_description(
+                    desc, table.upper(), schema.upper(), column.upper()
                 )
 
             case _:

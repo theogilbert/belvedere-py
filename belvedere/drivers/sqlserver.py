@@ -33,6 +33,7 @@ from .base import (
     DriverError,
     DriverSettings,
     build_column_samples,
+    build_relationship_description,
 )
 
 T = TypeVar("T")
@@ -414,6 +415,12 @@ column metadata (name, type, nullability, default).
             case [schema, table, "indices", index_name]:
                 return self._describe_index_sync(schema, table, index_name)
 
+            case [schema, table, "relationships", column]:
+                desc = self._explore_describe_sync([schema, table])
+                if not isinstance(desc, TableDescription):
+                    return None
+                return build_relationship_description(desc, table, schema, column)
+
             case _:
                 return None
 
@@ -696,7 +703,7 @@ column metadata (name, type, nullability, default).
     ) -> list[TableReference]:
         cur = self._conn.cursor()
         cur.execute(
-            "SELECT pc.name, rs.name, ro.name, rc.name"
+            "SELECT pc.name, rs.name, ro.name, rc.name, fk.name"
             " FROM sys.foreign_keys fk"
             " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
             " JOIN sys.objects po ON fk.parent_object_id = po.object_id"
@@ -719,6 +726,7 @@ column metadata (name, type, nullability, default).
                 ref_column=r[3],
                 schema=r[1],
                 unique=r[0] in unique_cols,
+                constraint_name=r[4],
             )
             for r in rows
         ]
@@ -728,7 +736,7 @@ column metadata (name, type, nullability, default).
     ) -> list[TableReference]:
         cur = self._conn.cursor()
         cur.execute(
-            "SELECT rc.name, ps.name, po.name, pc.name"
+            "SELECT rc.name, ps.name, po.name, pc.name, fk.name"
             " FROM sys.foreign_keys fk"
             " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
             " JOIN sys.objects po ON fk.parent_object_id = po.object_id"
@@ -752,6 +760,7 @@ column metadata (name, type, nullability, default).
                     ref_column=r[3],
                     schema=r[1],
                     unique=r[3] in unique_cols,
+                    constraint_name=r[4],
                 )
             )
         return references

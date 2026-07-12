@@ -27,6 +27,7 @@ so long edges straighten out and boxes move out of their way."""
 
 
 def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramRegion]]:
+    node_by_id = {n.id: n for n in nodes}
     box_lines = {n.id: _box_lines(n) for n in nodes}
     box_size = {nid: _box_size(lines) for nid, lines in box_lines.items()}
     dummy_set = {nid for nid, pos in layout.positions.items() if pos.dummy}
@@ -46,7 +47,10 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
             start, end = "1", "1"
         else:
             start, end = ("*", "1") if redge.fk_at_start else ("1", "*")
-        canvas.draw_edge(points, start=start, end=end)
+        owner_id = redge.nodes[0] if redge.fk_at_start else redge.nodes[-1]
+        owner_path = node_by_id[owner_id].path
+        edge_path = [*owner_path, "relationships", redge.fk_column]
+        canvas.draw_edge(points, start=start, end=end, path=edge_path)
 
     return canvas.render()
 
@@ -85,7 +89,7 @@ def _box_lines(node: GraphNode) -> list[_Line]:
     inner_w = max(len(node.name) + 2, max(len(line) for line in content_lines))
     top: _Line = [
         _Segment("┌─ "),
-        _Segment(node.name, node.path),
+        _Segment(node.name, node.path, kind="table"),
         _Segment(" " + "─" * max(0, inner_w - len(node.name) - 1) + "┐"),
     ]
     bottom: _Line = [_Segment("└" + "─" * (inner_w + 2) + "┘")]
@@ -99,7 +103,11 @@ def _box_lines(node: GraphNode) -> list[_Line]:
             rest = padded[len(col.name) :]
             col_path = [*node.path, "columns", col.name]
             body.append(
-                [_Segment("│ "), _Segment(col.name, col_path), _Segment(rest + " │")]
+                [
+                    _Segment("│ "),
+                    _Segment(col.name, col_path, kind="column"),
+                    _Segment(rest + " │"),
+                ]
             )
         if hidden:
             ellipsis = content_lines[-1]
@@ -108,7 +116,7 @@ def _box_lines(node: GraphNode) -> list[_Line]:
             body.append(
                 [
                     _Segment("│ "),
-                    _Segment(ellipsis, cols_path),
+                    _Segment(ellipsis, cols_path, kind="column"),
                     _Segment(padded[len(ellipsis) :] + " │"),
                 ]
             )

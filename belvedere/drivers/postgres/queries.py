@@ -264,7 +264,7 @@ async def fetch_outgoing_references(
     """Return foreign keys defined on *table* that reference other tables."""
     cur = conn.cursor()
     await cur.execute(
-        "SELECT la.attname, fn.nspname, fc.relname, fa.attname"
+        "SELECT la.attname, fn.nspname, fc.relname, fa.attname, con.conname"
         f" {_FK_COLUMN_PAIRS_SQL}"
         " WHERE con.contype = 'f' AND ln.nspname = %s AND lc.relname = %s"
         " ORDER BY con.conname, u.ord",
@@ -278,6 +278,7 @@ async def fetch_outgoing_references(
             table=r[2],
             ref_column=r[3],
             unique=r[0] in unique_cols,
+            constraint_name=r[4],
         )
         for r in await cur.fetchall()
     ]
@@ -290,7 +291,7 @@ async def fetch_incoming_references(
     """Return foreign keys on other tables in *schema* that reference *table*."""
     cur = conn.cursor()
     await cur.execute(
-        "SELECT fa.attname, ln.nspname, lc.relname, la.attname"
+        "SELECT fa.attname, ln.nspname, lc.relname, la.attname, con.conname"
         f" {_FK_COLUMN_PAIRS_SQL}"
         " WHERE con.contype = 'f' AND fn.nspname = %s AND fc.relname = %s"
         " ORDER BY con.conname, u.ord",
@@ -298,7 +299,7 @@ async def fetch_incoming_references(
     )
     references = []
     for r in await cur.fetchall():
-        ref_col, fk_schema, fk_table, fk_col = r
+        ref_col, fk_schema, fk_table, fk_col, constraint_name = r
         unique_cols = await fetch_unique_columns(conn, fk_schema, fk_table)
         references.append(
             TableReference(
@@ -307,6 +308,7 @@ async def fetch_incoming_references(
                 table=fk_table,
                 ref_column=fk_col,
                 unique=fk_col in unique_cols,
+                constraint_name=constraint_name,
             )
         )
     return references

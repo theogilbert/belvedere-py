@@ -128,6 +128,8 @@ class TableReference:
     one-to-one rather than many-to-one. For ``outgoing_references`` this checks
     ``column``; for ``incoming_references`` it checks the other table's FK column
     (``ref_column``), since that is the side owning the FK there."""
+    constraint_name: str | None = None
+    """Name of the FK constraint, or None if unnamed/unsupported by the database."""
 
 
 @dataclass
@@ -233,12 +235,39 @@ class ColumnsDescription:
     """Discriminator — always ``"columns"``."""
 
 
+@dataclass
+class RelationshipDescription:
+    """Full symmetric description of one foreign key, returned by explore.describe
+    for a path ending in ``["relationships", column]`` (e.g. as emitted by
+    explore.diagram's ``regions``). Unlike :class:`TableReference` — which only
+    describes the far side, relative to an already-known local table — this
+    names both the owning and referenced side explicitly."""
+
+    table: str
+    """Local table name (the table owning the foreign key)."""
+    column: str
+    """Local column."""
+    ref_table: str
+    """Referenced table name."""
+    ref_column: str
+    """Referenced column."""
+    schema: str | None = None
+    """Local table's schema, or None for databases without schema support."""
+    ref_schema: str | None = None
+    """Referenced table's schema, or None for databases without schema support."""
+    constraint_name: str | None = None
+    """Foreign key constraint name, or None if unnamed/unsupported."""
+    type: str = "relationship"
+    """Discriminator — always ``"relationship"``."""
+
+
 DescribeResult = (
     TableDescription
     | IndexDescription
     | IndicesDescription
     | ColumnDescription
     | ColumnsDescription
+    | RelationshipDescription
     | None
 )
 """Return type of ``explore_describe`` across all drivers."""
@@ -262,8 +291,12 @@ class LobPlaceholder:
 @dataclass
 class DiagramRegion:
     """One span in the ``diagram`` string returned by explore.diagram that names a
-    table or column, letting a client resolve a cursor position to an
-    explore.describe path without parsing the diagram text itself."""
+    table, column, or relationship, letting a client resolve a cursor position to
+    an explore.describe path without parsing the diagram text itself.
+
+    A relationship (``kind="edge"``) is typically covered by several regions —
+    one per row its connector line touches — all sharing the same ``path``.
+    """
 
     row: int
     """0-indexed line number within ``diagram`` (lines split on ``\\n``)."""
@@ -271,8 +304,11 @@ class DiagramRegion:
     """0-indexed byte offset (not codepoints) where the span starts."""
     col_end: int
     """0-indexed byte offset where the span ends (exclusive)."""
+    kind: str
+    """``"table"``, ``"column"``, or ``"edge"`` — discriminates what ``path`` names."""
     path: list[str]
-    """Path to pass as explore.describe's ``path`` param to describe this table or column."""
+    """Path to pass as explore.describe's ``path`` param to describe this table,
+    column, or relationship."""
 
 
 @dataclass

@@ -303,7 +303,8 @@ async def fetch_outgoing_references(
     """Return foreign keys defined on *table* that reference other tables."""
     cur = conn.cursor()
     await cur.execute(
-        "SELECT lc.COLUMN_NAME, rcon.OWNER, rcon.TABLE_NAME, rc.COLUMN_NAME"
+        "SELECT lc.COLUMN_NAME, rcon.OWNER, rcon.TABLE_NAME, rc.COLUMN_NAME,"
+        " con.CONSTRAINT_NAME"
         " FROM ALL_CONSTRAINTS con"
         " JOIN ALL_CONS_COLUMNS lc"
         "  ON con.OWNER = lc.OWNER AND con.CONSTRAINT_NAME = lc.CONSTRAINT_NAME"
@@ -325,6 +326,7 @@ async def fetch_outgoing_references(
             table=r[2],
             ref_column=r[3],
             unique=r[0] in unique_cols,
+            constraint_name=r[4],
         )
         for r in rows
     ]
@@ -337,7 +339,8 @@ async def fetch_incoming_references(
     """Return foreign keys on other tables in *schema* that reference *table*."""
     cur = conn.cursor()
     await cur.execute(
-        "SELECT rc.COLUMN_NAME, con.OWNER, con.TABLE_NAME, lc.COLUMN_NAME"
+        "SELECT rc.COLUMN_NAME, con.OWNER, con.TABLE_NAME, lc.COLUMN_NAME,"
+        " con.CONSTRAINT_NAME"
         " FROM ALL_CONSTRAINTS con"
         " JOIN ALL_CONS_COLUMNS lc"
         "  ON con.OWNER = lc.OWNER AND con.CONSTRAINT_NAME = lc.CONSTRAINT_NAME"
@@ -352,7 +355,7 @@ async def fetch_incoming_references(
     )
     references = []
     for r in await cur.fetchall():
-        fk_schema, fk_table, fk_col = r[1], r[2], r[3]
+        fk_schema, fk_table, fk_col, constraint_name = r[1], r[2], r[3], r[4]
         unique_cols = await fetch_unique_columns(conn, fk_schema, fk_table)
         references.append(
             TableReference(
@@ -361,6 +364,7 @@ async def fetch_incoming_references(
                 table=fk_table,
                 ref_column=fk_col,
                 unique=fk_col in unique_cols,
+                constraint_name=constraint_name,
             )
         )
     return references

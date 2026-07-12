@@ -22,7 +22,12 @@ from ..protocol import (
     TableReference,
     WriteResult,
 )
-from .base import BaseDriver, DriverError, DriverSettings
+from .base import (
+    BaseDriver,
+    DriverError,
+    DriverSettings,
+    build_relationship_description,
+)
 
 T = TypeVar("T")
 
@@ -280,6 +285,12 @@ metadata (name, type, nullability, primary key flag).
 
             case [table, "columns", col_name]:
                 return self._describe_column_sync(table, col_name)
+
+            case [table, "relationships", column]:
+                desc = self._explore_describe_sync([table])
+                if not isinstance(desc, TableDescription):
+                    return None
+                return build_relationship_description(desc, table, None, column)
 
             case _:
                 return None

@@ -25,6 +25,7 @@ from belvedere.protocol import (
     ColumnsDescription,
     IndexDescription,
     ReadResult,
+    RelationshipDescription,
     TableDescription,
     TableReference,
     WriteResult,
@@ -301,7 +302,11 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.outgoing_references == [
             TableReference(
-                column="parent_id", table=parent, ref_column="id", schema="dbo"
+                column="parent_id",
+                table=parent,
+                ref_column="id",
+                schema="dbo",
+                constraint_name=f"fk_{child}",
             )
         ]
         assert desc.incoming_references == []
@@ -324,7 +329,11 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.incoming_references == [
             TableReference(
-                column="id", table=child, ref_column="parent_id", schema="dbo"
+                column="id",
+                table=child,
+                ref_column="parent_id",
+                schema="dbo",
+                constraint_name=f"fk_{child}",
             )
         ]
         assert desc.outgoing_references == []
@@ -409,6 +418,39 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(["dbo", parent])
         assert isinstance(desc, TableDescription)
         assert desc.incoming_references[0].unique is False
+
+    async def test_should_describe_a_relationship(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(
+            ["dbo", child, "relationships", "parent_id"]
+        )
+        assert isinstance(desc, RelationshipDescription)
+        assert desc.table == child
+        assert desc.schema == "dbo"
+        assert desc.column == "parent_id"
+        assert desc.ref_table == parent
+        assert desc.ref_schema == "dbo"
+        assert desc.ref_column == "id"
+        assert desc.constraint_name == f"fk_{child}"
+
+    async def test_should_return_none_for_unknown_relationship_column(
+        self, driver: SQLServerDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
+        result = await driver.explore_describe(["dbo", table, "relationships", "id"])
+        assert result is None
 
 
 class TestExploreDescribeIndex:

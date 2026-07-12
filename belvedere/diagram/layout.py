@@ -41,6 +41,8 @@ class RoutedEdge:
     """Whether ``nodes[0]`` (rather than ``nodes[-1]``) owns the FK column."""
     one_to_one: bool = False
     """Whether the FK column is itself constrained unique."""
+    fk_column: str = ""
+    """Name of the FK column on whichever endpoint owns it."""
 
 
 @dataclass
@@ -70,6 +72,7 @@ def compute_layout(
                 nodes=chain,
                 fk_at_start=edge.fk_side == "source",
                 one_to_one=edge.one_to_one,
+                fk_column=edge.fk_column,
             )
         )
 

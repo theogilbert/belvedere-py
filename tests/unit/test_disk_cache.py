@@ -6,7 +6,13 @@ import pytest
 from belvedere.dispatcher import Dispatcher
 from belvedere.drivers.base import DriverSettings
 from belvedere.explore_cache import cache_file
-from belvedere.protocol import ExploreItem, Method, TableDescription, TableReference
+from belvedere.protocol import (
+    ExploreItem,
+    Method,
+    RelationshipDescription,
+    TableDescription,
+    TableReference,
+)
 
 
 async def noop_progress(status: str, message: str) -> None:
@@ -223,3 +229,35 @@ class TestDiskCache:
         assert details.incoming_references == [
             TableReference(column="id", table="child", ref_column="parent_fk")
         ]
+
+    async def test_should_persist_relationship_description_across_reload(
+        self, mock_driver: AsyncMock, tmp_path: pathlib.Path
+    ) -> None:
+        rel = RelationshipDescription(
+            table="t", column="fk", ref_table="other", ref_column="id"
+        )
+        mock_driver.explore_describe.return_value = rel
+
+        # first session: populate and persist
+        disp1 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
+        conn_id = await connect(disp1, mock_driver, PARAMS)
+        await disp1.dispatch(
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id, "path": ["t", "relationships", "fk"]},
+            noop_progress,
+        )
+        await disp1.dispatch(
+            Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
+        )
+
+        # second session: loaded from disk, driver not called again
+        disp2 = Dispatcher(driver_settings=DriverSettings(), cache_dir=tmp_path)
+        conn_id2 = await connect(disp2, mock_driver, PARAMS)
+        result = await disp2.dispatch(
+            Method.EXPLORE_DESCRIBE,
+            {"connection_id": conn_id2, "path": ["t", "relationships", "fk"]},
+            noop_progress,
+        )
+
+        mock_driver.explore_describe.assert_awaited_once()
+        assert result["details"] == rel

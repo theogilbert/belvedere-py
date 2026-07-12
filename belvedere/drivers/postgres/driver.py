@@ -27,6 +27,7 @@ from ..base import (
     DriverError,
     DriverSettings,
     build_column_samples,
+    build_relationship_description,
 )
 from .queries import (
     build_column_index_lists,
@@ -277,6 +278,10 @@ uniqueness, INCLUDE columns, and DDL as reported by `pg_indexes`).
 
             case [schema, table, "columns", col_name]:
                 return await self._describe_column(schema, table, col_name)
+
+            case [schema, table, "relationships", column]:
+                desc = await self._describe_table(schema, table)
+                return build_relationship_description(desc, table, schema, column)
 
             case _:
                 return None

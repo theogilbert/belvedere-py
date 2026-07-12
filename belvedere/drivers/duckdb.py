@@ -24,7 +24,12 @@ from ..protocol import (
     TableReference,
     WriteResult,
 )
-from .base import BaseDriver, DriverError, DriverSettings
+from .base import (
+    BaseDriver,
+    DriverError,
+    DriverSettings,
+    build_relationship_description,
+)
 
 T = TypeVar("T")
 
@@ -203,7 +208,7 @@ SELECT * FROM 'glob/**/*.parquet'
 
             case [schema, table, "foreign_keys"]:
                 items = []
-                for src_cols, fk_table, fk_cols in self._outgoing_fk_rows_sync(
+                for src_cols, fk_table, fk_cols, _ in self._outgoing_fk_rows_sync(
                     schema, table
                 ):
                     src = ", ".join(src_cols)
@@ -343,6 +348,12 @@ SELECT * FROM 'glob/**/*.parquet'
                     ddl=sql,
                 )
 
+            case [schema, table, "relationships", column]:
+                desc = self._explore_describe_sync([schema, table])
+                if not isinstance(desc, TableDescription):
+                    return None
+                return build_relationship_description(desc, table, schema, column)
+
             case _:
                 return None
 
@@ -472,10 +483,12 @@ SELECT * FROM 'glob/**/*.parquet'
 
     def _outgoing_fk_rows_sync(
         self, schema: str, table: str
-    ) -> list[tuple[list[str], str, list[str]]]:
-        """Raw (local_columns, ref_table, ref_columns) rows for a table's foreign keys."""
+    ) -> list[tuple[list[str], str, list[str], str]]:
+        """Raw (local_columns, ref_table, ref_columns, constraint_name) rows for a
+        table's foreign keys."""
         return self._conn.execute(
-            "SELECT constraint_column_names, referenced_table, referenced_column_names"
+            "SELECT constraint_column_names, referenced_table, referenced_column_names,"
+            " constraint_name"
             " FROM duckdb_constraints()"
             " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'FOREIGN KEY'",
             [schema, table],
@@ -493,8 +506,9 @@ SELECT * FROM 'glob/**/*.parquet'
                 ref_column=ref_col,
                 schema=schema,
                 unique=src_col in unique_cols,
+                constraint_name=constraint_name,
             )
-            for src_cols, fk_table, fk_cols in rows
+            for src_cols, fk_table, fk_cols, constraint_name in rows
             for src_col, ref_col in zip(src_cols, fk_cols)
         ]
 
@@ -502,13 +516,14 @@ SELECT * FROM 'glob/**/*.parquet'
         self, schema: str, table: str
     ) -> list[TableReference]:
         rows = self._conn.execute(
-            "SELECT table_name, constraint_column_names, referenced_column_names"
+            "SELECT table_name, constraint_column_names, referenced_column_names,"
+            " constraint_name"
             " FROM duckdb_constraints()"
             " WHERE schema_name = ? AND referenced_table = ? AND constraint_type = 'FOREIGN KEY'",
             [schema, table],
         ).fetchall()
         references = []
-        for other_table, fk_cols, ref_cols in rows:
+        for other_table, fk_cols, ref_cols, constraint_name in rows:
             unique_cols = self._unique_columns_sync(schema, other_table)
             references.extend(
                 TableReference(
@@ -517,6 +532,7 @@ SELECT * FROM 'glob/**/*.parquet'
                     ref_column=fk_col,
                     schema=schema,
                     unique=fk_col in unique_cols,
+                    constraint_name=constraint_name,
                 )
                 for fk_col, ref_col in zip(fk_cols, ref_cols)
             )

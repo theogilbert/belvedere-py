@@ -54,6 +54,10 @@ class GraphEdge:
     one_to_one: bool = False
     """Whether the FK column is itself constrained unique, making this a
     one-to-one relationship rather than many-to-one."""
+    fk_column: str = ""
+    """Name of the FK column on whichever endpoint owns it (``source`` or
+    ``target``, per ``fk_side``) — the column segment of its
+    ``["relationships", fk_column]`` describe path."""
 
 
 async def discover(
@@ -101,8 +105,15 @@ async def discover(
             pair = frozenset((cur_id, target_id))
             if pair not in seen_pairs:
                 seen_pairs.add(pair)
+                fk_column = ref.column if fk_side == "source" else ref.ref_column
                 edges.append(
-                    GraphEdge(cur_id, target_id, fk_side=fk_side, one_to_one=ref.unique)
+                    GraphEdge(
+                        cur_id,
+                        target_id,
+                        fk_side=fk_side,
+                        one_to_one=ref.unique,
+                        fk_column=fk_column,
+                    )
                 )
 
     return nodes, edges

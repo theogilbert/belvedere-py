@@ -10,6 +10,7 @@ from belvedere.protocol import (
     ExploreItem,
     IndexDescription,
     ReadResult,
+    RelationshipDescription,
     TableDescription,
     TableReference,
     WriteResult,
@@ -306,6 +307,26 @@ class TestExploreDescribe:
         self, driver: SQLiteDriver
     ) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_should_describe_a_relationship(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child", "relationships", "parent_id"])
+        assert isinstance(desc, RelationshipDescription)
+        assert desc.table == "child"
+        assert desc.column == "parent_id"
+        assert desc.ref_table == "parent"
+        assert desc.ref_column == "id"
+        assert desc.constraint_name is None
+
+    async def test_should_return_none_for_unknown_relationship_column(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert await driver.explore_describe(["t", "relationships", "id"]) is None
 
 
 class TestExploreDescribeIndex:

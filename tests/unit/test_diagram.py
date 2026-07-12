@@ -358,6 +358,39 @@ class TestBuildDiagram:
         }
         assert row_of["mid"] < row_of["root"]
 
+    async def test_multiple_relationships_on_the_same_side_get_distinct_anchors(
+        self,
+    ) -> None:
+        root = TableDescription(
+            table="root",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="a_id", type="INTEGER"),
+                ColumnInfo(name="b_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="a_id", table="a", ref_column="id"),
+                TableReference(column="b_id", table="b", ref_column="id"),
+            ],
+        )
+        a = TableDescription(
+            table="a", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        b = TableDescription(
+            table="b", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("root",): root, ("a",): a, ("b",): b})
+        result = await build_diagram(["root"], describe)
+
+        # Both edges leave "root" through the same side; they must not both
+        # bunch at that side's center point.
+        rows_by_edge: dict[tuple[str, ...], set[int]] = {}
+        for r in result.regions:
+            if r.kind == "edge":
+                rows_by_edge.setdefault(tuple(r.path), set()).add(r.row)
+        starting_rows = {min(rows) for rows in rows_by_edge.values()}
+        assert len(starting_rows) == len(rows_by_edge)
+
     async def test_long_chain_wraps_into_a_new_band(self) -> None:
         describe = _describe_from(_chain_tables(8))
         result = await build_diagram(["t0"], describe)

@@ -35,6 +35,7 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
 
     lane_index = _assign_lanes(layout)
     coords, lane_coord = _place(layout, box_size, band_size, lane_index)
+    anchor_slots = _assign_anchor_slots(layout, dummy_set)
 
     canvas = Canvas()
     for node_id, lines in box_lines.items():
@@ -42,7 +43,9 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
         canvas.blit_box(lines, top, left)
 
     for redge in layout.routed_edges:
-        points = _route(redge, layout, coords, box_size, dummy_set, lane_coord)
+        points = _route(
+            redge, layout, coords, box_size, dummy_set, lane_coord, anchor_slots
+        )
         if redge.one_to_one:
             start, end = "1", "1"
         else:
@@ -371,24 +374,78 @@ def _nudge(
             y[ids[k]] = ceiling
 
 
+def _hop_sides(u: int, v: int, layout: Layout) -> tuple[str, str]:
+    """Which side of ``u`` and ``v`` a hop between them attaches to."""
+    pu, pv = layout.positions[u], layout.positions[v]
+    if pu.band != pv.band:
+        downward = pv.band > pu.band
+        return ("bottom", "top") if downward else ("top", "bottom")
+    # In an odd (right-to-left) band a forward hop travels leftward, so pick
+    # sides from the display columns rather than the ranks.
+    rightward = pv.col > pu.col
+    return ("right", "left") if rightward else ("left", "right")
+
+
+def _assign_anchor_slots(
+    layout: Layout, dummy_set: set[int]
+) -> dict[tuple[int, tuple[int, int]], tuple[int, int]]:
+    """Assigns every hop touching a real box's side a slot among its side-mates,
+    keyed by ``(node_id, hop)``, so several edges through the same side fan out
+    across the box's border instead of bunching at one fixed point. Dummy nodes
+    (pure bend points) are excluded — only real boxes have a border to spread
+    across. Each side's hops are ordered by the row of their other endpoint, so
+    the fan-out roughly tracks where each edge is headed."""
+    groups: dict[tuple[int, str], list[tuple[int, int]]] = defaultdict(list)
+    for redge in layout.routed_edges:
+        for u, v in zip(redge.nodes, redge.nodes[1:]):
+            side_u, side_v = _hop_sides(u, v, layout)
+            if u not in dummy_set:
+                groups[(u, side_u)].append((u, v))
+            if v not in dummy_set:
+                groups[(v, side_v)].append((u, v))
+
+    slots: dict[tuple[int, tuple[int, int]], tuple[int, int]] = {}
+    for (node_id, _side), hops in groups.items():
+        ordered = sorted(
+            hops,
+            key=lambda hop: (
+                layout.positions[hop[0] if hop[1] == node_id else hop[1]].row
+            ),
+        )
+        count = len(ordered)
+        for i, hop in enumerate(ordered):
+            slots[(node_id, hop)] = (i, count)
+    return slots
+
+
+def _spread(slot: int, count: int, size: int) -> int:
+    """Spreads ``count`` slots evenly across ``size`` interior positions
+    (0-indexed), centering a single slot rather than pinning it to an edge."""
+    if size <= 1 or count <= 1:
+        return max(size, 1) // 2
+    return round(slot * (size - 1) / (count - 1))
+
+
 def _anchor(
     node_id: int,
     coords: dict[int, tuple[int, int]],
     box_size: dict[int, tuple[int, int]],
     dummy_set: set[int],
     side: str,
+    slot: int = 0,
+    count: int = 1,
 ) -> tuple[int, int]:
     row, col = coords[node_id]
     if node_id in dummy_set:
         return row, col
     h, w = box_size[node_id]
     if side == "right":
-        return row + h // 2, col + w
+        return row + 1 + _spread(slot, count, h - 2), col + w
     if side == "left":
-        return row + h // 2, col - 1
+        return row + 1 + _spread(slot, count, h - 2), col - 1
     if side == "bottom":
-        return row + h, col + w // 2
-    return row - 1, col + w // 2  # "top"
+        return row + h, col + 1 + _spread(slot, count, w - 2)
+    return row - 1, col + 1 + _spread(slot, count, w - 2)  # "top"
 
 
 def _route(
@@ -398,27 +455,21 @@ def _route(
     box_size: dict[int, tuple[int, int]],
     dummy_set: set[int],
     lane_coord: dict[_Channel, dict[tuple[int, int], int]],
+    anchor_slots: dict[tuple[int, tuple[int, int]], tuple[int, int]],
 ) -> list[tuple[int, int]]:
     points: list[tuple[int, int]] = []
     for u, v in zip(redge.nodes, redge.nodes[1:]):
         channel = _hop_channel(u, v, layout)
         coord = lane_coord[channel][(u, v)]
+        side_u, side_v = _hop_sides(u, v, layout)
+        slot_u, count_u = anchor_slots.get((u, (u, v)), (0, 1))
+        slot_v, count_v = anchor_slots.get((v, (u, v)), (0, 1))
+        u_anchor = _anchor(u, coords, box_size, dummy_set, side_u, slot_u, count_u)
+        v_anchor = _anchor(v, coords, box_size, dummy_set, side_v, slot_v, count_v)
 
         if channel[0] == "h":
-            # In an odd (right-to-left) band a forward hop travels leftward, so
-            # pick sides from the display columns rather than the ranks.
-            rightward = layout.positions[v].col > layout.positions[u].col
-            side_u = "right" if rightward else "left"
-            side_v = "left" if rightward else "right"
-            u_anchor = _anchor(u, coords, box_size, dummy_set, side_u)
-            v_anchor = _anchor(v, coords, box_size, dummy_set, side_v)
             hop = [u_anchor, (u_anchor[0], coord), (v_anchor[0], coord), v_anchor]
         else:
-            downward = layout.positions[v].band > layout.positions[u].band
-            side_u = "bottom" if downward else "top"
-            side_v = "top" if downward else "bottom"
-            u_anchor = _anchor(u, coords, box_size, dummy_set, side_u)
-            v_anchor = _anchor(v, coords, box_size, dummy_set, side_v)
             hop = [u_anchor, (coord, u_anchor[1]), (coord, v_anchor[1]), v_anchor]
 
         if points and points[-1] == hop[0]:

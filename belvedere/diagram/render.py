@@ -87,16 +87,24 @@ def _box_lines(node: GraphNode) -> list[_Line]:
                 content_lines.append("...")
 
     inner_w = max(len(node.name) + 2, max(len(line) for line in content_lines))
-    top: _Line = [
-        _Segment("┌─ "),
-        _Segment(node.name, node.path, kind="table"),
-        _Segment(" " + "─" * max(0, inner_w - len(node.name) - 1) + "┐"),
-    ]
-    bottom: _Line = [_Segment("└" + "─" * (inner_w + 2) + "┘")]
+    top_text = (
+        "┌─ " + node.name + " " + "─" * max(0, inner_w - len(node.name) - 1) + "┐"
+    )
+    top: _Line = [_Segment(top_text, node.path, kind="table")]
+    bottom: _Line = [_Segment("└" + "─" * (inner_w + 2) + "┘", node.path, kind="table")]
+
+    left_border = _Segment("│", node.path, kind="table")
+    right_border = _Segment("│", node.path, kind="table")
 
     body: list[_Line] = []
     if node.unavailable or not node.columns:
-        body.append([_Segment(f"│ {content_lines[0]:<{inner_w}} │")])
+        body.append(
+            [
+                left_border,
+                _Segment(f" {content_lines[0]:<{inner_w}} "),
+                right_border,
+            ]
+        )
     else:
         for col, content in zip(display_cols, content_lines):
             padded = f"{content:<{inner_w}}"
@@ -104,9 +112,11 @@ def _box_lines(node: GraphNode) -> list[_Line]:
             col_path = [*node.path, "columns", col.name]
             body.append(
                 [
-                    _Segment("│ "),
+                    left_border,
+                    _Segment(" "),
                     _Segment(col.name, col_path, kind="column"),
-                    _Segment(rest + " │"),
+                    _Segment(rest + " "),
+                    right_border,
                 ]
             )
         if hidden:
@@ -115,9 +125,11 @@ def _box_lines(node: GraphNode) -> list[_Line]:
             cols_path = [*node.path, "columns"]
             body.append(
                 [
-                    _Segment("│ "),
+                    left_border,
+                    _Segment(" "),
                     _Segment(ellipsis, cols_path, kind="column"),
-                    _Segment(padded[len(ellipsis) :] + " │"),
+                    _Segment(padded[len(ellipsis) :] + " "),
+                    right_border,
                 ]
             )
 

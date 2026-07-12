@@ -439,7 +439,7 @@ class TestBuildDiagramRegions:
         region = next(r for r in result.regions if r.path == ["dbo", "users"])
         line = result.diagram.splitlines()[region.row]
         span = line.encode()[region.col_start : region.col_end].decode()
-        assert span == "dbo.users"
+        assert "dbo.users" in span
 
     async def test_column_region_resolves_to_column_path(self) -> None:
         desc = TableDescription(
@@ -467,7 +467,7 @@ class TestBuildDiagramRegions:
         # byte offset must reflect that, not the character index.
         assert region.col_start == 4
 
-    async def test_table_referenced_twice_still_gets_exactly_one_region(self) -> None:
+    async def test_table_referenced_twice_still_gets_drawn_as_one_box(self) -> None:
         root = TableDescription(
             table="root",
             columns=[
@@ -508,8 +508,10 @@ class TestBuildDiagramRegions:
         )
         result = await build_diagram(["root"], describe)
 
+        # "shared" has one column, so a single box is 3 rows (top border,
+        # one column row, bottom border); a duplicate box would add more rows.
         matches = [r for r in result.regions if r.path == ["shared"]]
-        assert len(matches) == 1
+        assert len({r.row for r in matches}) == 3
 
     async def test_ellipsis_region_resolves_to_the_table_column_list(self) -> None:
         desc = TableDescription(
@@ -541,7 +543,7 @@ class TestBuildDiagramRegions:
         region = next(r for r in result.regions if r.path == ["users"])
         line = result.diagram.splitlines()[region.row]
         span = line.encode()[region.col_start : region.col_end].decode()
-        assert span == "users"
+        assert "users" in span
 
     async def test_table_header_region_has_table_kind(self) -> None:
         desc = TableDescription(table="users", columns=[])
@@ -603,3 +605,60 @@ class TestBuildDiagramRegions:
         # touches gets its own region, all sharing the same path.
         assert len(edge_regions) > 1
         assert len({r.row for r in edge_regions}) == len(edge_regions)
+
+    async def test_table_box_border_gets_a_region_on_every_row(self) -> None:
+        desc = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        table_regions = [r for r in result.regions if r.path == ["users"]]
+        # top border, one column row (left + right border), bottom border.
+        assert len({r.row for r in table_regions}) == 3
+
+    async def test_table_border_region_on_column_row_does_not_overlap_column(
+        self,
+    ) -> None:
+        desc = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        column_region = next(
+            r for r in result.regions if r.path == ["users", "columns", "id"]
+        )
+        border_regions = [
+            r
+            for r in result.regions
+            if r.path == ["users"] and r.row == column_region.row
+        ]
+        for border in border_regions:
+            overlap = border.col_start < column_region.col_end and (
+                column_region.col_start < border.col_end
+            )
+            assert not overlap
+
+    async def test_table_regions_all_share_the_same_path(self) -> None:
+        desc = TableDescription(
+            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        table_regions = [r for r in result.regions if r.kind == "table"]
+        assert all(r.path == ["users"] for r in table_regions)
+
+    async def test_every_interior_row_gets_a_left_and_right_border_region(self) -> None:
+        desc = TableDescription(
+            table="t",
+            columns=[ColumnInfo(name=n, type="INTEGER", pk=True) for n in "abcd"],
+        )
+        describe = _describe_from({("t",): desc})
+        result = await build_diagram(["t"], describe)
+
+        table_regions = [r for r in result.regions if r.path == ["t"]]
+        interior_rows = range(1, 5)  # rows between the top and bottom border
+        for row in interior_rows:
+            assert sum(1 for r in table_regions if r.row == row) == 2

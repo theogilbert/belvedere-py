@@ -296,6 +296,12 @@ class DiagramRegion:
 
     A relationship (``kind="edge"``) is typically covered by several regions —
     one per row its connector line touches — all sharing the same ``path``.
+
+    A table (``kind="table"``) is likewise typically covered by several regions:
+    its box's top and bottom border rows in full, and — on each interior row —
+    just the left and right border characters (never the whole row, so these
+    never overlap that row's ``kind="column"`` region). All share the table's
+    ``path``.
     """
 
     row: int

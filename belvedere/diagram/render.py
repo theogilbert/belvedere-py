@@ -21,9 +21,6 @@ connectors; grows when more wrap lanes must fit."""
 _ALIGN_SWEEPS = 2
 """Rounds of vertical alignment; each round pulls every rank toward its left
 neighbors, then every rank toward its right neighbors."""
-_DUMMY_PRIORITY = 1_000_000
-"""Alignment priority of dummy bend-points — always above any real box's degree,
-so long edges straighten out and boxes move out of their way."""
 
 
 def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramRegion]]:
@@ -185,6 +182,14 @@ def _place(
     for ids in by_rank.values():
         ids.sort(key=lambda nid: layout.positions[nid].row)
 
+    # Skip-edge waypoints ("dummy" bend points) don't stack alongside real
+    # boxes at all — they're placed afterwards, once real box positions are
+    # final (see `_place_skip_waypoints`), so a skip edge never displaces or
+    # takes stacking space from a table it happens to pass by.
+    real_by_rank = {
+        r: [nid for nid in ids if nid in box_size] for r, ids in by_rank.items()
+    }
+
     col_width = {
         r: max((box_size[nid][1] for nid in ids if nid in box_size), default=1)
         for r, ids in by_rank.items()
@@ -196,16 +201,17 @@ def _place(
         nid: box_size[nid][0] if nid in box_size else 1 for nid in layout.positions
     }
 
-    # y-offset of every node within its band: stack top-down first, then nudge
-    # nodes toward their neighbors' rows so edges run straight where possible.
+    # y-offset of every real box within its band: stack top-down first, then
+    # nudge boxes toward their neighbors' rows so edges run straight where
+    # possible.
     y_within: dict[int, int] = {}
-    for ids in by_rank.values():
+    for ids in real_by_rank.values():
         y = 0
         for nid in ids:
             y_within[nid] = y
             y += height[nid] + _BOX_GAP
 
-    _align_rows(layout, by_rank, y_within, height)
+    _align_rows(layout, real_by_rank, y_within, height)
 
     bands = sorted({r // band_size for r in by_rank})
 
@@ -214,13 +220,21 @@ def _place(
     y_cursor = 0
     for band in bands:
         in_band = [
-            nid for r, ids in by_rank.items() if r // band_size == band for nid in ids
+            nid
+            for r, ids in real_by_rank.items()
+            if r // band_size == band
+            for nid in ids
         ]
-        shift = min(y_within[nid] for nid in in_band)
-        for nid in in_band:
-            y_within[nid] -= shift
         band_top[band] = y_cursor
-        band_height[band] = max(y_within[nid] + height[nid] for nid in in_band)
+        if not in_band:
+            # a band with only skip-edge waypoints passing through it, no
+            # real box of its own
+            band_height[band] = 1
+        else:
+            shift = min(y_within[nid] for nid in in_band)
+            for nid in in_band:
+                y_within[nid] -= shift
+            band_height[band] = max(y_within[nid] + height[nid] for nid in in_band)
         wrap_lanes = len(lane_index.get(("w", band), {}))
         y_cursor += band_height[band] + max(
             _BAND_GAP, 2 * _CHANNEL_PADDING + wrap_lanes
@@ -260,10 +274,12 @@ def _place(
     }
 
     coords: dict[int, tuple[int, int]] = {}
-    for r, ids in by_rank.items():
+    for r, ids in real_by_rank.items():
         band = r // band_size
         for nid in ids:
             coords[nid] = (band_top[band] + y_within[nid], rank_left[r])
+
+    _place_skip_waypoints(layout, coords, box_size, rank_left, height)
 
     lane_coord: dict[_Channel, dict[tuple[int, int], int]] = {}
     for channel, hops in lane_index.items():
@@ -280,21 +296,118 @@ def _place(
     return coords, lane_coord
 
 
+def _place_skip_waypoints(
+    layout: Layout,
+    coords: dict[int, tuple[int, int]],
+    box_size: dict[int, tuple[int, int]],
+    rank_left: dict[int, int],
+    height: dict[int, int],
+) -> None:
+    """Places every skip-edge waypoint ("dummy" bend point) at a row linearly
+    interpolated between the real boxes at the two ends of its edge's chain,
+    clamped clear of any real box's row range at its own rank — so the edge
+    passes the box on its own row instead of cutting through its interior
+    (which the canvas would silently swallow, since box cells always win) or
+    detouring around it via extra stacking space. Waypoints share the rank's
+    normal column; this runs after real box placement is final, since it
+    depends on real boxes' finished coordinates. Mutates `coords`."""
+    for redge in layout.routed_edges:
+        chain = redge.nodes
+        if len(chain) < 3:
+            continue  # direct hop, no waypoints
+        start_row = coords[chain[0]][0] + height[chain[0]] // 2
+        end_row = coords[chain[-1]][0] + height[chain[-1]] // 2
+        span = len(chain) - 1
+        for i, nid in enumerate(chain[1:-1], start=1):
+            rank = layout.positions[nid].rank
+            row = round(start_row + (end_row - start_row) * i / span)
+            row = _clamp_outside_boxes(row, layout, box_size, coords, rank)
+            coords[nid] = (row, rank_left[rank])
+
+    _resolve_waypoint_collisions(layout, coords, box_size)
+
+
+def _box_row_ranges(
+    layout: Layout,
+    box_size: dict[int, tuple[int, int]],
+    coords: dict[int, tuple[int, int]],
+    rank: int,
+) -> list[tuple[int, int]]:
+    """Inclusive row ranges occupied by every real box at `rank`."""
+    ranges = []
+    for nid, pos in layout.positions.items():
+        if pos.rank == rank and nid in box_size:
+            top, _ = coords[nid]
+            h, _ = box_size[nid]
+            ranges.append((top, top + h - 1))
+    return ranges
+
+
+def _clamp_outside_boxes(
+    row: int,
+    layout: Layout,
+    box_size: dict[int, tuple[int, int]],
+    coords: dict[int, tuple[int, int]],
+    rank: int,
+) -> int:
+    """Nudges `row` to the nearest row outside every real box at `rank`."""
+    return _clamp_outside(row, _box_row_ranges(layout, box_size, coords, rank))
+
+
+def _clamp_outside(row: int, ranges: list[tuple[int, int]]) -> int:
+    changed = True
+    while changed:
+        changed = False
+        for lo, hi in ranges:
+            if lo <= row <= hi:
+                row = lo - 1 if row - lo <= hi - row else hi + 1
+                changed = True
+    return row
+
+
+def _resolve_waypoint_collisions(
+    layout: Layout,
+    coords: dict[int, tuple[int, int]],
+    box_size: dict[int, tuple[int, int]],
+) -> None:
+    """Nudges apart any skip-edge waypoints that landed on the same row
+    within the same rank, keeping them clear of that rank's real box(es)."""
+    by_rank: dict[int, list[int]] = defaultdict(list)
+    for nid, pos in layout.positions.items():
+        if pos.dummy and nid in coords:
+            by_rank[pos.rank].append(nid)
+
+    for rank, ids in by_rank.items():
+        ranges = _box_row_ranges(layout, box_size, coords, rank)
+        ordered = sorted(ids, key=lambda nid: coords[nid][0])
+        prev_row: int | None = None
+        for nid in ordered:
+            row, col = coords[nid]
+            if prev_row is not None and row <= prev_row:
+                row = prev_row + 1
+            row = _clamp_outside(row, ranges)
+            coords[nid] = (row, col)
+            prev_row = row
+
+
 def _align_rows(
     layout: Layout,
     by_rank: dict[int, list[int]],
     y_within: dict[int, int],
     height: dict[int, int],
 ) -> None:
-    """Nudges nodes up or down within their rank so edge endpoints land on the
-    same row wherever possible, giving edges a straight corridor instead of a
-    detour around the boxes of intermediate ranks. Priority method: dummy nodes
-    are pure bend points, so they outrank real boxes and push them aside; among
-    real boxes, the better-connected one wins."""
+    """Nudges real boxes up or down within their rank so a direct edge between
+    two adjacent ranks lands on the same row on both ends, giving it a
+    straight line instead of a jog. Only considers real-to-real edges —
+    skip-edges route around obstacles via a bypass lane instead of displacing
+    boxes (see `_route_bypass_dummies`), so their waypoints don't participate
+    here. Priority: the better-connected box wins a contested nudge."""
     left_partners: dict[int, list[int]] = defaultdict(list)
     right_partners: dict[int, list[int]] = defaultdict(list)
     for redge in layout.routed_edges:
         for u, v in zip(redge.nodes, redge.nodes[1:]):
+            if layout.positions[u].dummy or layout.positions[v].dummy:
+                continue  # skip-edge waypoint — handled by the bypass lane
             if layout.positions[u].band != layout.positions[v].band:
                 continue  # wrap hop — routed vertically, row alignment is moot
             ru, rv = layout.positions[u].rank, layout.positions[v].rank
@@ -303,10 +416,8 @@ def _align_rows(
             left_partners[hi].append(lo)
 
     priority = {
-        nid: _DUMMY_PRIORITY
-        if pos.dummy
-        else len(left_partners[nid]) + len(right_partners[nid])
-        for nid, pos in layout.positions.items()
+        nid: len(left_partners[nid]) + len(right_partners[nid])
+        for nid in layout.positions
     }
 
     def anchor(nid: int) -> int:

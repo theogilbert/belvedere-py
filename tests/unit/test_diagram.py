@@ -320,7 +320,9 @@ class TestBuildDiagram:
         # referenced side.
         assert re.search(r"│\*─*1│", result.diagram)
 
-    async def test_skip_edge_intermediate_box_is_nudged_off_the_corridor(self) -> None:
+    async def test_skip_edge_routes_past_the_intermediate_box_via_a_bypass_lane(
+        self,
+    ) -> None:
         root = TableDescription(
             table="root",
             columns=[
@@ -348,15 +350,14 @@ class TestBuildDiagram:
         )
         describe = _describe_from({("root",): root, ("mid",): mid, ("leaf",): leaf})
         result = await build_diagram(["root"], describe)
-        # The root→leaf edge crosses mid's rank; mid must move up out of the
-        # corridor instead of the edge detouring around it, which puts mid's
-        # header above root's.
+        # The root→leaf edge crosses mid's rank; it should bypass mid via a
+        # side lane instead of forcing mid out of its natural row.
         lines = result.diagram.splitlines()
         row_of = {
             t: next(r for r, s in enumerate(lines) if f"┌─ {t} " in s)
             for t in ("root", "mid")
         }
-        assert row_of["mid"] < row_of["root"]
+        assert row_of["mid"] == row_of["root"]
 
     async def test_multiple_relationships_on_the_same_side_get_distinct_anchors(
         self,
@@ -695,3 +696,50 @@ class TestBuildDiagramRegions:
         interior_rows = range(1, 5)  # rows between the top and bottom border
         for row in interior_rows:
             assert sum(1 for r in table_regions if r.row == row) == 2
+
+    async def test_skip_edge_never_overlaps_an_unrelated_table_region(self) -> None:
+        root = TableDescription(
+            table="root",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="mid_id", type="INTEGER"),
+                ColumnInfo(name="leaf_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="mid_id", table="mid", ref_column="id"),
+                TableReference(column="leaf_id", table="leaf", ref_column="id"),
+            ],
+        )
+        mid = TableDescription(
+            table="mid",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="leaf_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="leaf_id", table="leaf", ref_column="id")
+            ],
+        )
+        leaf = TableDescription(
+            table="leaf", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("root",): root, ("mid",): mid, ("leaf",): leaf})
+        result = await build_diagram(["root"], describe)
+
+        # The root->leaf edge skips over mid's rank; its path must never
+        # share cells with mid's box, or the canvas would silently swallow
+        # that stretch of the connector (box cells always win).
+        skip_edge = [
+            r
+            for r in result.regions
+            if r.kind == "edge" and r.path == ["root", "relationships", "leaf_id"]
+        ]
+        mid_regions = [r for r in result.regions if r.path == ["mid"]]
+        for edge in skip_edge:
+            for table in mid_regions:
+                if edge.row != table.row:
+                    continue
+                overlap = edge.col_start < table.col_end and (
+                    table.col_start < edge.col_end
+                )
+                assert not overlap

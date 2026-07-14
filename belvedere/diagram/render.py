@@ -30,14 +30,17 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
     box_size = {nid: _box_size(lines) for nid, lines in box_lines.items()}
     dummy_set = {nid for nid, pos in layout.positions.items() if pos.dummy}
     band_size = layout.band_size
+    vertical_hops = _skip_hop_ends(layout)
 
-    lane_index = _assign_lanes(layout)
-    coords, _ = _place(layout, box_size, band_size, lane_index)
-    anchor_slots = _assign_anchor_slots(layout, dummy_set, coords)
-    lane_index = _reorder_lanes(
-        layout, lane_index, anchor_slots, coords, box_size, dummy_set
+    lane_index = _assign_lanes(layout, vertical_hops)
+    coords, _ = _place(layout, box_size, band_size, lane_index, dummy_set)
+    anchor_slots = _assign_anchor_slots(
+        layout, dummy_set, coords, box_size, vertical_hops
     )
-    _, lane_coord = _place(layout, box_size, band_size, lane_index)
+    lane_index = _reorder_lanes(
+        layout, lane_index, anchor_slots, coords, box_size, dummy_set, vertical_hops
+    )
+    _, lane_coord = _place(layout, box_size, band_size, lane_index, dummy_set)
 
     canvas = Canvas()
     for node_id, lines in box_lines.items():
@@ -46,7 +49,14 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
 
     for redge in layout.routed_edges:
         points = _route(
-            redge, layout, coords, box_size, dummy_set, lane_coord, anchor_slots
+            redge,
+            layout,
+            coords,
+            box_size,
+            dummy_set,
+            lane_coord,
+            anchor_slots,
+            vertical_hops,
         )
         if redge.one_to_one:
             start, end = "1", "1"
@@ -149,17 +159,65 @@ def _box_size(lines: list[_Line]) -> tuple[int, int]:
 _Channel = tuple[str, int]
 """Where a hop's lane lives: ``("h", boundary_rank)`` for the vertical channel
 between two in-band rank columns, ``("w", upper_band)`` for the horizontal wrap
-region between two bands."""
+region between two bands, ``("v", node_id)`` for the local vertical-exit region
+just below one specific box — keyed by node, not rank, since a rank can stack
+several boxes and the exit must stay scoped to its own box's bottom edge, not
+whichever rank-mate happens to sit lowest."""
 
 
-def _hop_channel(u: int, v: int, layout: Layout) -> _Channel:
+def _skip_hop_ends(layout: Layout) -> set[tuple[int, int]]:
+    """The first hop of every multi-rank skip edge (one decomposed through at
+    least one dummy waypoint) — the leg leaving the edge's real source. This
+    gets a vertical exit (top or bottom) instead of competing with direct
+    neighbors for the box's left/right sides, which stay reserved for hops
+    between adjacent ranks that benefit from precise row alignment far more
+    than a long skip edge does over its much longer path."""
+    hops = set()
+    for redge in layout.routed_edges:
+        if len(redge.nodes) > 2:
+            hops.add((redge.nodes[0], redge.nodes[1]))
+    return hops
+
+
+def _prefers_top_exit(u: int, layout: Layout) -> bool:
+    """Whether a same-band vertical exit from ``u`` should go up instead of
+    down — picks whichever direction has fewer rank-mates stacked in the
+    way, using ordinal stacking position within the rank as a cheap proxy
+    for available slack. A box near the top of the diagram may not have
+    room above it for this, which can push rows negative — `_place` shifts
+    the whole diagram down afterwards to cover that, rather than special-
+    casing it here, so this stays a single simple rule every caller agrees
+    on."""
+    pu = layout.positions[u]
+    above = sum(
+        1
+        for pos in layout.positions.values()
+        if pos.rank == pu.rank and pos.row < pu.row
+    )
+    below = sum(
+        1
+        for pos in layout.positions.values()
+        if pos.rank == pu.rank and pos.row > pu.row
+    )
+    return above < below
+
+
+def _hop_channel(u: int, v: int, layout: Layout, vertical: bool = False) -> _Channel:
     pu, pv = layout.positions[u], layout.positions[v]
     if pu.band != pv.band:
         return ("w", min(pu.band, pv.band))
+    if vertical:
+        # Same-band skip-edge exit: a local vertical run just above or below
+        # this specific box (see `_route`'s non-"h" shape), not a genuine
+        # band boundary — kept separate from "w" so it doesn't have to
+        # detour all the way past every other rank's content in the band.
+        return ("v", u)
     return ("h", min(pu.rank, pv.rank))
 
 
-def _assign_lanes(layout: Layout) -> dict[_Channel, dict[tuple[int, int], int]]:
+def _assign_lanes(
+    layout: Layout, vertical_hops: set[tuple[int, int]]
+) -> dict[_Channel, dict[tuple[int, int], int]]:
     """For each channel, assigns every hop passing through it a distinct lane
     index, ordered by the rank-sibling ordinal of the hop's first endpoint.
     Used for an initial pass, before real placement is known — only the
@@ -169,7 +227,8 @@ def _assign_lanes(layout: Layout) -> dict[_Channel, dict[tuple[int, int], int]]:
     hops_by_channel: dict[_Channel, list[tuple[int, int]]] = defaultdict(list)
     for redge in layout.routed_edges:
         for u, v in zip(redge.nodes, redge.nodes[1:]):
-            hops_by_channel[_hop_channel(u, v, layout)].append((u, v))
+            channel = _hop_channel(u, v, layout, (u, v) in vertical_hops)
+            hops_by_channel[channel].append((u, v))
 
     lane_index: dict[_Channel, dict[tuple[int, int], int]] = {}
     for channel, hops in hops_by_channel.items():
@@ -185,6 +244,7 @@ def _reorder_lanes(
     coords: dict[int, tuple[int, int]],
     box_size: dict[int, tuple[int, int]],
     dummy_set: set[int],
+    vertical_hops: set[tuple[int, int]],
 ) -> dict[_Channel, dict[tuple[int, int], int]]:
     """Re-orders each channel's lanes now that every hop's actual endpoint
     anchors are known, so a hop that must jog from its source row/column to
@@ -202,7 +262,7 @@ def _reorder_lanes(
 
     def endpoints(hop: tuple[int, int], axis: int) -> tuple[int, int]:
         u, v = hop
-        side_u, side_v = _hop_sides(u, v, layout)
+        side_u, side_v = _hop_sides(u, v, layout, hop in vertical_hops)
         slot_u, count_u = anchor_slots.get((u, hop), (0, 1))
         slot_v, count_v = anchor_slots.get((v, hop), (0, 1))
         u_anchor = _anchor(u, coords, box_size, dummy_set, side_u, slot_u, count_u)
@@ -238,6 +298,7 @@ def _place(
     box_size: dict[int, tuple[int, int]],
     band_size: int,
     lane_index: dict[_Channel, dict[tuple[int, int], int]],
+    dummy_set: set[int],
 ) -> tuple[dict[int, tuple[int, int]], dict[_Channel, dict[tuple[int, int], int]]]:
     by_rank: dict[int, list[int]] = defaultdict(list)
     for nid, pos in layout.positions.items():
@@ -342,7 +403,7 @@ def _place(
         for nid in ids:
             coords[nid] = (band_top[band] + y_within[nid], rank_left[r])
 
-    _place_skip_waypoints(layout, coords, box_size, rank_left, height)
+    _place_skip_waypoints(layout, coords, box_size, rank_left, dummy_set)
 
     lane_coord: dict[_Channel, dict[tuple[int, int], int]] = {}
     for channel, hops in lane_index.items():
@@ -352,9 +413,49 @@ def _place(
             lane_coord[channel] = {
                 hop: base + _CHANNEL_PADDING + i for hop, i in hops.items()
             }
+        elif kind == "v":
+            # Just above or below this specific box, not its whole rank (a
+            # rank can stack several boxes) or the whole band, so the exit
+            # stays a short local dip. Going up can push rows negative for a
+            # box near the top of the diagram — handled below by shifting
+            # everything down, rather than special-cased here, so this
+            # always agrees with `_hop_sides`'s choice of side.
+            box_top = coords[idx][0]
+            if _prefers_top_exit(idx, layout):
+                lane_coord[channel] = {
+                    hop: box_top - _CHANNEL_PADDING - 1 - i for hop, i in hops.items()
+                }
+            else:
+                box_bottom = box_top + box_size[idx][0]
+                lane_coord[channel] = {
+                    hop: box_bottom + _CHANNEL_PADDING + i for hop, i in hops.items()
+                }
         else:
             base = channel_left[idx]
             lane_coord[channel] = {hop: base + i for hop, i in hops.items()}
+
+    # A top exit can land above row 0 for a box near the top of the diagram;
+    # shift every row-valued coordinate down rather than clamping, so the
+    # exit keeps the geometry `_hop_sides` chose instead of collapsing back
+    # onto the box it was meant to clear.
+    row_values = [r for r, _ in coords.values()]
+    row_values += [
+        v
+        for channel, vals in lane_coord.items()
+        if channel[0] != "h"
+        for v in vals.values()
+    ]
+    shift = -min(row_values, default=0)
+    if shift > 0:
+        coords = {nid: (r + shift, c) for nid, (r, c) in coords.items()}
+        lane_coord = {
+            channel: (
+                {hop: v + shift for hop, v in vals.items()}
+                if channel[0] != "h"
+                else vals
+            )
+            for channel, vals in lane_coord.items()
+        }
 
     return coords, lane_coord
 
@@ -364,27 +465,33 @@ def _place_skip_waypoints(
     coords: dict[int, tuple[int, int]],
     box_size: dict[int, tuple[int, int]],
     rank_left: dict[int, int],
-    height: dict[int, int],
+    dummy_set: set[int],
 ) -> None:
-    """Places every skip-edge waypoint ("dummy" bend point) at a row linearly
-    interpolated between the real boxes at the two ends of its edge's chain,
-    clamped clear of any real box's row range at its own rank — so the edge
-    passes the box on its own row instead of cutting through its interior
-    (which the canvas would silently swallow, since box cells always win) or
-    detouring around it via extra stacking space. Waypoints share the rank's
-    normal column; this runs after real box placement is final, since it
-    depends on real boxes' finished coordinates. Mutates `coords`."""
+    """Places every skip-edge waypoint ("dummy" bend point) at its edge's
+    target row directly — its target's approximate anchor row, as if it had
+    no fan-out of its own, which isn't known yet here (see
+    `_assign_anchor_slots`) — rather than interpolating from the source, so
+    only the first hop (out of the source, which may already bend via a
+    vertical exit — see `_skip_hop_ends`) needs to bend at all; every
+    subsequent hop, including the final one into the target, then runs
+    flat. Each waypoint is clamped clear of any real box's row range at its
+    own rank — so the edge passes the box on its own row instead of cutting
+    through its interior (which the canvas would silently swallow, since
+    box cells always win) or detouring around it via extra stacking space.
+    Waypoints share the rank's normal column; this runs after real box
+    placement is final, since it depends on real boxes' finished
+    coordinates. Mutates `coords`."""
     for redge in layout.routed_edges:
         chain = redge.nodes
         if len(chain) < 3:
             continue  # direct hop, no waypoints
-        start_row = coords[chain[0]][0] + height[chain[0]] // 2
-        end_row = coords[chain[-1]][0] + height[chain[-1]] // 2
-        span = len(chain) - 1
-        for i, nid in enumerate(chain[1:-1], start=1):
+
+        _, entry_side = _hop_sides(chain[-2], chain[-1], layout)
+        end_row = _anchor(chain[-1], coords, box_size, dummy_set, entry_side, 0, 1)[0]
+
+        for nid in chain[1:-1]:
             rank = layout.positions[nid].rank
-            row = round(start_row + (end_row - start_row) * i / span)
-            row = _clamp_outside_boxes(row, layout, box_size, coords, rank)
+            row = _clamp_outside_boxes(end_row, layout, box_size, coords, rank)
             coords[nid] = (row, rank_left[rank])
 
     _resolve_waypoint_collisions(layout, coords, box_size)
@@ -548,12 +655,18 @@ def _nudge(
             y[ids[k]] = ceiling
 
 
-def _hop_sides(u: int, v: int, layout: Layout) -> tuple[str, str]:
-    """Which side of ``u`` and ``v`` a hop between them attaches to."""
+def _hop_sides(
+    u: int, v: int, layout: Layout, vertical: bool = False
+) -> tuple[str, str]:
+    """Which side of ``u`` and ``v`` a hop between them attaches to.
+    ``vertical`` forces a same-band hop to exit/enter top/bottom instead of
+    left/right — used for a skip edge's real ends (see `_skip_hop_ends`)."""
     pu, pv = layout.positions[u], layout.positions[v]
     if pu.band != pv.band:
         downward = pv.band > pu.band
         return ("bottom", "top") if downward else ("top", "bottom")
+    if vertical:
+        return ("top", "bottom") if _prefers_top_exit(u, layout) else ("bottom", "top")
     # In an odd (right-to-left) band a forward hop travels leftward, so pick
     # sides from the display columns rather than the ranks.
     rightward = pv.col > pu.col
@@ -564,31 +677,46 @@ def _assign_anchor_slots(
     layout: Layout,
     dummy_set: set[int],
     coords: dict[int, tuple[int, int]],
+    box_size: dict[int, tuple[int, int]],
+    vertical_hops: set[tuple[int, int]],
 ) -> dict[tuple[int, tuple[int, int]], tuple[int, int]]:
     """Assigns every hop touching a real box's side a slot among its side-mates,
     keyed by ``(node_id, hop)``, so several edges through the same side fan out
     across the box's border instead of bunching at one fixed point. Dummy nodes
     (pure bend points) are excluded — only real boxes have a border to spread
-    across. Each side's hops are ordered by the other endpoint's actual placed
-    row (not its rank-sibling ordinal — by the time this runs, `coords` already
-    reflects real box placement and skip-edge waypoint placement alike), so a
-    hop's slot here lines up with where it's really headed instead of jogging
-    to reach it, which would otherwise cross a neighboring hop's path."""
+    across. Each side's hops are ordered by the other endpoint's approximate
+    anchor value (its center, i.e. as if it had no other edges of its own — a
+    real other-endpoint's own fan-out isn't known yet here, but this is a much
+    closer proxy than its box's raw top-left coordinate), so a hop's slot here
+    tends to land where it's really headed instead of jogging to reach it.
+
+    This monotonic (order-preserving) assignment is deliberately conservative:
+    a hop that lands exactly on its target occupies that row across its
+    *entire* span back to the box, since a same-row hop never bends away from
+    it — which would leave no room for a neighboring hop to cross that row at
+    all, forcing an actual crossing rather than a bend. Preferring a small,
+    consistent jog over some hops landing exactly keeps that room open; see
+    `_reorder_lanes`, which then orders lanes so those jogs don't cross each
+    other either."""
     groups: dict[tuple[int, str], list[tuple[int, int]]] = defaultdict(list)
     for redge in layout.routed_edges:
         for u, v in zip(redge.nodes, redge.nodes[1:]):
-            side_u, side_v = _hop_sides(u, v, layout)
+            side_u, side_v = _hop_sides(u, v, layout, (u, v) in vertical_hops)
             if u not in dummy_set:
                 groups[(u, side_u)].append((u, v))
             if v not in dummy_set:
                 groups[(v, side_v)].append((u, v))
 
+    def other_anchor_value(hop: tuple[int, int], node_id: int, axis: int) -> int:
+        u, v = hop
+        side_u, side_v = _hop_sides(u, v, layout, hop in vertical_hops)
+        other, other_side = (v, side_v) if node_id == u else (u, side_u)
+        return _anchor(other, coords, box_size, dummy_set, other_side, 0, 1)[axis]
+
     slots: dict[tuple[int, tuple[int, int]], tuple[int, int]] = {}
-    for (node_id, _side), hops in groups.items():
-        ordered = sorted(
-            hops,
-            key=lambda hop: coords[hop[0] if hop[1] == node_id else hop[1]][0],
-        )
+    for (node_id, side), hops in groups.items():
+        axis = 0 if side in ("left", "right") else 1
+        ordered = sorted(hops, key=lambda hop: other_anchor_value(hop, node_id, axis))
         count = len(ordered)
         for i, hop in enumerate(ordered):
             slots[(node_id, hop)] = (i, count)
@@ -633,12 +761,14 @@ def _route(
     dummy_set: set[int],
     lane_coord: dict[_Channel, dict[tuple[int, int], int]],
     anchor_slots: dict[tuple[int, tuple[int, int]], tuple[int, int]],
+    vertical_hops: set[tuple[int, int]],
 ) -> list[tuple[int, int]]:
     points: list[tuple[int, int]] = []
     for u, v in zip(redge.nodes, redge.nodes[1:]):
-        channel = _hop_channel(u, v, layout)
+        vertical = (u, v) in vertical_hops
+        channel = _hop_channel(u, v, layout, vertical)
         coord = lane_coord[channel][(u, v)]
-        side_u, side_v = _hop_sides(u, v, layout)
+        side_u, side_v = _hop_sides(u, v, layout, vertical)
         slot_u, count_u = anchor_slots.get((u, (u, v)), (0, 1))
         slot_v, count_v = anchor_slots.get((v, (u, v)), (0, 1))
         u_anchor = _anchor(u, coords, box_size, dummy_set, side_u, slot_u, count_u)

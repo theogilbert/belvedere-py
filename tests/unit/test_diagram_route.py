@@ -1,6 +1,19 @@
 from belvedere.diagram.graph import GraphEdge, GraphNode
 from belvedere.diagram.place import STUB_LEN, PlaceResult, Rect
-from belvedere.diagram.route import _blocked_cells, compact, route
+from belvedere.diagram.route import _blocked_cells, _stub_candidates, compact, route
+
+
+class TestAdjacentAnchorMalus:
+    def test_anchor_next_to_a_used_one_is_penalized(self) -> None:
+        rect = Rect(top=10, left=10, height=6, width=12)
+        blocked = _blocked_cells({0: rect})
+        bounds = (30, 30)
+        used = {(11, 9)}  # left-side anchor already claimed by another edge
+        stubs = _stub_candidates(rect, blocked, used, bounds, malus=50)
+        adjacent = next(s for s in stubs if s.anchor == (12, 9))
+        far = next(s for s in stubs if s.anchor == (14, 9))
+        assert adjacent.penalty == 50
+        assert far.penalty == 0
 
 
 def _node(id_: int) -> GraphNode:

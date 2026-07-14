@@ -34,6 +34,11 @@ _RIP_UP_COUNT = 3
 """Number of highest-cost edges re-routed against the finished field after
 the main pass, so an early edge's anchor/lane choice doesn't permanently
 saddle a later edge with an avoidable detour."""
+_ADJACENT_ANCHOR_MARGIN = 2
+"""Added on top of an edge's own manhattan span to size its adjacent-anchor
+malus (see ``_Stub.penalty``) — scaled to the edge so the malus stays a
+tiebreaker among similarly-priced anchors rather than a reason to take a
+longer route, per-step costs (``W_BEND``/``W_CROSS``/``W_HUG``) still win."""
 
 Cell = tuple[int, int]
 """``(row, col)`` grid coordinate."""
@@ -77,6 +82,10 @@ class _Stub:
     """Direction of travel from ``anchor`` to ``tip`` (away from the box)."""
     cells: list[Cell]
     """``anchor``..``tip`` inclusive."""
+    penalty: float = 0
+    """Extra one-time cost if ``anchor`` sits right next to another edge's
+    anchor on the same box — keeps cardinality glyphs from bunching onto
+    adjacent cells when an equally-cheap anchor is available elsewhere."""
 
 
 @dataclass
@@ -200,6 +209,7 @@ def _stub_candidates(
     blocked: set[Cell],
     used: set[Cell],
     bounds: tuple[int, int],
+    malus: float = 0,
 ) -> list[_Stub]:
     def build(exclude: set[Cell]) -> list[_Stub]:
         stubs = []
@@ -209,15 +219,25 @@ def _stub_candidates(
                     continue
                 cells = _stub_cells(anchor, heading, STUB_LEN)
                 if all(_in_bounds(c, bounds) and c not in blocked for c in cells):
+                    penalty = malus if _adjacent_to_any(anchor, used) else 0
                     stubs.append(
                         _Stub(
-                            anchor=anchor, tip=cells[-1], heading=heading, cells=cells
+                            anchor=anchor,
+                            tip=cells[-1],
+                            heading=heading,
+                            cells=cells,
+                            penalty=penalty,
                         )
                     )
         return stubs
 
     stubs = build(used)
     return stubs if stubs else build(set())  # pool exhausted — fall back to reuse
+
+
+def _adjacent_to_any(cell: Cell, others: set[Cell]) -> bool:
+    r, c = cell
+    return any((r + dr, c + dc) in others for dr, dc in _DIRS.values())
 
 
 def _heuristic(cell: Cell, tips: list[Cell]) -> float:
@@ -251,9 +271,12 @@ def _astar(
     heap: list[tuple[float, float, _State]] = []
     for s in sources:
         state = (s.tip, s.heading)
-        g_score[state] = STUB_LEN
+        start_cost = STUB_LEN + s.penalty
+        g_score[state] = start_cost
         came_from[state] = None
-        heapq.heappush(heap, (STUB_LEN + _heuristic(s.tip, tip_cells), STUB_LEN, state))
+        heapq.heappush(
+            heap, (start_cost + _heuristic(s.tip, tip_cells), start_cost, state)
+        )
 
     visited: set[_State] = set()
     best: tuple[float, _State] | None = None
@@ -272,7 +295,7 @@ def _astar(
         if cell in tip_to_stub:
             target_stub = tip_to_stub[cell]
             bend = 0 if heading == _OPPOSITE[target_stub.heading] else W_BEND
-            total = g + bend + STUB_LEN
+            total = g + bend + STUB_LEN + target_stub.penalty
             if best is None or total < best[0]:
                 best = (total, state)
         for new_heading, (dr, dc) in _DIRS.items():
@@ -324,11 +347,12 @@ def _route_edge(
     occupied: dict[Cell, dict[str, int]],
     bounds: tuple[int, int],
 ) -> _RouteInfo:
+    malus = _manhattan_span(edge, rects) + _ADJACENT_ANCHOR_MARGIN
     sources = _stub_candidates(
-        rects[edge.source], blocked, used_anchors[edge.source], bounds
+        rects[edge.source], blocked, used_anchors[edge.source], bounds, malus
     )
     targets = _stub_candidates(
-        rects[edge.target], blocked, used_anchors[edge.target], bounds
+        rects[edge.target], blocked, used_anchors[edge.target], bounds, malus
     )
     cells, cost = _astar(sources, targets, blocked, occupied, bounds)
     return _RouteInfo(

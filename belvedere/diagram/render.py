@@ -38,11 +38,23 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
 
     lane_index = _assign_lanes(layout, vertical_hops)
     coords, _ = _place(layout, box_size, band_size, lane_index, dummy_set)
+    # A direct hop whose source anchor already clears the target's box on
+    # one side collapses to a single bend by entering the target vertically
+    # instead of the usual left/right — needs real box coordinates, hence
+    # computed here rather than alongside `vertical_hops`.
+    bend_fix = _bend_reducing_sides(layout, coords, box_size)
     anchor_slots = _assign_anchor_slots(
-        layout, dummy_set, coords, box_size, vertical_hops
+        layout, dummy_set, coords, box_size, vertical_hops, bend_fix
     )
     lane_index, detour_hops = _reorder_lanes(
-        layout, lane_index, anchor_slots, coords, box_size, dummy_set, vertical_hops
+        layout,
+        lane_index,
+        anchor_slots,
+        coords,
+        box_size,
+        dummy_set,
+        vertical_hops,
+        bend_fix,
     )
     # Re-placing waypoints now that anchor_slots is known (real box
     # coordinates are unaffected, so this only refines dummy positions)
@@ -74,6 +86,7 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
             vertical_hops,
             detour_hops,
             outer_col,
+            bend_fix,
         )
         if redge.one_to_one:
             start, end = "1", "1"
@@ -196,6 +209,106 @@ def _skip_hop_ends(layout: Layout) -> set[tuple[int, int]]:
     return hops
 
 
+def _segment_crosses_box(
+    r0: int, c0: int, r1: int, c1: int, top: int, left: int, h: int, w: int
+) -> bool:
+    """Whether an axis-aligned segment (only ever horizontal or vertical
+    here) passes through a box's cell range."""
+    bottom, right = top + h - 1, left + w - 1
+    if r0 == r1:
+        if not (top <= r0 <= bottom):
+            return False
+        lo, hi = sorted((c0, c1))
+        return not (hi < left or lo > right)
+    lo, hi = sorted((r0, r1))
+    return (left <= c0 <= right) and not (hi < top or lo > bottom)
+
+
+def _bend_path_clear(
+    u: int,
+    v: int,
+    sides: tuple[str, str],
+    coords: dict[int, tuple[int, int]],
+    box_size: dict[int, tuple[int, int]],
+) -> bool:
+    """Whether the single-bend path for ``sides`` (one of ``u``/``v``
+    vertical, the other its usual left/right) passes through any *other*
+    box on its way."""
+    side_u, side_v = sides
+    u_anchor = _anchor(u, coords, box_size, set(), side_u, 0, 1)
+    v_anchor = _anchor(v, coords, box_size, set(), side_v, 0, 1)
+    bend = (
+        (u_anchor[0], v_anchor[1])
+        if side_v in ("top", "bottom")
+        else (v_anchor[0], u_anchor[1])
+    )
+    segments = [(u_anchor, bend), (bend, v_anchor)]
+    for nid, (top, left) in coords.items():
+        if nid in (u, v) or nid not in box_size:
+            continue
+        h, w = box_size[nid]
+        for (r0, c0), (r1, c1) in segments:
+            if _segment_crosses_box(r0, c0, r1, c1, top, left, h, w):
+                return False
+    return True
+
+
+def _bend_reducing_sides(
+    layout: Layout,
+    coords: dict[int, tuple[int, int]],
+    box_size: dict[int, tuple[int, int]],
+) -> dict[tuple[int, int], tuple[str, str]]:
+    """For a direct (adjacent-rank), same-band hop, whether entering one
+    endpoint vertically (top or bottom) instead of the usual left/right
+    would collapse the connector to a single bend: true whenever that
+    endpoint's own row range already excludes the other's anchor row
+    (estimated here as if it had no fan-out of its own, which isn't known
+    yet — a hop with real competition on its side may land a row or two
+    off, but the direction is still almost always right), so a
+    horizontal-then-vertical entry is simpler than the usual
+    horizontal-vertical-horizontal channel jog.
+
+    Either end can be the one that goes vertical — whichever one clears the
+    other's row makes a valid single-bend candidate — and when both do,
+    only one may actually be free of other boxes sitting in its path (see
+    `_bend_path_clear`); that one wins. Maps each such hop to the full
+    ``(side_u, side_v)`` to use instead of the standard left/right pair."""
+    fixes: dict[tuple[int, int], tuple[str, str]] = {}
+    for redge in layout.routed_edges:
+        if len(redge.nodes) != 2:
+            continue  # only direct edges -- skip-edge chains route differently
+        u, v = redge.nodes
+        pu, pv = layout.positions[u], layout.positions[v]
+        if pu.band != pv.band:
+            continue  # already a vertical (band-wrap) hop
+        rightward = pv.col > pu.col
+        side_u_std = "right" if rightward else "left"
+        side_v_std = "left" if rightward else "right"
+
+        candidates: list[tuple[str, str]] = []
+
+        u_row = _anchor(u, coords, box_size, set(), side_u_std, 0, 1)[0]
+        v_top, _ = coords[v]
+        v_height, _ = box_size[v]
+        if u_row < v_top:
+            candidates.append((side_u_std, "top"))
+        elif u_row > v_top + v_height - 1:
+            candidates.append((side_u_std, "bottom"))
+
+        v_row = _anchor(v, coords, box_size, set(), side_v_std, 0, 1)[0]
+        u_top, _ = coords[u]
+        u_height, _ = box_size[u]
+        if v_row < u_top:
+            candidates.append(("top", side_v_std))
+        elif v_row > u_top + u_height - 1:
+            candidates.append(("bottom", side_v_std))
+
+        safe = [c for c in candidates if _bend_path_clear(u, v, c, coords, box_size)]
+        if safe:
+            fixes[(u, v)] = safe[0]
+    return fixes
+
+
 def _prefers_top_exit(u: int, layout: Layout) -> bool:
     """Whether a same-band vertical exit from ``u`` should go up instead of
     down — picks whichever direction has fewer rank-mates stacked in the
@@ -262,6 +375,7 @@ def _reorder_lanes(
     box_size: dict[int, tuple[int, int]],
     dummy_set: set[int],
     vertical_hops: set[tuple[int, int]],
+    bend_fix: dict[tuple[int, int], tuple[str, str]],
 ) -> tuple[dict[_Channel, dict[tuple[int, int], int]], set[tuple[int, int]]]:
     """Re-orders each channel's lanes now that every hop's actual endpoint
     anchors are known, so a hop that must jog from its source row/column to
@@ -283,7 +397,9 @@ def _reorder_lanes(
 
     def endpoints(hop: tuple[int, int], axis: int) -> tuple[int, int]:
         u, v = hop
-        side_u, side_v = _hop_sides(u, v, layout, hop in vertical_hops)
+        side_u, side_v = _hop_sides(
+            u, v, layout, hop in vertical_hops, bend_fix.get(hop)
+        )
         slot_u, count_u = anchor_slots.get((u, hop), (0, 1))
         slot_v, count_v = anchor_slots.get((v, hop), (0, 1))
         u_anchor = _anchor(u, coords, box_size, dummy_set, side_u, slot_u, count_u)
@@ -731,21 +847,34 @@ def _nudge(
 
 
 def _hop_sides(
-    u: int, v: int, layout: Layout, vertical: bool = False
+    u: int,
+    v: int,
+    layout: Layout,
+    vertical: bool = False,
+    override: tuple[str, str] | None = None,
 ) -> tuple[str, str]:
     """Which side of ``u`` and ``v`` a hop between them attaches to.
     ``vertical`` forces a same-band hop to exit/enter top/bottom instead of
-    left/right — used for a skip edge's real ends (see `_skip_hop_ends`)."""
+    left/right — used for a skip edge's real ends (see `_skip_hop_ends`).
+    ``override`` replaces the whole ``(side_u, side_v)`` pair outright — used
+    to collapse a direct hop to a single bend when entering one endpoint
+    vertically fits better (see `_bend_reducing_sides`)."""
+    if override is not None:
+        return override
     pu, pv = layout.positions[u], layout.positions[v]
     if pu.band != pv.band:
         downward = pv.band > pu.band
-        return ("bottom", "top") if downward else ("top", "bottom")
-    if vertical:
-        return ("top", "bottom") if _prefers_top_exit(u, layout) else ("bottom", "top")
-    # In an odd (right-to-left) band a forward hop travels leftward, so pick
-    # sides from the display columns rather than the ranks.
-    rightward = pv.col > pu.col
-    return ("right", "left") if rightward else ("left", "right")
+        side_u, side_v = ("bottom", "top") if downward else ("top", "bottom")
+    elif vertical:
+        side_u, side_v = (
+            ("top", "bottom") if _prefers_top_exit(u, layout) else ("bottom", "top")
+        )
+    else:
+        # In an odd (right-to-left) band a forward hop travels leftward, so
+        # pick sides from the display columns rather than the ranks.
+        rightward = pv.col > pu.col
+        side_u, side_v = ("right", "left") if rightward else ("left", "right")
+    return side_u, side_v
 
 
 def _assign_anchor_slots(
@@ -754,6 +883,7 @@ def _assign_anchor_slots(
     coords: dict[int, tuple[int, int]],
     box_size: dict[int, tuple[int, int]],
     vertical_hops: set[tuple[int, int]],
+    bend_fix: dict[tuple[int, int], tuple[str, str]],
 ) -> dict[tuple[int, tuple[int, int]], tuple[int, int]]:
     """Assigns every hop touching a real box's side a slot among its side-mates,
     keyed by ``(node_id, hop)``, so several edges through the same side fan out
@@ -776,7 +906,9 @@ def _assign_anchor_slots(
     groups: dict[tuple[int, str], list[tuple[int, int]]] = defaultdict(list)
     for redge in layout.routed_edges:
         for u, v in zip(redge.nodes, redge.nodes[1:]):
-            side_u, side_v = _hop_sides(u, v, layout, (u, v) in vertical_hops)
+            side_u, side_v = _hop_sides(
+                u, v, layout, (u, v) in vertical_hops, bend_fix.get((u, v))
+            )
             if u not in dummy_set:
                 groups[(u, side_u)].append((u, v))
             if v not in dummy_set:
@@ -784,7 +916,9 @@ def _assign_anchor_slots(
 
     def other_anchor_value(hop: tuple[int, int], node_id: int, axis: int) -> int:
         u, v = hop
-        side_u, side_v = _hop_sides(u, v, layout, hop in vertical_hops)
+        side_u, side_v = _hop_sides(
+            u, v, layout, hop in vertical_hops, bend_fix.get(hop)
+        )
         other, other_side = (v, side_v) if node_id == u else (u, side_u)
         return _anchor(other, coords, box_size, dummy_set, other_side, 0, 1)[axis]
 
@@ -839,19 +973,31 @@ def _route(
     vertical_hops: set[tuple[int, int]],
     detour_hops: set[tuple[int, int]],
     outer_col: int,
+    bend_fix: dict[tuple[int, int], tuple[str, str]],
 ) -> list[tuple[int, int]]:
     points: list[tuple[int, int]] = []
     for u, v in zip(redge.nodes, redge.nodes[1:]):
         vertical = (u, v) in vertical_hops
         channel = _hop_channel(u, v, layout, vertical)
         coord = lane_coord[channel][(u, v)]
-        side_u, side_v = _hop_sides(u, v, layout, vertical)
+        side_u, side_v = _hop_sides(u, v, layout, vertical, bend_fix.get((u, v)))
         slot_u, count_u = anchor_slots.get((u, (u, v)), (0, 1))
         slot_v, count_v = anchor_slots.get((v, (u, v)), (0, 1))
         u_anchor = _anchor(u, coords, box_size, dummy_set, side_u, slot_u, count_u)
         v_anchor = _anchor(v, coords, box_size, dummy_set, side_v, slot_v, count_v)
 
-        if channel[0] == "h":
+        if (u, v) in bend_fix:
+            # One endpoint's row range already clears the other's anchor, so
+            # a single bend reaches it — no channel needed at all. Whichever
+            # side is vertical (top/bottom) determines which anchor's row
+            # vs. column feeds the bend point.
+            bend = (
+                (u_anchor[0], v_anchor[1])
+                if side_v in ("top", "bottom")
+                else (v_anchor[0], u_anchor[1])
+            )
+            hop = [u_anchor, bend, v_anchor]
+        elif channel[0] == "h":
             hop = [u_anchor, (u_anchor[0], coord), (v_anchor[0], coord), v_anchor]
         elif (u, v) in detour_hops:
             # No lane order avoids this hop's crossing (`_reorder_lanes`) —

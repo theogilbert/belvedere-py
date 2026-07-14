@@ -4,6 +4,7 @@ between box borders. This is the only module that turns abstract rank/row
 positions into character coordinates.
 """
 
+import functools
 from collections import defaultdict
 
 from ..protocol import ColumnInfo, DiagramRegion
@@ -31,8 +32,12 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
     band_size = layout.band_size
 
     lane_index = _assign_lanes(layout)
-    coords, lane_coord = _place(layout, box_size, band_size, lane_index)
-    anchor_slots = _assign_anchor_slots(layout, dummy_set)
+    coords, _ = _place(layout, box_size, band_size, lane_index)
+    anchor_slots = _assign_anchor_slots(layout, dummy_set, coords)
+    lane_index = _reorder_lanes(
+        layout, lane_index, anchor_slots, coords, box_size, dummy_set
+    )
+    _, lane_coord = _place(layout, box_size, band_size, lane_index)
 
     canvas = Canvas()
     for node_id, lines in box_lines.items():
@@ -156,8 +161,11 @@ def _hop_channel(u: int, v: int, layout: Layout) -> _Channel:
 
 def _assign_lanes(layout: Layout) -> dict[_Channel, dict[tuple[int, int], int]]:
     """For each channel, assigns every hop passing through it a distinct lane
-    index, ordered by the row of the hop's first endpoint to keep same-channel
-    lanes roughly uncrossed."""
+    index, ordered by the rank-sibling ordinal of the hop's first endpoint.
+    Used for an initial pass, before real placement is known — only the
+    resulting *count* per channel matters at this stage (channel width). See
+    `_reorder_lanes` for the placement-aware pass that fixes each hop's
+    actual lane position."""
     hops_by_channel: dict[_Channel, list[tuple[int, int]]] = defaultdict(list)
     for redge in layout.routed_edges:
         for u, v in zip(redge.nodes, redge.nodes[1:]):
@@ -168,6 +176,61 @@ def _assign_lanes(layout: Layout) -> dict[_Channel, dict[tuple[int, int], int]]:
         ordered = sorted(hops, key=lambda hop: layout.positions[hop[0]].row)
         lane_index[channel] = {hop: i for i, hop in enumerate(ordered)}
     return lane_index
+
+
+def _reorder_lanes(
+    layout: Layout,
+    lane_index: dict[_Channel, dict[tuple[int, int], int]],
+    anchor_slots: dict[tuple[int, tuple[int, int]], tuple[int, int]],
+    coords: dict[int, tuple[int, int]],
+    box_size: dict[int, tuple[int, int]],
+    dummy_set: set[int],
+) -> dict[_Channel, dict[tuple[int, int], int]]:
+    """Re-orders each channel's lanes now that every hop's actual endpoint
+    anchors are known, so a hop that must jog from its source row/column to
+    its target doesn't cut across another hop's own row/column on the way —
+    exactly the crossing a same-side fan-out would otherwise create right
+    where both hops leave their shared box.
+
+    A hop occupies its [min(source, target), max(source, target)] span for
+    its whole run up to its own lane, then collapses to just its target from
+    there on — so placing hop A in the lane closest to the box is safe with
+    respect to hop B only if B's source falls outside A's span (`_fits_closer`).
+    When exactly one of the two orders is safe, that settles it; the (rare)
+    remaining cases don't matter here or are true unavoidable crossings, so
+    they fall back to a stable ordering by span start."""
+
+    def endpoints(hop: tuple[int, int], axis: int) -> tuple[int, int]:
+        u, v = hop
+        side_u, side_v = _hop_sides(u, v, layout)
+        slot_u, count_u = anchor_slots.get((u, hop), (0, 1))
+        slot_v, count_v = anchor_slots.get((v, hop), (0, 1))
+        u_anchor = _anchor(u, coords, box_size, dummy_set, side_u, slot_u, count_u)
+        v_anchor = _anchor(v, coords, box_size, dummy_set, side_v, slot_v, count_v)
+        return u_anchor[axis], v_anchor[axis]
+
+    def fits_closer(source: int, span: tuple[int, int]) -> bool:
+        lo, hi = span
+        return not (lo <= source <= hi)
+
+    reordered: dict[_Channel, dict[tuple[int, int], int]] = {}
+    for channel, hops in lane_index.items():
+        axis = 0 if channel[0] == "h" else 1
+        info = {hop: endpoints(hop, axis) for hop in hops}
+        spans = {hop: (min(s, t), max(s, t)) for hop, (s, t) in info.items()}
+
+        def closer(a: tuple[int, int], b: tuple[int, int]) -> int:
+            a_ok = fits_closer(info[b][0], spans[a])
+            b_ok = fits_closer(info[a][0], spans[b])
+            if a_ok and not b_ok:
+                return -1
+            if b_ok and not a_ok:
+                return 1
+            return (spans[a][0] - spans[b][0]) or (spans[a][1] - spans[b][1])
+
+        ordered = sorted(hops, key=functools.cmp_to_key(closer))
+        reordered[channel] = {hop: i for i, hop in enumerate(ordered)}
+    return reordered
 
 
 def _place(
@@ -498,14 +561,19 @@ def _hop_sides(u: int, v: int, layout: Layout) -> tuple[str, str]:
 
 
 def _assign_anchor_slots(
-    layout: Layout, dummy_set: set[int]
+    layout: Layout,
+    dummy_set: set[int],
+    coords: dict[int, tuple[int, int]],
 ) -> dict[tuple[int, tuple[int, int]], tuple[int, int]]:
     """Assigns every hop touching a real box's side a slot among its side-mates,
     keyed by ``(node_id, hop)``, so several edges through the same side fan out
     across the box's border instead of bunching at one fixed point. Dummy nodes
     (pure bend points) are excluded — only real boxes have a border to spread
-    across. Each side's hops are ordered by the row of their other endpoint, so
-    the fan-out roughly tracks where each edge is headed."""
+    across. Each side's hops are ordered by the other endpoint's actual placed
+    row (not its rank-sibling ordinal — by the time this runs, `coords` already
+    reflects real box placement and skip-edge waypoint placement alike), so a
+    hop's slot here lines up with where it's really headed instead of jogging
+    to reach it, which would otherwise cross a neighboring hop's path."""
     groups: dict[tuple[int, str], list[tuple[int, int]]] = defaultdict(list)
     for redge in layout.routed_edges:
         for u, v in zip(redge.nodes, redge.nodes[1:]):
@@ -519,9 +587,7 @@ def _assign_anchor_slots(
     for (node_id, _side), hops in groups.items():
         ordered = sorted(
             hops,
-            key=lambda hop: (
-                layout.positions[hop[0] if hop[1] == node_id else hop[1]].row
-            ),
+            key=lambda hop: coords[hop[0] if hop[1] == node_id else hop[1]][0],
         )
         count = len(ordered)
         for i, hop in enumerate(ordered):

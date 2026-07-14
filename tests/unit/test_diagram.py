@@ -743,3 +743,59 @@ class TestBuildDiagramRegions:
                     table.col_start < edge.col_end
                 )
                 assert not overlap
+
+    async def test_edges_fanning_out_from_the_same_box_never_share_a_cell(
+        self,
+    ) -> None:
+        root = TableDescription(
+            table="root",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="a_id", type="INTEGER"),
+                ColumnInfo(name="b_id", type="INTEGER"),
+                ColumnInfo(name="c_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="a_id", table="a", ref_column="id"),
+                TableReference(column="b_id", table="b", ref_column="id"),
+                TableReference(column="c_id", table="c", ref_column="id"),
+            ],
+        )
+        a = TableDescription(
+            table="a", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        b = TableDescription(
+            table="b",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="d_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="d_id", table="d", ref_column="id")
+            ],
+        )
+        c = TableDescription(
+            table="c", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        d = TableDescription(
+            table="d", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from(
+            {("root",): root, ("a",): a, ("b",): b, ("c",): c, ("d",): d}
+        )
+        result = await build_diagram(["root"], describe)
+
+        # Every relationship leaving "root" shares its box side with the
+        # others; none of their routed paths may occupy the same cell,
+        # whichever direction each one has to jog to reach its target.
+        cells_by_path: dict[tuple[str, ...], set[tuple[int, int]]] = {}
+        for r in result.regions:
+            if r.kind != "edge":
+                continue
+            cells = cells_by_path.setdefault(tuple(r.path), set())
+            cells.update((r.row, c) for c in range(r.col_start, r.col_end))
+
+        paths = list(cells_by_path)
+        for i, path_a in enumerate(paths):
+            for path_b in paths[i + 1 :]:
+                assert not (cells_by_path[path_a] & cells_by_path[path_b])

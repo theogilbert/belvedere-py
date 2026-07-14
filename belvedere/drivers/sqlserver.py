@@ -34,6 +34,7 @@ from .base import (
     DriverSettings,
     build_column_samples,
     build_relationship_description,
+    group_references_by_column,
 )
 
 T = TypeVar("T")
@@ -614,6 +615,10 @@ column metadata (name, type, nullability, default).
                 else:
                     col_comp.setdefault(cn, []).append(idx_desc)
 
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
+
         result = []
         for r in col_rows:
             cn = r[0]
@@ -627,6 +632,7 @@ column metadata (name, type, nullability, default).
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
                     comment=col_comments.get(cn),
+                    outgoing_references=refs_by_col.get(cn, []),
                 )
             )
         return ColumnsDescription(columns=result)
@@ -686,6 +692,9 @@ column metadata (name, type, nullability, default).
                 exclusive_indices.append(idx_desc)
             else:
                 composite_indices.append(idx_desc)
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
 
         return ColumnDescription(
             name=col_name,
@@ -696,6 +705,7 @@ column metadata (name, type, nullability, default).
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
             comment=comment,
+            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     def _outgoing_references_sync(

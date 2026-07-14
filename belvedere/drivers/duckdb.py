@@ -29,6 +29,7 @@ from .base import (
     DriverError,
     DriverSettings,
     build_relationship_description,
+    group_references_by_column,
 )
 
 T = TypeVar("T")
@@ -411,6 +412,9 @@ SELECT * FROM 'glob/**/*.parquet'
                 col_comments[r[0]] = r[1] if r[1] else None
         except Exception:
             pass
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
 
         result = []
         for r in col_rows:
@@ -424,6 +428,7 @@ SELECT * FROM 'glob/**/*.parquet'
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
                     comment=col_comments.get(cn),
+                    outgoing_references=refs_by_col.get(cn, []),
                 )
             )
         return ColumnsDescription(columns=result)
@@ -470,6 +475,9 @@ SELECT * FROM 'glob/**/*.parquet'
             comment = rows[0][0] if rows and rows[0][0] else None
         except Exception:
             pass
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
 
         return ColumnDescription(
             name=col_name,
@@ -479,6 +487,7 @@ SELECT * FROM 'glob/**/*.parquet'
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
             comment=comment,
+            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     def _outgoing_fk_rows_sync(

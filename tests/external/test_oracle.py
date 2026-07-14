@@ -754,6 +754,30 @@ class TestExploreDescribeColumns:
         assert len(sample) <= 3
         assert set(sample).issubset({"x", "y", "z"})
 
+    async def test_outgoing_references(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  id NUMBER, parent_id NUMBER,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child, "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        refs = by_name["PARENT_ID"].outgoing_references
+        assert len(refs) == 1
+        assert dataclasses.replace(refs[0], constraint_name=None) == TableReference(
+            column="PARENT_ID", table=parent, ref_column="ID", schema=schema
+        )
+        assert by_name["ID"].outgoing_references == []
+
 
 class TestExploreDescribeColumn:
     async def test_basic_fields(
@@ -821,6 +845,36 @@ class TestExploreDescribeColumn:
         assert isinstance(desc, ColumnDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"a", "b", "c"})
+
+    async def test_outgoing_references(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  id NUMBER, parent_id NUMBER,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child, "columns", "PARENT_ID"])
+        assert isinstance(desc, ColumnDescription)
+        assert len(desc.outgoing_references) == 1
+        ref = desc.outgoing_references[0]
+        assert dataclasses.replace(ref, constraint_name=None) == TableReference(
+            column="PARENT_ID", table=parent, ref_column="ID", schema=schema
+        )
+
+    async def test_empty_outgoing_references_when_not_fk(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
+        desc = await driver.explore_describe([schema, table, "columns", "ID"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(
         self, driver: OracleDriver, schema: str, table: str

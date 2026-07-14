@@ -463,6 +463,22 @@ class TestExploreDescribeColumns:
         assert len(sample) <= 3
         assert set(sample).issubset({"a", "b", "c"})
 
+    async def test_columns_description_outgoing_references(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["parent_id"].outgoing_references == [
+            TableReference(column="parent_id", table="parent", ref_column="id")
+        ]
+        assert by_name["id"].outgoing_references == []
+
 
 class TestExploreDescribeColumn:
     async def test_single_column_basic_fields(self, driver: SQLiteDriver) -> None:
@@ -506,6 +522,28 @@ class TestExploreDescribeColumn:
         assert isinstance(desc, ColumnDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"x", "y", "z"})
+
+    async def test_single_column_outgoing_references(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child", "columns", "parent_id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == [
+            TableReference(column="parent_id", table="parent", ref_column="id")
+        ]
+
+    async def test_single_column_empty_outgoing_references_when_not_fk(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["t", "columns", "id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])

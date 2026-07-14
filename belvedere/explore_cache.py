@@ -287,6 +287,9 @@ def _deserialize_column(d: dict[str, Any]) -> ColumnDescription:
         ],
         comment=d.get("comment"),
         sample=d.get("sample", []),
+        outgoing_references=[
+            TableReference(**ref) for ref in d.get("outgoing_references", [])
+        ],
     )
 
 

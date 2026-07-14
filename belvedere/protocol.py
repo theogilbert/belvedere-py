@@ -221,6 +221,11 @@ class ColumnDescription:
     """Column comment as stored in the database; None if unsupported or not set."""
     sample: list[Any] = field(default_factory=list)
     """Up to 3 distinct non-null representative values sampled from the column."""
+    outgoing_references: list[TableReference] = field(default_factory=list)
+    """Foreign keys defined on this column that reference another table. Empty if this
+    column is not a foreign key. A column can carry more than one entry — either because
+    it participates in more than one single-column FK constraint (each naming a different
+    target), or because it is one leg of multiple composite FK constraints."""
     type: str = "column"
     """Discriminator — always ``"column"``."""
 

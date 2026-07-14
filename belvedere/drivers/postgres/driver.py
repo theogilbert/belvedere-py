@@ -28,6 +28,7 @@ from ..base import (
     DriverSettings,
     build_column_samples,
     build_relationship_description,
+    group_references_by_column,
 )
 from .queries import (
     build_column_index_lists,
@@ -377,6 +378,9 @@ uniqueness, INCLUDE columns, and DDL as reported by `pg_indexes`).
         excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
         samples = await self._fetch_samples(schema, table)
+        refs_by_col = group_references_by_column(
+            await fetch_outgoing_references(self._conn, schema, table)
+        )
 
         return ColumnsDescription(
             columns=[
@@ -390,6 +394,7 @@ uniqueness, INCLUDE columns, and DDL as reported by `pg_indexes`).
                     composite_indices=comp.get(col.name, []),
                     comment=comments.get(col.name),
                     sample=samples.get(col.name, []),
+                    outgoing_references=refs_by_col.get(col.name, []),
                 )
                 for col in col_details
             ]
@@ -409,6 +414,9 @@ uniqueness, INCLUDE columns, and DDL as reported by `pg_indexes`).
         excl, comp = build_column_index_lists(fields_by_index, all_indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
         sample = await self._fetch_sample(schema, table, col_name)
+        refs_by_col = group_references_by_column(
+            await fetch_outgoing_references(self._conn, schema, table)
+        )
 
         return ColumnDescription(
             name=col.name,
@@ -420,6 +428,7 @@ uniqueness, INCLUDE columns, and DDL as reported by `pg_indexes`).
             composite_indices=comp.get(col_name, []),
             comment=comments.get(col_name),
             sample=sample,
+            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:

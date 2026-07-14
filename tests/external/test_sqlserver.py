@@ -627,6 +627,34 @@ class TestExploreDescribeColumns:
         assert len(sample) <= 3
         assert set(sample).issubset({"x", "y", "z"})
 
+    async def test_outgoing_references(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", child, "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["parent_id"].outgoing_references == [
+            TableReference(
+                column="parent_id",
+                table=parent,
+                ref_column="id",
+                schema="dbo",
+                constraint_name=f"fk_{child}",
+            )
+        ]
+        assert by_name["id"].outgoing_references == []
+
 
 class TestExploreDescribeColumn:
     async def test_basic_fields(self, driver: SQLServerDriver, table: str) -> None:
@@ -679,6 +707,40 @@ class TestExploreDescribeColumn:
         assert isinstance(desc, ColumnDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"a", "b", "c"})
+
+    async def test_outgoing_references(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", child, "columns", "parent_id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == [
+            TableReference(
+                column="parent_id",
+                table=parent,
+                ref_column="id",
+                schema="dbo",
+                constraint_name=f"fk_{child}",
+            )
+        ]
+
+    async def test_empty_outgoing_references_when_not_fk(
+        self, driver: SQLServerDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
+        desc = await driver.explore_describe(["dbo", table, "columns", "id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(
         self, driver: SQLServerDriver, table: str

@@ -12,6 +12,7 @@ from ..protocol import (
     ReadResult,
     RelationshipDescription,
     TableDescription,
+    TableReference,
     WriteResult,
 )
 
@@ -37,6 +38,17 @@ def build_relationship_description(
         ref_column=ref.ref_column,
         constraint_name=ref.constraint_name,
     )
+
+
+def group_references_by_column(
+    refs: list[TableReference],
+) -> dict[str, list[TableReference]]:
+    """Group a table's outgoing FK references by local column, for populating
+    ``ColumnDescription.outgoing_references``."""
+    by_column: dict[str, list[TableReference]] = {}
+    for ref in refs:
+        by_column.setdefault(ref.column, []).append(ref)
+    return by_column
 
 
 @dataclass(frozen=True)

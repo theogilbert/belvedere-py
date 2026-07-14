@@ -27,6 +27,7 @@ from .base import (
     DriverError,
     DriverSettings,
     build_relationship_description,
+    group_references_by_column,
 )
 
 T = TypeVar("T")
@@ -344,6 +345,7 @@ metadata (name, type, nullability, primary key flag).
                     col_excl.setdefault(cn, []).append(idx_desc)
                 else:
                     col_comp.setdefault(cn, []).append(idx_desc)
+        refs_by_col = group_references_by_column(self._outgoing_references_sync(table))
 
         result = []
         for r in cols:
@@ -356,6 +358,7 @@ metadata (name, type, nullability, primary key flag).
                     pk=bool(r[5]),
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
+                    outgoing_references=refs_by_col.get(cn, []),
                 )
             )
         return ColumnsDescription(columns=result)
@@ -379,6 +382,7 @@ metadata (name, type, nullability, primary key flag).
                 exclusive_indices.append(idx_desc)
             else:
                 composite_indices.append(idx_desc)
+        refs_by_col = group_references_by_column(self._outgoing_references_sync(table))
 
         return ColumnDescription(
             name=col_name,
@@ -387,6 +391,7 @@ metadata (name, type, nullability, primary key flag).
             pk=bool(row[5]),
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
+            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     def _outgoing_references_sync(self, table: str) -> list[TableReference]:

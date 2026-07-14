@@ -1,202 +1,277 @@
-"""Layered graph layout (Sugiyama-style): assigns every node a rank (from
-BFS-derived depth), decomposes long edges into per-rank hops through dummy
-nodes, orders nodes within each rank to reduce line crossings (best-effort,
-not optimal), and chunks ranks into vertically-stacked bands once a row would
-grow past ``band_size`` columns wide. Bands snake: odd bands run right-to-left,
-so a wrapped rank lands directly below its neighbor instead of jumping back to
-the far-left edge of the diagram.
+"""Hub-centered layered layout: picks the most-connected table as a structural
+hub, partitions the rest of the graph into a left/right side per connected
+component, and assigns every node a signed column (BFS distance from the hub,
+signed by side). Row order within each column comes from barycenter sweeps.
 
-Pure functions over plain graph data — no rendering or canvas concerns, so the
-algorithm can be tested against small synthetic graphs directly.
+This is deliberately abstract — no box sizes, no channels, no edge routing.
+``place.py`` turns these grid positions into concrete rectangles; ``route.py``
+turns rectangles into orthogonal paths. Pure functions over plain graph data,
+so the algorithm is testable against small synthetic graphs directly.
 """
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from .graph import GraphEdge, GraphNode
 
-_DEFAULT_BAND_SIZE = 5
-
-
-@dataclass
-class LayoutNode:
-    rank: int
-    band: int
-    """Which vertically-stacked band this node's rank falls into."""
-    col: int
-    """Display column within its band. Bands snake, so even bands run
-    left-to-right (``rank % band_size``) and odd bands right-to-left."""
-    row: int
-    """Order among the other nodes sharing this rank — determines vertical position."""
-    dummy: bool
-    """True for a bend-point inserted to route an edge through intermediate ranks."""
-
-
-@dataclass
-class RoutedEdge:
-    nodes: list[int]
-    """Node ids from source to target, inclusive, one hop per adjacent rank —
-    intermediate entries (if any) are dummy node ids."""
-    fk_at_start: bool = True
-    """Whether ``nodes[0]`` (rather than ``nodes[-1]``) owns the FK column."""
-    one_to_one: bool = False
-    """Whether the FK column is itself constrained unique."""
-    fk_column: str = ""
-    """Name of the FK column on whichever endpoint owns it."""
+_KL_MAX_ROUNDS = 20
+"""Bound on Kernighan-Lin-style swap rounds when bisecting a single connected
+component (degenerate case: the hub is not a cut vertex)."""
 
 
 @dataclass
 class Layout:
-    positions: dict[int, LayoutNode]
-    """By node id — covers every real ``GraphNode.id`` plus any dummy ids."""
-    routed_edges: list[RoutedEdge]
-    band_size: int
+    column: dict[int, int]
+    """Every node's display column, 0-indexed left to right. The hub sits at
+    the column matching the side with more/heavier left-side content; there
+    is no dedicated "hub column" field — callers find it via ``hub``."""
+    row_order: dict[int, list[int]]
+    """Node ids per column, ordered top to bottom."""
+    hub: int
+    """Id of the node chosen as the layout's structural hub."""
 
 
-def compute_layout(
-    nodes: list[GraphNode],
-    edges: list[GraphEdge],
-    *,
-    band_size: int = _DEFAULT_BAND_SIZE,
-) -> Layout:
-    real_ids = {n.id for n in nodes}
-    rank = {n.id: n.rank for n in nodes}
-    _bump_same_rank_edges(rank, edges)
+def compute_layout(nodes: list[GraphNode], edges: list[GraphEdge]) -> Layout:
+    hub = _select_hub(nodes, edges)
+    side = _partition_sides(nodes, edges, hub)
+    column = _signed_columns(nodes, edges, hub, side)
+    row_order = _order_columns(nodes, edges, column)
+    return Layout(column=column, row_order=row_order, hub=hub)
 
-    next_id = max(rank) + 1
-    routed_edges: list[RoutedEdge] = []
+
+def _select_hub(nodes: list[GraphNode], edges: list[GraphEdge]) -> int:
+    degree: dict[int, int] = defaultdict(int)
     for edge in edges:
-        chain, next_id = _decompose(edge, rank, next_id, band_size)
-        routed_edges.append(
-            RoutedEdge(
-                nodes=chain,
-                fk_at_start=edge.fk_side == "source",
-                one_to_one=edge.one_to_one,
-                fk_column=edge.fk_column,
-            )
-        )
-
-    nodes_by_rank: dict[int, list[int]] = defaultdict(list)
-    for node_id in sorted(rank, key=lambda i: (rank[i], i)):
-        nodes_by_rank[rank[node_id]].append(node_id)
-
-    _order_ranks(nodes_by_rank, routed_edges, rank)
-    _order_wrap_nodes(nodes_by_rank, routed_edges, rank, band_size)
-
-    positions = _assign_positions(nodes_by_rank, real_ids, band_size)
-    return Layout(positions=positions, routed_edges=routed_edges, band_size=band_size)
+        degree[edge.source] += 1
+        degree[edge.target] += 1
+    return min(nodes, key=lambda n: (-degree[n.id], n.id)).id
 
 
-def _bump_same_rank_edges(rank: dict[int, int], edges: list[GraphEdge]) -> None:
+def _adjacency(edges: list[GraphEdge]) -> dict[int, list[int]]:
+    adj: dict[int, list[int]] = defaultdict(list)
+    for edge in edges:
+        adj[edge.source].append(edge.target)
+        adj[edge.target].append(edge.source)
+    return adj
+
+
+def _partition_sides(
+    nodes: list[GraphNode], edges: list[GraphEdge], hub: int
+) -> dict[int, int]:
+    """Assigns every non-hub node a side, ``+1`` or ``-1``."""
+    other_ids = {n.id for n in nodes if n.id != hub}
+    rest_edges = [e for e in edges if hub not in (e.source, e.target)]
+    components = _connected_components(other_ids, rest_edges)
+    if len(components) > 1:
+        return _lpt_assign(components)
+    return _bisect_component(other_ids, rest_edges, hub, edges)
+
+
+def _connected_components(
+    node_ids: set[int], edges: list[GraphEdge]
+) -> list[list[int]]:
+    adj = _adjacency(edges)
+    seen: set[int] = set()
+    components: list[list[int]] = []
+    for start in sorted(node_ids):
+        if start in seen:
+            continue
+        component = []
+        queue = deque([start])
+        seen.add(start)
+        while queue:
+            nid = queue.popleft()
+            component.append(nid)
+            for neighbor in adj[nid]:
+                if neighbor in node_ids and neighbor not in seen:
+                    seen.add(neighbor)
+                    queue.append(neighbor)
+        components.append(sorted(component))
+    return components
+
+
+def _lpt_assign(components: list[list[int]]) -> dict[int, int]:
+    """Greedy longest-processing-time: largest component first, each to the
+    currently lighter side; ties broken by side +1 first for determinism."""
+    ordered = sorted(components, key=lambda c: (-len(c), c[0]))
+    side: dict[int, int] = {}
+    weight = {1: 0, -1: 0}
+    for component in ordered:
+        chosen = 1 if weight[1] <= weight[-1] else -1
+        weight[chosen] += len(component)
+        for nid in component:
+            side[nid] = chosen
+    return side
+
+
+def _bisect_component(
+    other_ids: set[int], rest_edges: list[GraphEdge], hub: int, edges: list[GraphEdge]
+) -> dict[int, int]:
+    """Hub is not a cut vertex — ``other_ids`` is one connected component.
+    Grows two sides from the hub's neighbors via alternating BFS (whichever
+    side is smaller claims the next frontier node), then runs a bounded
+    number of Kernighan-Lin-style pairwise swaps to reduce cross-side edges.
+    Imperfection is acceptable: the router turns any remaining cross-side
+    edges into perimeter detours, not cascading crossings."""
+    adj = _adjacency(rest_edges)
+    hub_neighbors = sorted(
+        {
+            e.target if e.source == hub else e.source
+            for e in edges
+            if hub in (e.source, e.target)
+        }
+        & other_ids
+    )
+    side = _grow_balanced(other_ids, adj, hub_neighbors)
+    return _kl_swap(other_ids, rest_edges, side)
+
+
+def _grow_balanced(
+    other_ids: set[int], adj: dict[int, list[int]], seeds: list[int]
+) -> dict[int, int]:
+    side: dict[int, int] = {}
+    frontiers: dict[int, deque[int]] = {1: deque(), -1: deque()}
+    for i, seed in enumerate(seeds):
+        s = 1 if i % 2 == 0 else -1
+        if seed not in side:
+            side[seed] = s
+            frontiers[s].append(seed)
+
+    while side.keys() < other_ids:
+        s = 1 if sum(1 for v in side.values() if v == 1) <= len(side) / 2 else -1
+        grown = False
+        while frontiers[s]:
+            nid = frontiers[s].popleft()
+            for neighbor in adj[nid]:
+                if neighbor in other_ids and neighbor not in side:
+                    side[neighbor] = s
+                    frontiers[s].append(neighbor)
+                    grown = True
+            if grown:
+                break
+        if not grown:
+            # frontier exhausted without reaching a new node (disconnected
+            # remainder within the "single component" — shouldn't happen,
+            # but stay total and deterministic if it ever does)
+            if remaining := sorted(other_ids - set(side)):
+                nid = remaining[0]
+                side[nid] = s
+                frontiers[s].append(nid)
+    return side
+
+
+def _kl_swap(
+    other_ids: set[int], rest_edges: list[GraphEdge], side: dict[int, int]
+) -> dict[int, int]:
+    edge_set: set[frozenset[int]] = {
+        frozenset((e.source, e.target)) for e in rest_edges
+    }
+    adj = _adjacency(rest_edges)
+
+    def external_internal(nid: int) -> tuple[int, int]:
+        ext = sum(1 for n in adj[nid] if side[n] != side[nid])
+        inter = sum(1 for n in adj[nid] if side[n] == side[nid])
+        return ext, inter
+
+    for _ in range(_KL_MAX_ROUNDS):
+        d = {nid: (e - i) for nid in other_ids for e, i in [external_internal(nid)]}
+        side_a = sorted(nid for nid in other_ids if side[nid] == 1)
+        side_b = sorted(nid for nid in other_ids if side[nid] == -1)
+        best_gain = 0
+        best_pair: tuple[int, int] | None = None
+        for u in side_a:
+            for v in side_b:
+                connected = frozenset((u, v)) in edge_set
+                gain = d[u] + d[v] - (2 if connected else 0)
+                if gain > best_gain:
+                    best_gain = gain
+                    best_pair = (u, v)
+        if best_pair is None:
+            break
+        u, v = best_pair
+        side[u], side[v] = side[v], side[u]
+    return side
+
+
+def _signed_columns(
+    nodes: list[GraphNode], edges: list[GraphEdge], hub: int, side: dict[int, int]
+) -> dict[int, int]:
+    distance = _bfs_distance(nodes, edges, hub)
+    column = {nid: (0 if nid == hub else side[nid] * distance[nid]) for nid in distance}
+    _bump_same_column_edges(column, hub, edges)
+    shift = -min(column.values())
+    return {nid: c + shift for nid, c in column.items()}
+
+
+def _bfs_distance(
+    nodes: list[GraphNode], edges: list[GraphEdge], hub: int
+) -> dict[int, int]:
+    adj = _adjacency(edges)
+    distance = {hub: 0}
+    queue = deque([hub])
+    while queue:
+        nid = queue.popleft()
+        for neighbor in adj[nid]:
+            if neighbor not in distance:
+                distance[neighbor] = distance[nid] + 1
+                queue.append(neighbor)
+    for node in nodes:
+        distance.setdefault(node.id, 0)  # unreachable (shouldn't happen; stay total)
+    return distance
+
+
+def _bump_same_column_edges(
+    column: dict[int, int], hub: int, edges: list[GraphEdge]
+) -> None:
     changed = True
     while changed:
         changed = False
         for edge in edges:
-            if rank[edge.source] == rank[edge.target]:
-                rank[edge.target] += 1
-                changed = True
+            if column[edge.source] != column[edge.target]:
+                continue
+            bump_id = edge.target if edge.target != hub else edge.source
+            if bump_id == hub:
+                continue  # both endpoints are the hub — impossible
+            column[bump_id] += 1 if column[bump_id] >= 0 else -1
+            changed = True
 
 
-def _decompose(
-    edge: GraphEdge, rank: dict[int, int], next_id: int, band_size: int
-) -> tuple[list[int], int]:
-    source_rank, target_rank = rank[edge.source], rank[edge.target]
-    if abs(source_rank // band_size - target_rank // band_size) == 1:
-        # Adjacent-band edge: routed as one hop along the wrap lane between
-        # the bands (entering/leaving via top/bottom borders), so it needs no
-        # per-rank bend points.
-        return [edge.source, edge.target], next_id
-    step = 1 if target_rank > source_rank else -1
-    chain = [edge.source]
-    for r in range(source_rank + step, target_rank, step):
-        chain.append(next_id)
-        rank[next_id] = r
-        next_id += 1
-    chain.append(edge.target)
-    return chain, next_id
+def _order_columns(
+    nodes: list[GraphNode], edges: list[GraphEdge], column: dict[int, int]
+) -> dict[int, list[int]]:
+    by_column: dict[int, list[int]] = defaultdict(list)
+    for node in sorted(nodes, key=lambda n: n.id):
+        by_column[column[node.id]].append(node.id)
 
-
-def _order_ranks(
-    nodes_by_rank: dict[int, list[int]],
-    routed_edges: list[RoutedEdge],
-    rank: dict[int, int],
-) -> None:
     neighbors: dict[int, list[int]] = defaultdict(list)
-    for redge in routed_edges:
-        for u, v in zip(redge.nodes, redge.nodes[1:]):
-            neighbors[u].append(v)
-            neighbors[v].append(u)
+    for edge in edges:
+        neighbors[edge.source].append(edge.target)
+        neighbors[edge.target].append(edge.source)
 
     position: dict[int, int] = {}
-    for ids in nodes_by_rank.values():
-        for i, node_id in enumerate(ids):
-            position[node_id] = i
+    for ids in by_column.values():
+        for i, nid in enumerate(ids):
+            position[nid] = i
 
-    def barycenter(node_id: int, reference_rank: int) -> float:
+    def barycenter(node_id: int, direction: int) -> float:
         refs = [
-            position[n] for n in neighbors[node_id] if rank.get(n) == reference_rank
+            position[n]
+            for n in neighbors[node_id]
+            if (column[n] - column[node_id]) * direction > 0
         ]
         return sum(refs) / len(refs) if refs else position[node_id]
 
-    if not nodes_by_rank:
-        return
-    min_rank, max_rank = min(nodes_by_rank), max(nodes_by_rank)
+    if not by_column:
+        return {}
+    columns = sorted(by_column)
     for _ in range(2):
-        for r in range(min_rank + 1, max_rank + 1):
-            ids = nodes_by_rank.get(r)
-            if not ids:
-                continue
-            ids.sort(key=lambda n: barycenter(n, r - 1))
-            for i, node_id in enumerate(ids):
-                position[node_id] = i
-        for r in range(max_rank - 1, min_rank - 1, -1):
-            ids = nodes_by_rank.get(r)
-            if not ids:
-                continue
-            ids.sort(key=lambda n: barycenter(n, r + 1))
-            for i, node_id in enumerate(ids):
-                position[node_id] = i
+        for c in columns:
+            by_column[c].sort(key=lambda n: (barycenter(n, -1), n))
+            for i, nid in enumerate(by_column[c]):
+                position[nid] = i
+        for c in reversed(columns):
+            by_column[c].sort(key=lambda n: (barycenter(n, 1), n))
+            for i, nid in enumerate(by_column[c]):
+                position[nid] = i
 
-
-def _order_wrap_nodes(
-    nodes_by_rank: dict[int, list[int]],
-    routed_edges: list[RoutedEdge],
-    rank: dict[int, int],
-    band_size: int,
-) -> None:
-    """A wrap hop leaves its upper node through the bottom border and enters
-    its lower node through the top border, dropping straight through the node's
-    column. Sink nodes with downward wrap hops to the bottom of their rank's
-    stack (and float upward-wrapped ones to the top) so no rank-mate sits in
-    the drop's path. Runs after the barycenter ordering and overrides it."""
-    down: set[int] = set()
-    up: set[int] = set()
-    for redge in routed_edges:
-        for u, v in zip(redge.nodes, redge.nodes[1:]):
-            band_u, band_v = rank[u] // band_size, rank[v] // band_size
-            if band_u == band_v:
-                continue
-            upper, lower = (u, v) if band_u < band_v else (v, u)
-            down.add(upper)
-            up.add(lower)
-
-    for ids in nodes_by_rank.values():
-        ids.sort(key=lambda n: (n in down) - (n in up))
-
-
-def _assign_positions(
-    nodes_by_rank: dict[int, list[int]], real_ids: set[int], band_size: int
-) -> dict[int, LayoutNode]:
-    positions: dict[int, LayoutNode] = {}
-    for r, ids in nodes_by_rank.items():
-        band, offset = divmod(r, band_size)
-        col = band_size - 1 - offset if band % 2 else offset
-        for row, node_id in enumerate(ids):
-            positions[node_id] = LayoutNode(
-                rank=r,
-                band=band,
-                col=col,
-                row=row,
-                dummy=node_id not in real_ids,
-            )
-    return positions
+    return dict(by_column)

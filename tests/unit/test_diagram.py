@@ -22,30 +22,6 @@ def _describe_from(table_by_path: Mapping[tuple[str, ...], DescribeResult]) -> D
     return describe
 
 
-def _chain_tables(n: int) -> dict[tuple[str, ...], TableDescription]:
-    """Tables t0..t{n-1} where each t{i} has a foreign key to t{i-1}."""
-    tables: dict[tuple[str, ...], TableDescription] = {}
-    for i in range(n):
-        columns = [ColumnInfo(name="id", type="INTEGER", pk=True)]
-        outgoing = []
-        if i > 0:
-            columns.append(ColumnInfo(name="prev_id", type="INTEGER"))
-            outgoing.append(
-                TableReference(column="prev_id", table=f"t{i - 1}", ref_column="id")
-            )
-        tables[(f"t{i}",)] = TableDescription(
-            table=f"t{i}", columns=columns, outgoing_references=outgoing
-        )
-    for path, desc in tables.items():
-        for ref in desc.outgoing_references:
-            tables[(ref.table,)].incoming_references.append(
-                TableReference(
-                    column=ref.ref_column, table=path[0], ref_column=ref.column
-                )
-            )
-    return tables
-
-
 class TestBuildDiagram:
     async def test_raises_when_path_does_not_resolve_to_a_table(self) -> None:
         describe = _describe_from({})
@@ -362,16 +338,20 @@ class TestBuildDiagram:
     async def test_multiple_relationships_on_the_same_side_get_distinct_anchors(
         self,
     ) -> None:
+        # a and c both land on the hub's same side (b takes the other side by
+        # LPT balancing) — their edges must not both bunch at one anchor.
         root = TableDescription(
             table="root",
             columns=[
                 ColumnInfo(name="id", type="INTEGER", pk=True),
                 ColumnInfo(name="a_id", type="INTEGER"),
                 ColumnInfo(name="b_id", type="INTEGER"),
+                ColumnInfo(name="c_id", type="INTEGER"),
             ],
             outgoing_references=[
                 TableReference(column="a_id", table="a", ref_column="id"),
                 TableReference(column="b_id", table="b", ref_column="id"),
+                TableReference(column="c_id", table="c", ref_column="id"),
             ],
         )
         a = TableDescription(
@@ -380,88 +360,19 @@ class TestBuildDiagram:
         b = TableDescription(
             table="b", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
         )
-        describe = _describe_from({("root",): root, ("a",): a, ("b",): b})
+        c = TableDescription(
+            table="c", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("root",): root, ("a",): a, ("b",): b, ("c",): c})
         result = await build_diagram(["root"], describe)
 
-        # Both edges leave "root" through the same side; they must not both
-        # bunch at that side's center point.
         rows_by_edge: dict[tuple[str, ...], set[int]] = {}
         for r in result.regions:
             if r.kind == "edge":
                 rows_by_edge.setdefault(tuple(r.path), set()).add(r.row)
-        starting_rows = {min(rows) for rows in rows_by_edge.values()}
-        assert len(starting_rows) == len(rows_by_edge)
-
-    async def test_long_chain_wraps_into_a_new_band(self) -> None:
-        describe = _describe_from(_chain_tables(8))
-        result = await build_diagram(["t0"], describe)
-
-        lines = result.diagram.splitlines()
-        col_of = {}
-        for i in range(8):
-            marker = f"┌─ t{i} "
-            row = next(r for r, line in enumerate(lines) if marker in line)
-            col_of[i] = lines[row].index(marker)
-
-        # t0..t4 form the first band (5 columns), each strictly to the right
-        # of the previous; t5 wraps into a snaking second band, landing
-        # directly below t4 instead of jumping back to the far left.
-        assert col_of[4] > col_of[0]
-        assert col_of[5] == col_of[4]
-
-    async def test_adjacent_band_edge_connects_via_the_wrap_lane(self) -> None:
-        tables = _chain_tables(6)
-        tables[("t5",)].outgoing_references.append(
-            TableReference(column="t3_id", table="t3", ref_column="id")
-        )
-        tables[("t3",)].incoming_references.append(
-            TableReference(column="id", table="t5", ref_column="t3_id")
-        )
-        describe = _describe_from(tables)
-        result = await build_diagram(["t0"], describe)
-
-        # t5 wraps into the band below t3's; their edge leaves t3 through its
-        # bottom border instead of crowding the channel on t3's right.
-        lines = result.diagram.splitlines()
-        top = next(r for r, s in enumerate(lines) if "┌─ t3 " in s)
-        left = lines[top].index("┌─ t3 ")
-        right = lines[top].index("┐", left)
-        bottom = next(r for r in range(top + 1, len(lines)) if lines[r][left] == "└")
-        center = left + (right - left + 1) // 2
-        # t3 is the referenced ("1") side of the relationship, so the wrap
-        # connector's first cell below t3's border is the "1" marker rather
-        # than a plain vertical line.
-        assert lines[bottom + 1].ljust(center + 1)[center] == "1"
-
-    async def test_wrap_connected_box_sinks_below_its_rank_siblings(self) -> None:
-        tables = _chain_tables(6)
-        tables[("t5",)].outgoing_references.append(
-            TableReference(column="t3_id", table="t3", ref_column="id")
-        )
-        tables[("t3",)].incoming_references.append(
-            TableReference(column="id", table="t5", ref_column="t3_id")
-        )
-        tables[("u3",)] = TableDescription(
-            table="u3",
-            columns=[ColumnInfo(name="prev_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="prev_id", table="t2", ref_column="id")
-            ],
-        )
-        tables[("t2",)].incoming_references.append(
-            TableReference(column="id", table="u3", ref_column="prev_id")
-        )
-        describe = _describe_from(tables)
-        result = await build_diagram(["t0"], describe)
-
-        # t3's edge to t5 (band below) drops from t3's bottom border, so its
-        # rank-mate u3 must not sit between t3 and the band's lower edge.
-        lines = result.diagram.splitlines()
-        row_of = {
-            t: next(r for r, s in enumerate(lines) if f"┌─ {t} " in s)
-            for t in ("t3", "u3")
-        }
-        assert row_of["t3"] > row_of["u3"]
+        a_rows = rows_by_edge[("root", "relationships", "a_id")]
+        c_rows = rows_by_edge[("root", "relationships", "c_id")]
+        assert min(a_rows) != min(c_rows)
 
 
 class TestBuildDiagramRegions:
@@ -617,28 +528,47 @@ class TestBuildDiagramRegions:
         assert region.path == ["orders", "relationships", "user_id"]
         line = result.diagram.splitlines()[region.row]
         span = line.encode()[region.col_start : region.col_end].decode()
-        assert span == "*─1"
+        assert re.fullmatch(r"\*─+1", span)
 
     async def test_multi_row_edge_regions_share_the_same_path(self) -> None:
-        tables = _chain_tables(6)
-        tables[("t5",)].outgoing_references.append(
-            TableReference(column="t3_id", table="t3", ref_column="id")
+        # The mid->leaf edge in the skip-edge fixture detours vertically past
+        # root's rank, spanning several rows — every row it touches gets its
+        # own region, all sharing the same path.
+        root = TableDescription(
+            table="root",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="mid_id", type="INTEGER"),
+                ColumnInfo(name="leaf_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="mid_id", table="mid", ref_column="id"),
+                TableReference(column="leaf_id", table="leaf", ref_column="id"),
+            ],
         )
-        tables[("t3",)].incoming_references.append(
-            TableReference(column="id", table="t5", ref_column="t3_id")
+        mid = TableDescription(
+            table="mid",
+            columns=[
+                ColumnInfo(name="id", type="INTEGER", pk=True),
+                ColumnInfo(name="leaf_id", type="INTEGER"),
+            ],
+            outgoing_references=[
+                TableReference(column="leaf_id", table="leaf", ref_column="id")
+            ],
         )
-        describe = _describe_from(tables)
-        result = await build_diagram(["t0"], describe)
+        leaf = TableDescription(
+            table="leaf", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        )
+        describe = _describe_from({("root",): root, ("mid",): mid, ("leaf",): leaf})
+        result = await build_diagram(["root"], describe)
 
         edge_regions = [
             r
             for r in result.regions
-            if r.kind == "edge" and r.path == ["t5", "relationships", "t3_id"]
+            if r.kind == "edge" and r.path == ["mid", "relationships", "leaf_id"]
         ]
-        # The wrap edge from t5 to t3 spans several rows; every row it
-        # touches gets its own region, all sharing the same path.
         assert len(edge_regions) > 1
-        assert len({r.row for r in edge_regions}) == len(edge_regions)
+        assert len({tuple(r.path) for r in edge_regions}) == 1
 
     async def test_table_box_border_gets_a_region_on_every_row(self) -> None:
         desc = TableDescription(

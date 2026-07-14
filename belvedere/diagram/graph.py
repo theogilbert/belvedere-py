@@ -34,8 +34,6 @@ class GraphNode:
     """Display name, e.g. ``dbo.orders`` or ``orders``."""
     path: list[str]
     """Path identifying this table."""
-    rank: int
-    """BFS distance from the source table; determines the node's layout column."""
     columns: list[ColumnInfo] = field(default_factory=list)
     fk_columns: set[str] = field(default_factory=set)
     """Names of columns covered by an outgoing foreign key."""
@@ -74,7 +72,7 @@ async def discover(
     if not isinstance(desc, TableDescription):
         raise DiagramError(f"Path {path!r} does not resolve to a table")
 
-    nodes = [_table_node(0, path, desc, rank=0)]
+    nodes = [_table_node(0, path, desc)]
     edges: list[GraphEdge] = []
     seen_pairs: set[frozenset[int]] = set()
     visited: dict[tuple[str, ...], int] = {tuple(path): 0}
@@ -94,13 +92,13 @@ async def discover(
                 target_id = len(nodes)
                 visited[tuple(ref_path)] = target_id
                 child_desc = await describe(ref_path)
-                rank = depth + 1
+                child_depth = depth + 1
                 if isinstance(child_desc, TableDescription):
-                    nodes.append(_table_node(target_id, ref_path, child_desc, rank))
-                    if rank < MAX_DEPTH:
-                        queue.append((ref_path, child_desc, target_id, rank))
+                    nodes.append(_table_node(target_id, ref_path, child_desc))
+                    if child_depth < MAX_DEPTH:
+                        queue.append((ref_path, child_desc, target_id, child_depth))
                 else:
-                    nodes.append(_placeholder_node(target_id, ref_path, ref, rank))
+                    nodes.append(_placeholder_node(target_id, ref_path, ref))
 
             pair = frozenset((cur_id, target_id))
             if pair not in seen_pairs:
@@ -135,23 +133,18 @@ def _ref_path(desc: TableDescription, ref: TableReference) -> list[str]:
     return [ref.schema or desc.schema, ref.table]
 
 
-def _table_node(
-    id_: int, path: list[str], desc: TableDescription, rank: int
-) -> GraphNode:
+def _table_node(id_: int, path: list[str], desc: TableDescription) -> GraphNode:
     name = f"{desc.schema}.{desc.table}" if desc.schema else desc.table
     return GraphNode(
         id=id_,
         name=name,
         path=path,
-        rank=rank,
         columns=desc.columns,
         fk_columns={r.column for r in desc.outgoing_references},
         ref_columns={r.column for r in desc.incoming_references},
     )
 
 
-def _placeholder_node(
-    id_: int, path: list[str], ref: TableReference, rank: int
-) -> GraphNode:
+def _placeholder_node(id_: int, path: list[str], ref: TableReference) -> GraphNode:
     name = f"{ref.schema}.{ref.table}" if ref.schema else ref.table
-    return GraphNode(id=id_, name=name, path=path, rank=rank, unavailable=True)
+    return GraphNode(id=id_, name=name, path=path, unavailable=True)

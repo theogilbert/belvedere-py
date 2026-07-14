@@ -22,6 +22,10 @@ connectors; grows when more wrap lanes must fit."""
 _ALIGN_SWEEPS = 2
 """Rounds of vertical alignment; each round pulls every rank toward its left
 neighbors, then every rank toward its right neighbors."""
+_LONG_SKIP_RANKS = 2
+"""Ranks a skip edge can cross before it's treated as long-haul and routed
+around the diagram's content (see `_place_skip_waypoints`) instead of
+through it."""
 
 
 def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramRegion]]:
@@ -37,10 +41,21 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
     anchor_slots = _assign_anchor_slots(
         layout, dummy_set, coords, box_size, vertical_hops
     )
-    lane_index = _reorder_lanes(
+    lane_index, detour_hops = _reorder_lanes(
         layout, lane_index, anchor_slots, coords, box_size, dummy_set, vertical_hops
     )
-    _, lane_coord = _place(layout, box_size, band_size, lane_index, dummy_set)
+    # Re-placing waypoints now that anchor_slots is known (real box
+    # coordinates are unaffected, so this only refines dummy positions)
+    # removes a residual jog on the final hop into any target that shares
+    # its side with another edge.
+    coords, lane_coord = _place(
+        layout, box_size, band_size, lane_index, dummy_set, anchor_slots
+    )
+    # Beyond every real box's right edge — a shared detour lane for hops
+    # whose crossing (see `_reorder_lanes`) no lane order can avoid.
+    outer_col = (
+        max(coords[nid][1] + box_size[nid][1] for nid in box_size) + _CHANNEL_PADDING
+    )
 
     canvas = Canvas()
     for node_id, lines in box_lines.items():
@@ -57,6 +72,8 @@ def render(nodes: list[GraphNode], layout: Layout) -> tuple[str, list[DiagramReg
             lane_coord,
             anchor_slots,
             vertical_hops,
+            detour_hops,
+            outer_col,
         )
         if redge.one_to_one:
             start, end = "1", "1"
@@ -245,7 +262,7 @@ def _reorder_lanes(
     box_size: dict[int, tuple[int, int]],
     dummy_set: set[int],
     vertical_hops: set[tuple[int, int]],
-) -> dict[_Channel, dict[tuple[int, int], int]]:
+) -> tuple[dict[_Channel, dict[tuple[int, int], int]], set[tuple[int, int]]]:
     """Re-orders each channel's lanes now that every hop's actual endpoint
     anchors are known, so a hop that must jog from its source row/column to
     its target doesn't cut across another hop's own row/column on the way —
@@ -256,9 +273,13 @@ def _reorder_lanes(
     its whole run up to its own lane, then collapses to just its target from
     there on — so placing hop A in the lane closest to the box is safe with
     respect to hop B only if B's source falls outside A's span (`_fits_closer`).
-    When exactly one of the two orders is safe, that settles it; the (rare)
-    remaining cases don't matter here or are true unavoidable crossings, so
-    they fall back to a stable ordering by span start."""
+    When exactly one of the two orders is safe, that settles it. When
+    *neither* order is safe, no lane assignment can avoid a crossing between
+    that pair by itself — that hop is reported back in the second return
+    value so `_route` can instead detour it around the conflict entirely
+    (see `_LONG_SKIP_RANKS`-style routing in `_place_skip_waypoints` for the
+    same idea applied to skip-edge waypoints). Otherwise, ties fall back to a
+    stable ordering by span start."""
 
     def endpoints(hop: tuple[int, int], axis: int) -> tuple[int, int]:
         u, v = hop
@@ -274,6 +295,7 @@ def _reorder_lanes(
         return not (lo <= source <= hi)
 
     reordered: dict[_Channel, dict[tuple[int, int], int]] = {}
+    needs_detour: set[tuple[int, int]] = set()
     for channel, hops in lane_index.items():
         axis = 0 if channel[0] == "h" else 1
         info = {hop: endpoints(hop, axis) for hop in hops}
@@ -289,8 +311,21 @@ def _reorder_lanes(
             return (spans[a][0] - spans[b][0]) or (spans[a][1] - spans[b][1])
 
         ordered = sorted(hops, key=functools.cmp_to_key(closer))
+
+        # With 3+ hops, "closer" isn't guaranteed transitive (a can beat b,
+        # b beat c, and c beat a), so even the best achievable order can
+        # still leave some pair unsafe. Check every pair against the order
+        # actually produced, not just in isolation: for each closer/farther
+        # pair, the farther hop's own source-to-lane sweep crosses the
+        # closer hop's lane-row run if the farther hop's source falls
+        # inside the closer hop's span — that farther hop goes around.
+        for i, closer_hop in enumerate(ordered):
+            for farther_hop in ordered[i + 1 :]:
+                if not fits_closer(info[farther_hop][0], spans[closer_hop]):
+                    needs_detour.add(farther_hop)
+
         reordered[channel] = {hop: i for i, hop in enumerate(ordered)}
-    return reordered
+    return reordered, needs_detour
 
 
 def _place(
@@ -299,6 +334,7 @@ def _place(
     band_size: int,
     lane_index: dict[_Channel, dict[tuple[int, int], int]],
     dummy_set: set[int],
+    anchor_slots: dict[tuple[int, tuple[int, int]], tuple[int, int]] | None = None,
 ) -> tuple[dict[int, tuple[int, int]], dict[_Channel, dict[tuple[int, int], int]]]:
     by_rank: dict[int, list[int]] = defaultdict(list)
     for nid, pos in layout.positions.items():
@@ -403,7 +439,7 @@ def _place(
         for nid in ids:
             coords[nid] = (band_top[band] + y_within[nid], rank_left[r])
 
-    _place_skip_waypoints(layout, coords, box_size, rank_left, dummy_set)
+    _place_skip_waypoints(layout, coords, box_size, rank_left, dummy_set, anchor_slots)
 
     lane_coord: dict[_Channel, dict[tuple[int, int], int]] = {}
     for channel, hops in lane_index.items():
@@ -466,35 +502,74 @@ def _place_skip_waypoints(
     box_size: dict[int, tuple[int, int]],
     rank_left: dict[int, int],
     dummy_set: set[int],
+    anchor_slots: dict[tuple[int, tuple[int, int]], tuple[int, int]] | None = None,
 ) -> None:
     """Places every skip-edge waypoint ("dummy" bend point) at its edge's
-    target row directly — its target's approximate anchor row, as if it had
-    no fan-out of its own, which isn't known yet here (see
-    `_assign_anchor_slots`) — rather than interpolating from the source, so
-    only the first hop (out of the source, which may already bend via a
-    vertical exit — see `_skip_hop_ends`) needs to bend at all; every
-    subsequent hop, including the final one into the target, then runs
-    flat. Each waypoint is clamped clear of any real box's row range at its
-    own rank — so the edge passes the box on its own row instead of cutting
-    through its interior (which the canvas would silently swallow, since
-    box cells always win) or detouring around it via extra stacking space.
+    target row directly, rather than interpolating from the source, so only
+    the first hop (out of the source, which may already bend via a vertical
+    exit — see `_skip_hop_ends`) needs to bend at all; every subsequent hop,
+    including the final one into the target, then runs flat.
+
+    The target row itself is the target's real anchor if ``anchor_slots`` is
+    given (the second, placement-aware pass — see `render`), or its
+    approximate anchor otherwise (as if it had no fan-out of its own, which
+    isn't known yet on the first pass). Using the real anchor once it's
+    known removes a residual jog that would otherwise show up whenever the
+    target shares its side with another edge, since its true row can differ
+    from the count-of-one estimate.
+
+    A chain crossing more than two ranks (`_LONG_SKIP_RANKS`) instead cruises
+    at a shared row beyond every real box (`_cruise_row`) for every waypoint
+    but its last, only dropping to the target's row on the final approach —
+    so a long-haul edge passing near a target several other, more local
+    edges also reach doesn't converge onto the same row as them for its
+    entire crossing and cross their paths; it goes around instead.
+
+    Each waypoint is clamped clear of any real box's row range at its own
+    rank — so the edge passes the box on its own row instead of cutting
+    through its interior (which the canvas would silently swallow, since box
+    cells always win) or detouring around it via extra stacking space.
     Waypoints share the rank's normal column; this runs after real box
     placement is final, since it depends on real boxes' finished
     coordinates. Mutates `coords`."""
+    cruise_row = _cruise_row(box_size, coords)
     for redge in layout.routed_edges:
         chain = redge.nodes
         if len(chain) < 3:
             continue  # direct hop, no waypoints
 
-        _, entry_side = _hop_sides(chain[-2], chain[-1], layout)
-        end_row = _anchor(chain[-1], coords, box_size, dummy_set, entry_side, 0, 1)[0]
+        last_hop = (chain[-2], chain[-1])
+        _, entry_side = _hop_sides(*last_hop, layout)
+        slot, count = (
+            anchor_slots.get((chain[-1], last_hop), (0, 1))
+            if anchor_slots is not None
+            else (0, 1)
+        )
+        end_row = _anchor(
+            chain[-1], coords, box_size, dummy_set, entry_side, slot, count
+        )[0]
 
-        for nid in chain[1:-1]:
+        waypoints = chain[1:-1]
+        long_haul = len(chain) - 1 > _LONG_SKIP_RANKS
+        for i, nid in enumerate(waypoints):
+            target_row = (
+                end_row if not long_haul or i == len(waypoints) - 1 else cruise_row
+            )
             rank = layout.positions[nid].rank
-            row = _clamp_outside_boxes(end_row, layout, box_size, coords, rank)
+            row = _clamp_outside_boxes(target_row, layout, box_size, coords, rank)
             coords[nid] = (row, rank_left[rank])
 
     _resolve_waypoint_collisions(layout, coords, box_size)
+
+
+def _cruise_row(
+    box_size: dict[int, tuple[int, int]], coords: dict[int, tuple[int, int]]
+) -> int:
+    """A row beyond every real box in the diagram, used as a shared outer
+    lane for long-haul skip-edges so they travel around the diagram's
+    content instead of through its middle, where shorter, more local edges
+    live."""
+    return max(coords[nid][0] + box_size[nid][0] for nid in box_size) + _CHANNEL_PADDING
 
 
 def _box_row_ranges(
@@ -762,6 +837,8 @@ def _route(
     lane_coord: dict[_Channel, dict[tuple[int, int], int]],
     anchor_slots: dict[tuple[int, tuple[int, int]], tuple[int, int]],
     vertical_hops: set[tuple[int, int]],
+    detour_hops: set[tuple[int, int]],
+    outer_col: int,
 ) -> list[tuple[int, int]]:
     points: list[tuple[int, int]] = []
     for u, v in zip(redge.nodes, redge.nodes[1:]):
@@ -776,6 +853,17 @@ def _route(
 
         if channel[0] == "h":
             hop = [u_anchor, (u_anchor[0], coord), (v_anchor[0], coord), v_anchor]
+        elif (u, v) in detour_hops:
+            # No lane order avoids this hop's crossing (`_reorder_lanes`) —
+            # go around instead: out to a shared lane past every box's right
+            # edge first, then down/up to the channel row, then in.
+            hop = [
+                u_anchor,
+                (u_anchor[0], outer_col),
+                (coord, outer_col),
+                (coord, v_anchor[1]),
+                v_anchor,
+            ]
         else:
             hop = [u_anchor, (coord, u_anchor[1]), (coord, v_anchor[1]), v_anchor]
 

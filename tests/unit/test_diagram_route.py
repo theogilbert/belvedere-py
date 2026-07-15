@@ -1,19 +1,42 @@
 from belvedere.diagram.graph import GraphEdge, GraphNode
 from belvedere.diagram.place import STUB_LEN, PlaceResult, Rect
-from belvedere.diagram.route import _blocked_cells, _stub_candidates, compact, route
+from belvedere.diagram.route import (
+    _adjacent_to_any,
+    _astar,
+    _blocked_cells,
+    _stub_candidates,
+    compact,
+    route,
+)
 
 
 class TestAdjacentAnchorMalus:
-    def test_anchor_next_to_a_used_one_is_penalized(self) -> None:
-        rect = Rect(top=10, left=10, height=6, width=12)
-        blocked = _blocked_cells({0: rect})
-        bounds = (30, 30)
-        used = {(11, 9)}  # left-side anchor already claimed by another edge
-        stubs = _stub_candidates(rect, blocked, used, bounds, malus=50)
-        adjacent = next(s for s in stubs if s.anchor == (12, 9))
-        far = next(s for s in stubs if s.anchor == (14, 9))
-        assert adjacent.penalty == 50
-        assert far.penalty == 0
+    def test_anchor_adjacency_cost_steers_away_from_a_claimed_neighbor(self) -> None:
+        rect_a = Rect(top=10, left=10, height=8, width=12)
+        rect_b = Rect(top=10, left=50, height=8, width=12)
+        blocked = _blocked_cells({0: rect_a, 1: rect_b})
+        bounds = (30, 70)
+        sources = _stub_candidates(rect_a, blocked, set(), bounds)
+        targets = _stub_candidates(rect_b, blocked, set(), bounds)
+
+        baseline_cells, _ = _astar(sources, targets, blocked, {}, set(), 0, bounds)
+        natural_anchor = baseline_cells[0]
+
+        claimed = {(natural_anchor[0] + 1, natural_anchor[1])}  # right next to it
+        steered_cells, _ = _astar(sources, targets, blocked, {}, claimed, 1000, bounds)
+        assert steered_cells[0] != natural_anchor
+        assert not _adjacent_to_any(steered_cells[0], claimed)
+
+    def test_route_never_steps_onto_a_claimed_anchor_cell(self) -> None:
+        rect_a = Rect(top=10, left=10, height=6, width=12)
+        rect_b = Rect(top=10, left=50, height=6, width=12)
+        blocked = _blocked_cells({0: rect_a, 1: rect_b})
+        bounds = (30, 70)
+        sources = _stub_candidates(rect_a, blocked, set(), bounds)
+        targets = _stub_candidates(rect_b, blocked, set(), bounds)
+        claimed = {(13, 30)}  # sits on the natural straight path between the boxes
+        cells, _ = _astar(sources, targets, blocked, {}, claimed, 0, bounds)
+        assert claimed.isdisjoint(cells)
 
 
 def _node(id_: int) -> GraphNode:

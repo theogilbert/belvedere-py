@@ -8,10 +8,15 @@ Each edge gets a mandatory ``STUB_LEN``-cell straight run out of its anchor
 before any bend is allowed (constraint 4), searched multi-source (every
 candidate anchor on the source box) to multi-target (every candidate anchor
 on the target box) — the search itself picks which side of each box the
-edge leaves from. Edges are routed most-constrained-first (shortest span),
-then a rip-up-and-reroute pass re-routes the costliest few against the
-finished field. A final compaction pass deletes unused grid rows/columns,
-reclaiming the overprovisioned channel/margin space ``place.py`` reserved.
+edge leaves from. Once an edge claims an anchor, no other edge's path may
+cross that cell — a lighter, span-scaled cost (see ``_astar``'s
+``anchor_malus``) separately discourages a *new* anchor from landing right
+next to one already claimed, the same way ``W_BEND``/``W_CROSS``/``W_HUG``
+discourage other shapes without forbidding them outright. Edges are routed
+most-constrained-first (shortest span), then a rip-up-and-reroute pass
+re-routes the costliest few against the finished field. A final compaction
+pass deletes unused grid rows/columns, reclaiming the overprovisioned
+channel/margin space ``place.py`` reserved.
 """
 
 import heapq
@@ -36,8 +41,8 @@ the main pass, so an early edge's anchor/lane choice doesn't permanently
 saddle a later edge with an avoidable detour."""
 _ADJACENT_ANCHOR_MARGIN = 2
 """Added on top of an edge's own manhattan span to size its adjacent-anchor
-malus (see ``_Stub.penalty``) — scaled to the edge so the malus stays a
-tiebreaker among similarly-priced anchors rather than a reason to take a
+malus (see ``_astar``'s ``anchor_malus``) — scaled to the edge so the malus
+stays a tiebreaker among similarly-priced anchors rather than a reason to take a
 longer route, per-step costs (``W_BEND``/``W_CROSS``/``W_HUG``) still win."""
 
 Cell = tuple[int, int]
@@ -82,10 +87,6 @@ class _Stub:
     """Direction of travel from ``anchor`` to ``tip`` (away from the box)."""
     cells: list[Cell]
     """``anchor``..``tip`` inclusive."""
-    penalty: float = 0
-    """Extra one-time cost if ``anchor`` sits right next to another edge's
-    anchor on the same box — keeps cardinality glyphs from bunching onto
-    adjacent cells when an equally-cheap anchor is available elsewhere."""
 
 
 @dataclass
@@ -209,7 +210,6 @@ def _stub_candidates(
     blocked: set[Cell],
     used: set[Cell],
     bounds: tuple[int, int],
-    malus: float = 0,
 ) -> list[_Stub]:
     def build(exclude: set[Cell]) -> list[_Stub]:
         stubs = []
@@ -219,14 +219,9 @@ def _stub_candidates(
                     continue
                 cells = _stub_cells(anchor, heading, STUB_LEN)
                 if all(_in_bounds(c, bounds) and c not in blocked for c in cells):
-                    penalty = malus if _adjacent_to_any(anchor, used) else 0
                     stubs.append(
                         _Stub(
-                            anchor=anchor,
-                            tip=cells[-1],
-                            heading=heading,
-                            cells=cells,
-                            penalty=penalty,
+                            anchor=anchor, tip=cells[-1], heading=heading, cells=cells
                         )
                     )
         return stubs
@@ -261,17 +256,26 @@ def _astar(
     targets: list[_Stub],
     blocked: set[Cell],
     occupied: dict[Cell, dict[str, int]],
+    claimed_anchors: set[Cell],
+    malus: float,
     bounds: tuple[int, int],
 ) -> tuple[list[Cell], float]:
     tip_to_stub: dict[Cell, _Stub] = {s.tip: s for s in targets}
     tip_cells = list(tip_to_stub)
+
+    def anchor_malus(stub: _Stub) -> float:
+        # Same idea as W_BEND/W_CROSS/W_HUG below, just charged once at the
+        # anchor rather than per step: landing right next to another edge's
+        # anchor costs a bit more than this edge's own span, so an equally
+        # cheap anchor elsewhere wins, but it never justifies a longer route.
+        return malus if _adjacent_to_any(stub.anchor, claimed_anchors) else 0
 
     g_score: dict[_State, float] = {}
     came_from: dict[_State, _State | None] = {}
     heap: list[tuple[float, float, _State]] = []
     for s in sources:
         state = (s.tip, s.heading)
-        start_cost = STUB_LEN + s.penalty
+        start_cost = STUB_LEN + anchor_malus(s)
         g_score[state] = start_cost
         came_from[state] = None
         heapq.heappush(
@@ -295,13 +299,17 @@ def _astar(
         if cell in tip_to_stub:
             target_stub = tip_to_stub[cell]
             bend = 0 if heading == _OPPOSITE[target_stub.heading] else W_BEND
-            total = g + bend + STUB_LEN + target_stub.penalty
+            total = g + bend + STUB_LEN + anchor_malus(target_stub)
             if best is None or total < best[0]:
                 best = (total, state)
         for new_heading, (dr, dc) in _DIRS.items():
             neighbor = (cell[0] + dr, cell[1] + dc)
-            if not _in_bounds(neighbor, bounds) or neighbor in blocked:
-                continue
+            if (
+                not _in_bounds(neighbor, bounds)
+                or neighbor in blocked
+                or neighbor in claimed_anchors
+            ):
+                continue  # another edge's anchor point — never crossed, not just penalized
             axis = "h" if new_heading in ("E", "W") else "v"
             cell_axes = occupied.get(neighbor, {})
             if axis in cell_axes:
@@ -347,14 +355,17 @@ def _route_edge(
     occupied: dict[Cell, dict[str, int]],
     bounds: tuple[int, int],
 ) -> _RouteInfo:
-    malus = _manhattan_span(edge, rects) + _ADJACENT_ANCHOR_MARGIN
     sources = _stub_candidates(
-        rects[edge.source], blocked, used_anchors[edge.source], bounds, malus
+        rects[edge.source], blocked, used_anchors[edge.source], bounds
     )
     targets = _stub_candidates(
-        rects[edge.target], blocked, used_anchors[edge.target], bounds, malus
+        rects[edge.target], blocked, used_anchors[edge.target], bounds
     )
-    cells, cost = _astar(sources, targets, blocked, occupied, bounds)
+    claimed_anchors = {c for cells in used_anchors.values() for c in cells}
+    malus = _manhattan_span(edge, rects) + _ADJACENT_ANCHOR_MARGIN
+    cells, cost = _astar(
+        sources, targets, blocked, occupied, claimed_anchors, malus, bounds
+    )
     return _RouteInfo(
         cells=cells, cost=cost, source_anchor=cells[0], target_anchor=cells[-1]
     )

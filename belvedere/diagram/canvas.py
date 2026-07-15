@@ -118,7 +118,11 @@ class Canvas:
         self, cells: list[tuple[int, int]], path: list[str]
     ) -> None:
         """Groups the connector's cells into one region per contiguous run
-        within a row (skipping cells a box border already owns)."""
+        within a row (skipping cells a box border already owns). A run's
+        cells aren't necessarily visited in increasing column order — a
+        route can double back westward/upward through a bend — so the run's
+        span is tracked as a min/max rather than assuming the first cell
+        visited is the leftmost."""
         run_row: int | None = None
         run_start = 0
         run_end = 0
@@ -130,8 +134,10 @@ class Canvas:
                     self._char_regions.append(
                         _CharRegion(run_row, run_start, run_end, "edge", path)
                     )
-                run_row, run_start = row, col
-            run_end = col + 1
+                run_row, run_start, run_end = row, col, col + 1
+            else:
+                run_start = min(run_start, col)
+                run_end = max(run_end, col + 1)
         if run_row is not None:
             self._char_regions.append(
                 _CharRegion(run_row, run_start, run_end, "edge", path)

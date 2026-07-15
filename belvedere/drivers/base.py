@@ -10,8 +10,45 @@ from ..protocol import (
     ExploreItem,
     Language,
     ReadResult,
+    RelationshipDescription,
+    TableDescription,
+    TableReference,
     WriteResult,
 )
+
+
+def build_relationship_description(
+    desc: TableDescription, table: str, schema: str | None, column: str
+) -> RelationshipDescription | None:
+    """Build the ``RelationshipDescription`` for one of *table*'s own outgoing
+    FK columns, for a describe path ending in ``["relationships", column]``.
+
+    Returns:
+        None if *column* does not name one of *table*'s own foreign keys.
+    """
+    ref = next((r for r in desc.outgoing_references if r.column == column), None)
+    if ref is None:
+        return None
+    return RelationshipDescription(
+        table=table,
+        schema=schema,
+        column=ref.column,
+        ref_table=ref.table,
+        ref_schema=ref.schema,
+        ref_column=ref.ref_column,
+        constraint_name=ref.constraint_name,
+    )
+
+
+def group_references_by_column(
+    refs: list[TableReference],
+) -> dict[str, list[TableReference]]:
+    """Group a table's outgoing FK references by local column, for populating
+    ``ColumnDescription.outgoing_references``."""
+    by_column: dict[str, list[TableReference]] = {}
+    for ref in refs:
+        by_column.setdefault(ref.column, []).append(ref)
+    return by_column
 
 
 @dataclass(frozen=True)

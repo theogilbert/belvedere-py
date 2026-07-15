@@ -31,6 +31,7 @@ class Method(StrEnum):
     EXPLORE_LIST = "explore.list"
     EXPLORE_DESCRIBE = "explore.describe"
     EXPLORE_PREVIEW = "explore.preview"
+    EXPLORE_DIAGRAM = "explore.diagram"
 
 
 @dataclass
@@ -121,6 +122,14 @@ class TableReference:
     """Column on the other table."""
     schema: str | None = None
     """Schema of the other table, or None for databases without schema support."""
+    unique: bool = False
+    """Whether the column that owns the FK constraint is itself constrained to unique
+    values (by a PK or a single-column UNIQUE index), making the relationship
+    one-to-one rather than many-to-one. For ``outgoing_references`` this checks
+    ``column``; for ``incoming_references`` it checks the other table's FK column
+    (``ref_column``), since that is the side owning the FK there."""
+    constraint_name: str | None = None
+    """Name of the FK constraint, or None if unnamed/unsupported by the database."""
 
 
 @dataclass
@@ -212,6 +221,11 @@ class ColumnDescription:
     """Column comment as stored in the database; None if unsupported or not set."""
     sample: list[Any] = field(default_factory=list)
     """Up to 3 distinct non-null representative values sampled from the column."""
+    outgoing_references: list[TableReference] = field(default_factory=list)
+    """Foreign keys defined on this column that reference another table. Empty if this
+    column is not a foreign key. A column can carry more than one entry — either because
+    it participates in more than one single-column FK constraint (each naming a different
+    target), or because it is one leg of multiple composite FK constraints."""
     type: str = "column"
     """Discriminator — always ``"column"``."""
 
@@ -226,12 +240,39 @@ class ColumnsDescription:
     """Discriminator — always ``"columns"``."""
 
 
+@dataclass
+class RelationshipDescription:
+    """Full symmetric description of one foreign key, returned by explore.describe
+    for a path ending in ``["relationships", column]`` (e.g. as emitted by
+    explore.diagram's ``regions``). Unlike :class:`TableReference` — which only
+    describes the far side, relative to an already-known local table — this
+    names both the owning and referenced side explicitly."""
+
+    table: str
+    """Local table name (the table owning the foreign key)."""
+    column: str
+    """Local column."""
+    ref_table: str
+    """Referenced table name."""
+    ref_column: str
+    """Referenced column."""
+    schema: str | None = None
+    """Local table's schema, or None for databases without schema support."""
+    ref_schema: str | None = None
+    """Referenced table's schema, or None for databases without schema support."""
+    constraint_name: str | None = None
+    """Foreign key constraint name, or None if unnamed/unsupported."""
+    type: str = "relationship"
+    """Discriminator — always ``"relationship"``."""
+
+
 DescribeResult = (
     TableDescription
     | IndexDescription
     | IndicesDescription
     | ColumnDescription
     | ColumnsDescription
+    | RelationshipDescription
     | None
 )
 """Return type of ``explore_describe`` across all drivers."""
@@ -250,6 +291,35 @@ class LobPlaceholder:
     """Server-formatted placeholder text to display, e.g. ``"CLOB (3423 chars)"``."""
     type: str = "lob"
     """Discriminator — always ``"lob"``."""
+
+
+@dataclass
+class DiagramRegion:
+    """One span in the ``diagram`` string returned by explore.diagram that names a
+    table, column, or relationship, letting a client resolve a cursor position to
+    an explore.describe path without parsing the diagram text itself.
+
+    A relationship (``kind="edge"``) is typically covered by several regions —
+    one per row its connector line touches — all sharing the same ``path``.
+
+    A table (``kind="table"``) is likewise typically covered by several regions:
+    its box's top and bottom border rows in full, and — on each interior row —
+    just the left and right border characters (never the whole row, so these
+    never overlap that row's ``kind="column"`` region). All share the table's
+    ``path``.
+    """
+
+    row: int
+    """0-indexed line number within ``diagram`` (lines split on ``\\n``)."""
+    col_start: int
+    """0-indexed byte offset (not codepoints) where the span starts."""
+    col_end: int
+    """0-indexed byte offset where the span ends (exclusive)."""
+    kind: str
+    """``"table"``, ``"column"``, or ``"edge"`` — discriminates what ``path`` names."""
+    path: list[str]
+    """Path to pass as explore.describe's ``path`` param to describe this table,
+    column, or relationship."""
 
 
 @dataclass

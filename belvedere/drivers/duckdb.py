@@ -24,7 +24,13 @@ from ..protocol import (
     TableReference,
     WriteResult,
 )
-from .base import BaseDriver, DriverError, DriverSettings
+from .base import (
+    BaseDriver,
+    DriverError,
+    DriverSettings,
+    build_relationship_description,
+    group_references_by_column,
+)
 
 T = TypeVar("T")
 
@@ -203,7 +209,7 @@ SELECT * FROM 'glob/**/*.parquet'
 
             case [schema, table, "foreign_keys"]:
                 items = []
-                for src_cols, fk_table, fk_cols in self._outgoing_fk_rows_sync(
+                for src_cols, fk_table, fk_cols, _ in self._outgoing_fk_rows_sync(
                     schema, table
                 ):
                     src = ", ".join(src_cols)
@@ -343,6 +349,12 @@ SELECT * FROM 'glob/**/*.parquet'
                     ddl=sql,
                 )
 
+            case [schema, table, "relationships", column]:
+                desc = self._explore_describe_sync([schema, table])
+                if not isinstance(desc, TableDescription):
+                    return None
+                return build_relationship_description(desc, table, schema, column)
+
             case _:
                 return None
 
@@ -400,6 +412,9 @@ SELECT * FROM 'glob/**/*.parquet'
                 col_comments[r[0]] = r[1] if r[1] else None
         except Exception:
             pass
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
 
         result = []
         for r in col_rows:
@@ -413,6 +428,7 @@ SELECT * FROM 'glob/**/*.parquet'
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
                     comment=col_comments.get(cn),
+                    outgoing_references=refs_by_col.get(cn, []),
                 )
             )
         return ColumnsDescription(columns=result)
@@ -459,6 +475,9 @@ SELECT * FROM 'glob/**/*.parquet'
             comment = rows[0][0] if rows and rows[0][0] else None
         except Exception:
             pass
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
 
         return ColumnDescription(
             name=col_name,
@@ -468,14 +487,17 @@ SELECT * FROM 'glob/**/*.parquet'
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
             comment=comment,
+            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     def _outgoing_fk_rows_sync(
         self, schema: str, table: str
-    ) -> list[tuple[list[str], str, list[str]]]:
-        """Raw (local_columns, ref_table, ref_columns) rows for a table's foreign keys."""
+    ) -> list[tuple[list[str], str, list[str], str]]:
+        """Raw (local_columns, ref_table, ref_columns, constraint_name) rows for a
+        table's foreign keys."""
         return self._conn.execute(
-            "SELECT constraint_column_names, referenced_table, referenced_column_names"
+            "SELECT constraint_column_names, referenced_table, referenced_column_names,"
+            " constraint_name"
             " FROM duckdb_constraints()"
             " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'FOREIGN KEY'",
             [schema, table],
@@ -485,11 +507,17 @@ SELECT * FROM 'glob/**/*.parquet'
         self, schema: str, table: str
     ) -> list[TableReference]:
         rows = self._outgoing_fk_rows_sync(schema, table)
+        unique_cols = self._unique_columns_sync(schema, table)
         return [
             TableReference(
-                column=src_col, table=fk_table, ref_column=ref_col, schema=schema
+                column=src_col,
+                table=fk_table,
+                ref_column=ref_col,
+                schema=schema,
+                unique=src_col in unique_cols,
+                constraint_name=constraint_name,
             )
-            for src_cols, fk_table, fk_cols in rows
+            for src_cols, fk_table, fk_cols, constraint_name in rows
             for src_col, ref_col in zip(src_cols, fk_cols)
         ]
 
@@ -497,18 +525,39 @@ SELECT * FROM 'glob/**/*.parquet'
         self, schema: str, table: str
     ) -> list[TableReference]:
         rows = self._conn.execute(
-            "SELECT table_name, constraint_column_names, referenced_column_names"
+            "SELECT table_name, constraint_column_names, referenced_column_names,"
+            " constraint_name"
             " FROM duckdb_constraints()"
             " WHERE schema_name = ? AND referenced_table = ? AND constraint_type = 'FOREIGN KEY'",
             [schema, table],
         ).fetchall()
-        return [
-            TableReference(
-                column=ref_col, table=other_table, ref_column=fk_col, schema=schema
+        references = []
+        for other_table, fk_cols, ref_cols, constraint_name in rows:
+            unique_cols = self._unique_columns_sync(schema, other_table)
+            references.extend(
+                TableReference(
+                    column=ref_col,
+                    table=other_table,
+                    ref_column=fk_col,
+                    schema=schema,
+                    unique=fk_col in unique_cols,
+                    constraint_name=constraint_name,
+                )
+                for fk_col, ref_col in zip(fk_cols, ref_cols)
             )
-            for other_table, fk_cols, ref_cols in rows
-            for fk_col, ref_col in zip(fk_cols, ref_cols)
-        ]
+        return references
+
+    def _unique_columns_sync(self, schema: str, table: str) -> set[str]:
+        """Columns constrained to unique values by a single-column PK or
+        UNIQUE constraint. DuckDB doesn't back these with a listed entry in
+        ``duckdb_indexes()``, so ``duckdb_constraints()`` is the source of truth."""
+        rows = self._conn.execute(
+            "SELECT constraint_column_names FROM duckdb_constraints()"
+            " WHERE schema_name = ? AND table_name = ?"
+            " AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')",
+            [schema, table],
+        ).fetchall()
+        return {cols[0] for (cols,) in rows if len(cols) == 1}
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
         try:

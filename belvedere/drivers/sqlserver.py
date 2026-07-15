@@ -33,6 +33,8 @@ from .base import (
     DriverError,
     DriverSettings,
     build_column_samples,
+    build_relationship_description,
+    group_references_by_column,
 )
 
 T = TypeVar("T")
@@ -414,6 +416,12 @@ column metadata (name, type, nullability, default).
             case [schema, table, "indices", index_name]:
                 return self._describe_index_sync(schema, table, index_name)
 
+            case [schema, table, "relationships", column]:
+                desc = self._explore_describe_sync([schema, table])
+                if not isinstance(desc, TableDescription):
+                    return None
+                return build_relationship_description(desc, table, schema, column)
+
             case _:
                 return None
 
@@ -607,6 +615,10 @@ column metadata (name, type, nullability, default).
                 else:
                     col_comp.setdefault(cn, []).append(idx_desc)
 
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
+
         result = []
         for r in col_rows:
             cn = r[0]
@@ -620,6 +632,7 @@ column metadata (name, type, nullability, default).
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
                     comment=col_comments.get(cn),
+                    outgoing_references=refs_by_col.get(cn, []),
                 )
             )
         return ColumnsDescription(columns=result)
@@ -679,6 +692,9 @@ column metadata (name, type, nullability, default).
                 exclusive_indices.append(idx_desc)
             else:
                 composite_indices.append(idx_desc)
+        refs_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
 
         return ColumnDescription(
             name=col_name,
@@ -689,6 +705,7 @@ column metadata (name, type, nullability, default).
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
             comment=comment,
+            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     def _outgoing_references_sync(
@@ -696,7 +713,7 @@ column metadata (name, type, nullability, default).
     ) -> list[TableReference]:
         cur = self._conn.cursor()
         cur.execute(
-            "SELECT pc.name, rs.name, ro.name, rc.name"
+            "SELECT pc.name, rs.name, ro.name, rc.name, fk.name"
             " FROM sys.foreign_keys fk"
             " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
             " JOIN sys.objects po ON fk.parent_object_id = po.object_id"
@@ -710,9 +727,18 @@ column metadata (name, type, nullability, default).
             " WHERE ps.name = ? AND po.name = ?",
             (schema, table),
         )
+        rows = cur.fetchall()  # ty: ignore[missing-argument]
+        unique_cols = self._unique_columns_sync(schema, table)
         return [
-            TableReference(column=r[0], table=r[2], ref_column=r[3], schema=r[1])
-            for r in cur.fetchall()  # ty: ignore[missing-argument]
+            TableReference(
+                column=r[0],
+                table=r[2],
+                ref_column=r[3],
+                schema=r[1],
+                unique=r[0] in unique_cols,
+                constraint_name=r[4],
+            )
+            for r in rows
         ]
 
     def _incoming_references_sync(
@@ -720,7 +746,7 @@ column metadata (name, type, nullability, default).
     ) -> list[TableReference]:
         cur = self._conn.cursor()
         cur.execute(
-            "SELECT rc.name, ps.name, po.name, pc.name"
+            "SELECT rc.name, ps.name, po.name, pc.name, fk.name"
             " FROM sys.foreign_keys fk"
             " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
             " JOIN sys.objects po ON fk.parent_object_id = po.object_id"
@@ -734,10 +760,41 @@ column metadata (name, type, nullability, default).
             " WHERE rs.name = ? AND ro.name = ?",
             (schema, table),
         )
-        return [
-            TableReference(column=r[0], table=r[2], ref_column=r[3], schema=r[1])
-            for r in cur.fetchall()  # ty: ignore[missing-argument]
-        ]
+        references = []
+        for r in cur.fetchall():  # ty: ignore[missing-argument]
+            unique_cols = self._unique_columns_sync(r[1], r[2])
+            references.append(
+                TableReference(
+                    column=r[0],
+                    table=r[2],
+                    ref_column=r[3],
+                    schema=r[1],
+                    unique=r[3] in unique_cols,
+                    constraint_name=r[4],
+                )
+            )
+        return references
+
+    def _unique_columns_sync(self, schema: str, table: str) -> set[str]:
+        """Columns covered by a single-column UNIQUE index (PKs included,
+        since SQL Server backs every PK with a unique index)."""
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT c.name, i.name"
+            " FROM sys.indexes i"
+            " JOIN sys.index_columns ic"
+            "  ON i.object_id = ic.object_id AND i.index_id = ic.index_id"
+            " JOIN sys.columns c"
+            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+            " JOIN sys.objects o ON i.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND i.is_unique = 1",
+            (schema, table),
+        )
+        index_cols: dict[str, set[str]] = {}
+        for col_name, idx_name in cur.fetchall():  # ty: ignore[missing-argument]
+            index_cols.setdefault(idx_name, set()).add(col_name)
+        return {next(iter(cols)) for cols in index_cols.values() if len(cols) == 1}
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
         try:

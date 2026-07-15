@@ -1,3 +1,4 @@
+import dataclasses
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -10,6 +11,7 @@ from belvedere.protocol import (
     ExploreItem,
     IndexDescription,
     ReadResult,
+    RelationshipDescription,
     TableDescription,
     TableReference,
     WriteResult,
@@ -264,11 +266,13 @@ class TestExploreDescribe:
         )
         desc = await driver.explore_describe(["main", "child"])
         assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == [
-            TableReference(
-                column="parent_id", table="parent", ref_column="id", schema="main"
-            )
-        ]
+        ref = desc.outgoing_references[0]
+        # Unnamed constraint — DuckDB auto-generates the name, so assert it's
+        # present without pinning its exact value.
+        assert ref.constraint_name is not None
+        assert dataclasses.replace(ref, constraint_name=None) == TableReference(
+            column="parent_id", table="parent", ref_column="id", schema="main"
+        )
         assert desc.incoming_references == []
 
     async def test_should_return_empty_outgoing_references_when_none_exist(
@@ -289,11 +293,11 @@ class TestExploreDescribe:
         )
         desc = await driver.explore_describe(["main", "parent"])
         assert isinstance(desc, TableDescription)
-        assert desc.incoming_references == [
-            TableReference(
-                column="id", table="child", ref_column="parent_id", schema="main"
-            )
-        ]
+        ref = desc.incoming_references[0]
+        assert ref.constraint_name is not None
+        assert dataclasses.replace(ref, constraint_name=None) == TableReference(
+            column="id", table="child", ref_column="parent_id", schema="main"
+        )
         assert desc.outgoing_references == []
 
     async def test_should_return_empty_incoming_references_when_none_exist(
@@ -303,6 +307,77 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(["main", "t"])
         assert isinstance(desc, TableDescription)
         assert desc.incoming_references == []
+
+    async def test_should_mark_outgoing_reference_unique_when_fk_column_is_unique(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (parent_id INTEGER UNIQUE REFERENCES parent(id))", []
+        )
+        desc = await driver.explore_describe(["main", "child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is True
+
+    async def test_should_mark_outgoing_reference_not_unique_by_default(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is False
+
+    async def test_should_mark_incoming_reference_unique_when_fk_column_is_unique(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (parent_id INTEGER UNIQUE REFERENCES parent(id))", []
+        )
+        desc = await driver.explore_describe(["main", "parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is True
+
+    async def test_should_mark_incoming_reference_not_unique_by_default(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is False
+
+    async def test_should_describe_a_relationship(self, driver: DuckDBDriver) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(
+            ["main", "child", "relationships", "parent_id"]
+        )
+        assert isinstance(desc, RelationshipDescription)
+        assert desc.table == "child"
+        assert desc.schema == "main"
+        assert desc.column == "parent_id"
+        assert desc.ref_table == "parent"
+        assert desc.ref_schema == "main"
+        assert desc.ref_column == "id"
+        assert desc.constraint_name is not None
+
+    async def test_should_return_none_for_unknown_relationship_column(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        result = await driver.explore_describe(["main", "t", "relationships", "id"])
+        assert result is None
 
 
 class TestExploreDescribeIndex:
@@ -415,6 +490,24 @@ class TestExploreDescribeColumns:
         assert len(sample) <= 3
         assert set(sample).issubset({"a", "b", "c"})
 
+    async def test_columns_description_outgoing_references(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "child", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        refs = by_name["parent_id"].outgoing_references
+        assert len(refs) == 1
+        assert dataclasses.replace(refs[0], constraint_name=None) == TableReference(
+            column="parent_id", table="parent", ref_column="id", schema="main"
+        )
+        assert by_name["id"].outgoing_references == []
+
 
 class TestExploreDescribeColumn:
     async def test_single_column_basic_fields(self, driver: DuckDBDriver) -> None:
@@ -457,6 +550,30 @@ class TestExploreDescribeColumn:
         assert isinstance(desc, ColumnDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"x", "y", "z"})
+
+    async def test_single_column_outgoing_references(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["main", "child", "columns", "parent_id"])
+        assert isinstance(desc, ColumnDescription)
+        assert len(desc.outgoing_references) == 1
+        ref = desc.outgoing_references[0]
+        assert dataclasses.replace(ref, constraint_name=None) == TableReference(
+            column="parent_id", table="parent", ref_column="id", schema="main"
+        )
+
+    async def test_single_column_empty_outgoing_references_when_not_fk(
+        self, driver: DuckDBDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["main", "t", "columns", "id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(self, driver: DuckDBDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])

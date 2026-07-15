@@ -18,7 +18,7 @@ TIMEOUT=300  # Oracle typically needs 2-4 minutes to initialise
 
 cleanup() {
     echo "Stopping container..."
-    docker rm -f "$CONTAINER" &>/dev/null || true
+    # docker rm -f "$CONTAINER" &>/dev/null || true
 }
 trap cleanup EXIT
 

@@ -10,6 +10,7 @@ from belvedere.protocol import (
     ExploreItem,
     IndexDescription,
     ReadResult,
+    RelationshipDescription,
     TableDescription,
     TableReference,
     WriteResult,
@@ -256,10 +257,76 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.incoming_references == []
 
+    async def test_should_mark_outgoing_reference_unique_when_fk_column_is_pk(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER PRIMARY KEY REFERENCES parent(id))", []
+        )
+        desc = await driver.explore_describe(["child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is True
+
+    async def test_should_mark_outgoing_reference_not_unique_by_default(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child"])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is False
+
+    async def test_should_mark_incoming_reference_unique_when_fk_column_is_unique(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (parent_id INTEGER UNIQUE REFERENCES parent(id))", []
+        )
+        desc = await driver.explore_describe(["parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is True
+
+    async def test_should_mark_incoming_reference_not_unique_by_default(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["parent"])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is False
+
     async def test_should_return_none_when_path_is_invalid(
         self, driver: SQLiteDriver
     ) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_should_describe_a_relationship(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child", "relationships", "parent_id"])
+        assert isinstance(desc, RelationshipDescription)
+        assert desc.table == "child"
+        assert desc.column == "parent_id"
+        assert desc.ref_table == "parent"
+        assert desc.ref_column == "id"
+        assert desc.constraint_name is None
+
+    async def test_should_return_none_for_unknown_relationship_column(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert await driver.explore_describe(["t", "relationships", "id"]) is None
 
 
 class TestExploreDescribeIndex:
@@ -396,6 +463,22 @@ class TestExploreDescribeColumns:
         assert len(sample) <= 3
         assert set(sample).issubset({"a", "b", "c"})
 
+    async def test_columns_description_outgoing_references(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child", "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["parent_id"].outgoing_references == [
+            TableReference(column="parent_id", table="parent", ref_column="id")
+        ]
+        assert by_name["id"].outgoing_references == []
+
 
 class TestExploreDescribeColumn:
     async def test_single_column_basic_fields(self, driver: SQLiteDriver) -> None:
@@ -439,6 +522,28 @@ class TestExploreDescribeColumn:
         assert isinstance(desc, ColumnDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"x", "y", "z"})
+
+    async def test_single_column_outgoing_references(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["child", "columns", "parent_id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == [
+            TableReference(column="parent_id", table="parent", ref_column="id")
+        ]
+
+    async def test_single_column_empty_outgoing_references_when_not_fk(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        desc = await driver.explore_describe(["t", "columns", "id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])

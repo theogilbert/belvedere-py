@@ -17,6 +17,7 @@ from .protocol import (
     IndexDescription,
     IndexKeyField,
     IndicesDescription,
+    RelationshipDescription,
     TableDescription,
     TableReference,
     json_default,
@@ -30,6 +31,7 @@ CachedDescribe = (
     | IndicesDescription
     | ColumnDescription
     | ColumnsDescription
+    | RelationshipDescription
 )
 """Non-None explore.describe results storable in the cache."""
 
@@ -217,6 +219,8 @@ class ConnectionCache:
                     self._describe[key] = _deserialize_column(desc)
                 elif desc.get("type") == "columns":
                     self._describe[key] = _deserialize_columns(desc)
+                elif desc.get("type") == "relationship":
+                    self._describe[key] = _deserialize_relationship(desc)
                 else:
                     self._describe[key] = _deserialize_table(desc)
         except Exception:
@@ -283,12 +287,27 @@ def _deserialize_column(d: dict[str, Any]) -> ColumnDescription:
         ],
         comment=d.get("comment"),
         sample=d.get("sample", []),
+        outgoing_references=[
+            TableReference(**ref) for ref in d.get("outgoing_references", [])
+        ],
     )
 
 
 def _deserialize_columns(d: dict[str, Any]) -> ColumnsDescription:
     return ColumnsDescription(
         columns=[_deserialize_column(c) for c in d.get("columns", [])]
+    )
+
+
+def _deserialize_relationship(d: dict[str, Any]) -> RelationshipDescription:
+    return RelationshipDescription(
+        table=d["table"],
+        column=d["column"],
+        ref_table=d["ref_table"],
+        ref_column=d["ref_column"],
+        schema=d.get("schema"),
+        ref_schema=d.get("ref_schema"),
+        constraint_name=d.get("constraint_name"),
     )
 
 

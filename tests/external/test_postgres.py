@@ -25,6 +25,7 @@ from belvedere.protocol import (
     ColumnsDescription,
     IndexDescription,
     ReadResult,
+    RelationshipDescription,
     TableDescription,
     TableReference,
     WriteResult,
@@ -388,7 +389,11 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.outgoing_references == [
             TableReference(
-                column="parent_id", table=parent, ref_column="id", schema=schema
+                column="parent_id",
+                table=parent,
+                ref_column="id",
+                schema=schema,
+                constraint_name=f"{child}_parent_id_fkey",
             )
         ]
         assert desc.incoming_references == []
@@ -411,7 +416,11 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.incoming_references == [
             TableReference(
-                column="id", table=child, ref_column="parent_id", schema=schema
+                column="id",
+                table=child,
+                ref_column="parent_id",
+                schema=schema,
+                constraint_name=f"{child}_parent_id_fkey",
             )
         ]
         assert desc.outgoing_references == []
@@ -424,6 +433,111 @@ class TestExploreDescribe:
         assert isinstance(desc, TableDescription)
         assert desc.outgoing_references == []
         assert desc.incoming_references == []
+
+    async def test_outgoing_reference_is_unique_when_fk_column_has_unique_constraint(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  parent_id integer UNIQUE,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is True
+
+    async def test_outgoing_reference_is_not_unique_by_default(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  id integer, parent_id integer,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child])
+        assert isinstance(desc, TableDescription)
+        assert desc.outgoing_references[0].unique is False
+
+    async def test_incoming_reference_is_unique_when_fk_column_has_unique_constraint(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  parent_id integer UNIQUE,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is True
+
+    async def test_incoming_reference_is_not_unique_by_default(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  id integer, parent_id integer,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, parent])
+        assert isinstance(desc, TableDescription)
+        assert desc.incoming_references[0].unique is False
+
+    async def test_should_describe_a_relationship(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  id integer, parent_id integer,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(
+            [schema, child, "relationships", "parent_id"]
+        )
+        assert isinstance(desc, RelationshipDescription)
+        assert desc.table == child
+        assert desc.schema == schema
+        assert desc.column == "parent_id"
+        assert desc.ref_table == parent
+        assert desc.ref_schema == schema
+        assert desc.ref_column == "id"
+        assert desc.constraint_name == f"{child}_parent_id_fkey"
+
+    async def test_should_return_none_for_unknown_relationship_column(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(f'CREATE TABLE "{schema}"."{table}" (id integer)', [])
+        result = await driver.explore_describe([schema, table, "relationships", "id"])
+        assert result is None
 
 
 class TestExploreDescribeIndex:
@@ -628,6 +742,34 @@ class TestExploreDescribeColumns:
         assert len(sample) <= 3
         assert set(sample).issubset({"x", "y", "z"})
 
+    async def test_outgoing_references(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  id integer, parent_id integer,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child, "columns"])
+        assert isinstance(desc, ColumnsDescription)
+        by_name = {c.name: c for c in desc.columns}
+        assert by_name["parent_id"].outgoing_references == [
+            TableReference(
+                column="parent_id",
+                table=parent,
+                ref_column="id",
+                schema=schema,
+                constraint_name=f"{child}_parent_id_fkey",
+            )
+        ]
+        assert by_name["id"].outgoing_references == []
+
 
 class TestExploreDescribeColumn:
     async def test_basic_fields(
@@ -694,6 +836,40 @@ class TestExploreDescribeColumn:
         assert isinstance(desc, ColumnDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"a", "b", "c"})
+
+    async def test_outgoing_references(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  id integer, parent_id integer,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, child, "columns", "parent_id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == [
+            TableReference(
+                column="parent_id",
+                table=parent,
+                ref_column="id",
+                schema=schema,
+                constraint_name=f"{child}_parent_id_fkey",
+            )
+        ]
+
+    async def test_empty_outgoing_references_when_not_fk(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(f'CREATE TABLE "{schema}"."{table}" (id integer)', [])
+        desc = await driver.explore_describe([schema, table, "columns", "id"])
+        assert isinstance(desc, ColumnDescription)
+        assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(
         self, driver: PostgresDriver, schema: str, table: str

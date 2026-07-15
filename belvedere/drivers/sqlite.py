@@ -22,7 +22,13 @@ from ..protocol import (
     TableReference,
     WriteResult,
 )
-from .base import BaseDriver, DriverError, DriverSettings
+from .base import (
+    BaseDriver,
+    DriverError,
+    DriverSettings,
+    build_relationship_description,
+    group_references_by_column,
+)
 
 T = TypeVar("T")
 
@@ -281,6 +287,12 @@ metadata (name, type, nullability, primary key flag).
             case [table, "columns", col_name]:
                 return self._describe_column_sync(table, col_name)
 
+            case [table, "relationships", column]:
+                desc = self._explore_describe_sync([table])
+                if not isinstance(desc, TableDescription):
+                    return None
+                return build_relationship_description(desc, table, None, column)
+
             case _:
                 return None
 
@@ -333,6 +345,7 @@ metadata (name, type, nullability, primary key flag).
                     col_excl.setdefault(cn, []).append(idx_desc)
                 else:
                     col_comp.setdefault(cn, []).append(idx_desc)
+        refs_by_col = group_references_by_column(self._outgoing_references_sync(table))
 
         result = []
         for r in cols:
@@ -345,6 +358,7 @@ metadata (name, type, nullability, primary key flag).
                     pk=bool(r[5]),
                     exclusive_indices=col_excl.get(cn, []),
                     composite_indices=col_comp.get(cn, []),
+                    outgoing_references=refs_by_col.get(cn, []),
                 )
             )
         return ColumnsDescription(columns=result)
@@ -368,6 +382,7 @@ metadata (name, type, nullability, primary key flag).
                 exclusive_indices.append(idx_desc)
             else:
                 composite_indices.append(idx_desc)
+        refs_by_col = group_references_by_column(self._outgoing_references_sync(table))
 
         return ColumnDescription(
             name=col_name,
@@ -376,11 +391,18 @@ metadata (name, type, nullability, primary key flag).
             pk=bool(row[5]),
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
+            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     def _outgoing_references_sync(self, table: str) -> list[TableReference]:
         rows = self._conn.execute(f"PRAGMA foreign_key_list({table})").fetchall()
-        return [TableReference(column=r[3], table=r[2], ref_column=r[4]) for r in rows]
+        unique_cols = self._unique_columns_sync(table)
+        return [
+            TableReference(
+                column=r[3], table=r[2], ref_column=r[4], unique=r[3] in unique_cols
+            )
+            for r in rows
+        ]
 
     def _incoming_references_sync(self, table: str) -> list[TableReference]:
         other_tables = self._conn.execute(
@@ -392,12 +414,36 @@ metadata (name, type, nullability, primary key flag).
             rows = self._conn.execute(
                 f"PRAGMA foreign_key_list({other_table})"
             ).fetchall()
+            matching = [r for r in rows if r[2].lower() == table.lower()]
+            if not matching:
+                continue
+            unique_cols = self._unique_columns_sync(other_table)
             references.extend(
-                TableReference(column=r[4], table=other_table, ref_column=r[3])
-                for r in rows
-                if r[2].lower() == table.lower()
+                TableReference(
+                    column=r[4],
+                    table=other_table,
+                    ref_column=r[3],
+                    unique=r[3] in unique_cols,
+                )
+                for r in matching
             )
         return references
+
+    def _unique_columns_sync(self, table: str) -> set[str]:
+        """Columns constrained to unique values: the table's own PK (unless
+        composite) or covered by a single-column UNIQUE index."""
+        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        pk_cols = [r[1] for r in cols if r[5]]
+        unique = set(pk_cols) if len(pk_cols) == 1 else set()
+        index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
+        for idx_row in index_list:
+            if not idx_row[2]:
+                continue  # not a UNIQUE index
+            xinfo = self._conn.execute(f"PRAGMA index_xinfo({idx_row[1]})").fetchall()
+            key_cols = [r[2] for r in xinfo if r[5]]
+            if len(key_cols) == 1:
+                unique.add(key_cols[0])
+        return unique
 
     async def _fetch_sample(self, table: str, col_name: str) -> list[Any]:
         try:

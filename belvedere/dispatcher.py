@@ -5,10 +5,11 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from .diagram import DiagramError, build_diagram
 from .drivers import get_driver, get_driver_help, list_drivers
 from .drivers.base import BaseDriver, ConnectionLostError, DriverSettings
 from .explore_cache import CachingDriver, ConnectionCache, cache_file
-from .protocol import Method, ProgressCallback, WriteResult
+from .protocol import DescribeResult, Method, ProgressCallback, WriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,7 @@ class Dispatcher:
             Method.EXPLORE_LIST: self._handle_explore_list,
             Method.EXPLORE_DESCRIBE: self._handle_explore_describe,
             Method.EXPLORE_PREVIEW: self._handle_explore_preview,
+            Method.EXPLORE_DIAGRAM: self._handle_explore_diagram,
         }
 
     async def _handle_capabilities(
@@ -292,6 +294,25 @@ class Dispatcher:
             "rows_total": result.rows_total,
             "duration_ms": duration_ms,
         }
+
+    async def _handle_explore_diagram(
+        self,
+        conn: Connection,
+        params: dict[str, Any],
+        send_progress: ProgressCallback,
+    ) -> dict[str, Any]:
+        path: list[str] = params.get("path") or []
+
+        async def describe(p: list[str]) -> DescribeResult:
+            return await self._reconnect_and_retry(
+                conn, lambda: conn.driver.explore_describe(p), send_progress
+            )
+
+        try:
+            result = await build_diagram(path, describe)
+        except DiagramError as exc:
+            raise DispatchError(str(exc)) from exc
+        return {"diagram": result.diagram, "regions": result.regions}
 
     async def _reconnect_and_retry(
         self,

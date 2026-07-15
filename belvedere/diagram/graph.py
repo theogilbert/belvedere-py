@@ -56,6 +56,9 @@ class GraphEdge:
     """Name of the FK column on whichever endpoint owns it (``source`` or
     ``target``, per ``fk_side``) — the column segment of its
     ``["relationships", fk_column]`` describe path."""
+    fk_nullable: bool = False
+    """Whether the FK column allows NULL, making participation on the
+    referenced ("one") side optional — 0 or 1 rather than exactly 1."""
 
 
 async def discover(
@@ -104,6 +107,7 @@ async def discover(
             if pair not in seen_pairs:
                 seen_pairs.add(pair)
                 fk_column = ref.column if fk_side == "source" else ref.ref_column
+                owner_id = cur_id if fk_side == "source" else target_id
                 edges.append(
                     GraphEdge(
                         cur_id,
@@ -111,6 +115,7 @@ async def discover(
                         fk_side=fk_side,
                         one_to_one=ref.unique,
                         fk_column=fk_column,
+                        fk_nullable=_column_nullable(nodes[owner_id].columns, fk_column),
                     )
                 )
 
@@ -148,3 +153,10 @@ def _table_node(id_: int, path: list[str], desc: TableDescription) -> GraphNode:
 def _placeholder_node(id_: int, path: list[str], ref: TableReference) -> GraphNode:
     name = f"{ref.schema}.{ref.table}" if ref.schema else ref.table
     return GraphNode(id=id_, name=name, path=path, unavailable=True)
+
+
+def _column_nullable(columns: list[ColumnInfo], name: str) -> bool:
+    """``nullable`` defaults to ``False`` for an unresolved (placeholder) owner
+    or an unknown/``None`` nullability, so the diagram only claims optionality
+    when the driver actually reported it."""
+    return any(c.name == name and c.nullable for c in columns)

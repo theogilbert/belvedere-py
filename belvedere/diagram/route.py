@@ -404,10 +404,15 @@ def _release_anchors(
 def _emit(
     edge: GraphEdge, node_by_id: dict[int, GraphNode], info: _RouteInfo
 ) -> RoutedEdge:
+    # "?" marks the referenced ("one") side as optional (0 or 1) when the FK
+    # column allows NULL — the FK-owning side's own marker ("*" or "1") is
+    # unaffected, since that count is about how many owning rows point at a
+    # given referenced row, not about this FK's own nullability.
+    one = "?" if edge.fk_nullable else "1"
     if edge.one_to_one:
-        start, end = "1", "1"
+        start, end = ("1", one) if edge.fk_side == "source" else (one, "1")
     else:
-        start, end = ("*", "1") if edge.fk_side == "source" else ("1", "*")
+        start, end = ("*", one) if edge.fk_side == "source" else (one, "*")
     owner_id = edge.source if edge.fk_side == "source" else edge.target
     owner_path = node_by_id[owner_id].path
     edge_path = [*owner_path, "relationships", edge.fk_column]

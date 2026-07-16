@@ -5,7 +5,7 @@ import pathlib
 from dataclasses import asdict
 from typing import Any, Self
 
-from belvedere.drivers import SENSITIVE_PARAM_KEYS
+from grannos.drivers import SENSITIVE_PARAM_KEYS
 
 from .drivers.base import BaseDriver, DriverSettings, ReadResult, WriteResult
 from .protocol import (

@@ -84,7 +84,7 @@ class BaseDriver(ABC):
     """Connection parameters declared by each driver subclass."""
 
     LANGUAGES: ClassVar[list[Language]] = []
-    """Query languages this driver supports (see :class:`~belvedere.protocol.Language`).
+    """Query languages this driver supports (see :class:`~grannos.protocol.Language`).
 
     Drivers with no language affinity leave this empty.
     """

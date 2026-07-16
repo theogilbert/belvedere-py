@@ -2,9 +2,9 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.sqlite import SQLiteDriver
-from belvedere.protocol import (
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.sqlite import SQLiteDriver
+from grannos.protocol import (
     ColumnDescription,
     ColumnsDescription,
     ExploreItem,

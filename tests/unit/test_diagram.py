@@ -3,8 +3,8 @@ from collections.abc import Awaitable, Callable, Mapping
 
 import pytest
 
-from belvedere.diagram import DiagramError, build_diagram
-from belvedere.protocol import (
+from grannos.diagram import DiagramError, build_diagram
+from grannos.protocol import (
     ColumnInfo,
     DescribeResult,
     IndexDescription,

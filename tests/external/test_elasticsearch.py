@@ -14,13 +14,13 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from belvedere.drivers.base import DriverError, DriverSettings
-from belvedere.drivers.elasticsearch import ElasticsearchDriver
-from belvedere.protocol import ReadResult, TableDescription
+from grannos.drivers.base import DriverError, DriverSettings
+from grannos.drivers.elasticsearch import ElasticsearchDriver
+from grannos.protocol import ReadResult, TableDescription
 
 pytestmark = pytest.mark.external
 
-_INDEX = "belvedere_test"
+_INDEX = "grannos_test"
 
 
 def _params() -> dict:

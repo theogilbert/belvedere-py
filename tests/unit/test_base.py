@@ -1,6 +1,6 @@
-"""Unit tests for shared driver helpers in belvedere.drivers.base."""
+"""Unit tests for shared driver helpers in grannos.drivers.base."""
 
-from belvedere.drivers.base import build_column_samples
+from grannos.drivers.base import build_column_samples
 
 
 class TestBuildColumnSamples:

@@ -3,9 +3,9 @@
 import asyncio
 import sqlite3
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.sqlite import SQLiteDriver, _render_lob
-from belvedere.protocol import LobPlaceholder, ReadResult
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.sqlite import SQLiteDriver, _render_lob
+from grannos.protocol import LobPlaceholder, ReadResult
 
 
 def _make_driver() -> SQLiteDriver:

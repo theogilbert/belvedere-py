@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from belvedere.drivers.base import ConnectionLostError, DriverError, DriverSettings
-from belvedere.drivers.oracle.driver import (
+from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
+from grannos.drivers.oracle.driver import (
     OracleDriver,
     _format_db_error,
     _is_explain_plan,
     _offset_to_line_col,
 )
-from belvedere.drivers.oracle.queries import _PRE12_SYSTEM_SCHEMAS_SQL, render_lob
-from belvedere.protocol import ExploreItem, IndexDescription, LobPlaceholder, ReadResult
+from grannos.drivers.oracle.queries import _PRE12_SYSTEM_SCHEMAS_SQL, render_lob
+from grannos.protocol import ExploreItem, IndexDescription, LobPlaceholder, ReadResult
 
 
 def _make_lob(type_name: str, size: int) -> MagicMock:

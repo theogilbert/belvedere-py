@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from belvedere.drivers.base import DriverError, DriverSettings
-from belvedere.drivers.elasticsearch import ElasticsearchDriver
+from grannos.drivers.base import DriverError, DriverSettings
+from grannos.drivers.elasticsearch import ElasticsearchDriver
 
 
 async def _hosts(params: dict) -> list[str]:

@@ -4,9 +4,9 @@ import asyncio
 
 import duckdb
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.duckdb import DuckDBDriver, _render_lob
-from belvedere.protocol import LobPlaceholder, ReadResult
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.duckdb import DuckDBDriver, _render_lob
+from grannos.protocol import LobPlaceholder, ReadResult
 
 
 def _make_driver() -> DuckDBDriver:

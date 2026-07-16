@@ -5,9 +5,9 @@ from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 
-from belvedere.dispatcher import Connection, Dispatcher, DispatchError, IdleTimer
-from belvedere.drivers.base import ConnectionLostError, DriverSettings
-from belvedere.protocol import (
+from grannos.dispatcher import Connection, Dispatcher, DispatchError, IdleTimer
+from grannos.drivers.base import ConnectionLostError, DriverSettings
+from grannos.protocol import (
     ColumnInfo,
     DriverParam,
     ExploreItem,
@@ -51,14 +51,14 @@ def dispatcher(tmp_path: pathlib.Path) -> Dispatcher:
 def mock_driver() -> Generator[AsyncMock, None, None]:
     """Yields a mock driver and patches get_driver to return it for the test's duration."""
     d = _make_mock_driver()
-    with patch("belvedere.dispatcher.get_driver", return_value=_driver_class(d)):
+    with patch("grannos.dispatcher.get_driver", return_value=_driver_class(d)):
         yield d
 
 
 @pytest.fixture
 def mock_get_driver():
     """Patches get_driver and yields the mock so tests can set its return_value."""
-    with patch("belvedere.dispatcher.get_driver") as m:
+    with patch("grannos.dispatcher.get_driver") as m:
         yield m
 
 
@@ -68,7 +68,7 @@ def two_drivers():
     driver_a = _make_mock_driver()
     driver_b = _make_mock_driver()
     drivers = iter([_driver_class(driver_a), _driver_class(driver_b)])
-    with patch("belvedere.dispatcher.get_driver", side_effect=lambda _: next(drivers)):
+    with patch("grannos.dispatcher.get_driver", side_effect=lambda _: next(drivers)):
         yield driver_a, driver_b
 
 
@@ -137,7 +137,7 @@ class TestIdleTimer:
 class TestCapabilities:
     async def test_should_return_server_name(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        assert result["server"] == "belvedere"
+        assert result["server"] == "grannos"
 
     async def test_should_always_include_sqlite(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)

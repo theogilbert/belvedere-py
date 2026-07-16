@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 import mssql_python
 import pytest
 
-from belvedere.drivers.base import ConnectionLostError, DriverSettings
-from belvedere.drivers.sqlserver import SQLServerDriver, _render_lob
-from belvedere.protocol import LobPlaceholder, ReadResult
+from grannos.drivers.base import ConnectionLostError, DriverSettings
+from grannos.drivers.sqlserver import SQLServerDriver, _render_lob
+from grannos.protocol import LobPlaceholder, ReadResult
 
 
 def _closed_connection_error() -> mssql_python.InterfaceError:

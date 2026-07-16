@@ -3,7 +3,7 @@ Integration tests for the MongoDB driver.
 
 Requires a running MongoDB instance. Configure via environment variables:
   MONGODB_URI       (default: mongodb://localhost:27017)
-  MONGODB_DATABASE  (default: belvedere_test)
+  MONGODB_DATABASE  (default: grannos_test)
 
 Tests are skipped automatically when pymongo is not installed or the
 server is unreachable.
@@ -16,13 +16,13 @@ from typing import Any
 
 import pytest
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.mongodb import MongoDriver
-from belvedere.protocol import ExploreItem, ReadResult, WriteResult
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.mongodb import MongoDriver
+from grannos.protocol import ExploreItem, ReadResult, WriteResult
 
 pytestmark = pytest.mark.external
 
-_TEST_DB = os.environ.get("MONGODB_DATABASE", "belvedere_test")
+_TEST_DB = os.environ.get("MONGODB_DATABASE", "grannos_test")
 
 
 def _params() -> dict:

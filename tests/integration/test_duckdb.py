@@ -3,9 +3,9 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.duckdb import DuckDBDriver
-from belvedere.protocol import (
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.duckdb import DuckDBDriver
+from grannos.protocol import (
     ColumnDescription,
     ColumnsDescription,
     ExploreItem,

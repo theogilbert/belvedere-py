@@ -37,7 +37,7 @@ SELECT * FROM users WHERE age > ?
 
 ## DuckDB
 
-**Install:** `pip install 'belvedere-py[duckdb]'`
+**Install:** `pip install 'grannos-py[duckdb]'`
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|

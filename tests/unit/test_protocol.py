@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from belvedere.protocol import (
+from grannos.protocol import (
     DecodeError,
     ExploreItem,
     Method,

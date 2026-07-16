@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 import psycopg
 import pytest
 
-from belvedere.drivers.base import ConnectionLostError, DriverError, DriverSettings
-from belvedere.drivers.postgres.driver import (
+from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
+from grannos.drivers.postgres.driver import (
     PostgresDriver,
     _maybe_raise_connection_lost,
 )
-from belvedere.drivers.postgres.queries import render_lob
-from belvedere.protocol import ExploreItem, LobPlaceholder, ReadResult, WriteResult
+from grannos.drivers.postgres.queries import render_lob
+from grannos.protocol import ExploreItem, LobPlaceholder, ReadResult, WriteResult
 
 
 def _make_driver(

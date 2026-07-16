@@ -1,8 +1,8 @@
-# belvedere-py
+# grannos-py
 
 JSON-over-stdio server backend to query databases.
 
-This server can be used by compatible clients (e.g. [belvedere.nvim](https://github.com/theogilbert/belvedere.nvim)) to explore and query databases in an IDE.
+This server can be used by compatible clients (e.g. [grannos.nvim](https://github.com/theogilbert/grannos.nvim)) to explore and query databases in an IDE.
 
 ## Requirements
 
@@ -12,11 +12,11 @@ This server can be used by compatible clients (e.g. [belvedere.nvim](https://git
 ## Installation
 
 ```bash
-pip install belvedere-py
+pip install grannos-py
 # with all driver dependencies:
-pip install "belvedere-py[all]"
+pip install "grannos-py[all]"
 # or with a specific driver only, e.g. SQL Server:
-pip install "belvedere-py[mssql]"
+pip install "grannos-py[mssql]"
 ```
 
 ## Usage
@@ -24,12 +24,12 @@ pip install "belvedere-py[mssql]"
 The server is started by the Neovim plugin automatically. To run it manually:
 
 ```bash
-belvedere [--log] [-v] [--max-concurrency N]
+grannos [--log] [-v] [--max-concurrency N]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--log` | off | Log all requests and responses to `~/.local/state/belvedere/server.log` |
+| `--log` | off | Log all requests and responses to `~/.local/state/grannos/server.log` |
 | `-v` | off | Log at DEBUG level (requires `--log`) |
 | `--max-concurrency N` | 5 | Max concurrent requests per connection |
 
@@ -38,8 +38,8 @@ belvedere [--log] [-v] [--max-concurrency N]
 | Driver | Dependency | Install |
 |--------|------------|---------|
 | `sqlite` | stdlib | — |
-| `duckdb` | `duckdb` | `pip install "belvedere-py[duckdb]"` |
-| `sqlserver` | `mssql-python` | `pip install "belvedere-py[mssql]"` |
+| `duckdb` | `duckdb` | `pip install "grannos-py[duckdb]"` |
+| `sqlserver` | `mssql-python` | `pip install "grannos-py[mssql]"` |
 | `neo4j` | `neo4j` | `pip install neo4j` |
 | `oracle` | `oracledb` | `pip install oracledb` |
 | `mongodb` | `pymongo` | `pip install pymongo` |
@@ -49,7 +49,7 @@ Only drivers whose package is installed are advertised via `capabilities`. See [
 
 ## Protocol
 
-Communication uses newline-delimited JSON (one message per line). See [docs/protocol.md](https://github.com/theogilbert/belvedere.nvim/blob/main/docs/protocol.md) for the full specification.
+Communication uses newline-delimited JSON (one message per line). See [docs/protocol.md](https://github.com/theogilbert/grannos.nvim/blob/main/docs/protocol.md) for the full specification.
 
 ### Methods
 
@@ -92,7 +92,7 @@ Long-running operations emit progress notifications before the final response.
 
 **Idle timeout:** a connection is auto-closed after `idle_timeout` seconds of inactivity. Pass `"idle_timeout": <seconds>` in `connect.params` (default: `600`).
 
-**Explore cache:** `explore.list` and `explore.describe` results are cached per connection and persisted to `~/.cache/belvedere/`. Pass `"reset_cache": true` in any explore request to invalidate the cache for that connection. Passwords are never written to the cache.
+**Explore cache:** `explore.list` and `explore.describe` results are cached per connection and persisted to `~/.cache/grannos/`. Pass `"reset_cache": true` in any explore request to invalidate the cache for that connection. Passwords are never written to the cache.
 
 ## Development
 

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from belvedere.explore_cache import CachingDriver, ConnectionCache
-from belvedere.protocol import (
+from grannos.explore_cache import CachingDriver, ConnectionCache
+from grannos.protocol import (
     ColumnDescription,
     ColumnsDescription,
     ExploreItem,

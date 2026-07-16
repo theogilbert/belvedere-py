@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from belvedere.dispatcher import Dispatcher
-from belvedere.drivers.base import DriverSettings
-from belvedere.server import _LOG_CAP, Server, _redact, _truncate
+from grannos.dispatcher import Dispatcher
+from grannos.drivers.base import DriverSettings
+from grannos.server import _LOG_CAP, Server, _redact, _truncate
 
 
 class TestTruncate:
@@ -72,7 +72,7 @@ class TestRunLoop:
         tmp_path: pathlib.Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="belvedere.server"):
+        with caplog.at_level(logging.WARNING, logger="grannos.server"):
             out = await _run_server(
                 tmp_path, _req(id=1, method="capabilities", params=[])
             )
@@ -99,7 +99,7 @@ class TestServerLogging:
         caplog: pytest.LogCaptureFixture,
         tmp_path: pathlib.Path,
     ) -> None:
-        with caplog.at_level(logging.DEBUG, logger="belvedere.server"):
+        with caplog.at_level(logging.DEBUG, logger="grannos.server"):
             await _run_server(tmp_path, _req(id=1, method="capabilities", params={}))
         assert any("Sent" in r.message for r in caplog.records)
 
@@ -108,7 +108,7 @@ class TestServerLogging:
         caplog: pytest.LogCaptureFixture,
         tmp_path: pathlib.Path,
     ) -> None:
-        with caplog.at_level(logging.INFO, logger="belvedere.server"):
+        with caplog.at_level(logging.INFO, logger="grannos.server"):
             await _run_server(tmp_path)
         assert any("ready" in r.message.lower() for r in caplog.records)
 
@@ -117,7 +117,7 @@ class TestServerLogging:
         caplog: pytest.LogCaptureFixture,
         tmp_path: pathlib.Path,
     ) -> None:
-        with caplog.at_level(logging.INFO, logger="belvedere.server"):
+        with caplog.at_level(logging.INFO, logger="grannos.server"):
             await _run_server(tmp_path)
         assert any("exit" in r.message.lower() for r in caplog.records)
 

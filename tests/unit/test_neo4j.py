@@ -4,14 +4,14 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.neo4j import (
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.neo4j import (
     Neo4jDriver,
     _plan_keyword,
     _plan_to_result,
     _serialize,
 )
-from belvedere.protocol import LobPlaceholder, ReadResult
+from grannos.protocol import LobPlaceholder, ReadResult
 
 
 def _make_driver(summary: MagicMock) -> Neo4jDriver:
@@ -134,7 +134,7 @@ class TestExecuteExplain:
         assert result.columns == ["operator", "estimated_rows", "identifiers"]
 
     def test_explain_missing_plan_returns_write_result(self) -> None:
-        from belvedere.protocol import WriteResult
+        from grannos.protocol import WriteResult
 
         driver = _make_driver(_make_summary(plan=None))
         result = asyncio.run(driver.execute("EXPLAIN MATCH (n) RETURN n", []))

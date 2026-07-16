@@ -4,27 +4,27 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from belvedere.__main__ import main, parse_cli_args
-from belvedere.server import Server
+from grannos.__main__ import main, parse_cli_args
+from grannos.server import Server
 
 
 class TestVerboseFlag:
     def test_default_log_level_is_info(self) -> None:
-        with patch("sys.argv", ["belvedere", "--log"]):
+        with patch("sys.argv", ["grannos", "--log"]):
             args = parse_cli_args()
         assert args.verbose is False
 
     def test_verbose_flag_sets_verbose(self) -> None:
-        with patch("sys.argv", ["belvedere", "--log", "-v"]):
+        with patch("sys.argv", ["grannos", "--log", "-v"]):
             args = parse_cli_args()
         assert args.verbose is True
 
     def test_log_level_is_debug_when_verbose(self, tmp_path: pathlib.Path) -> None:
         with (
-            patch("sys.argv", ["belvedere", "--log", "-v"]),
-            patch("belvedere.__main__._cache_dir", return_value=tmp_path),
-            patch("belvedere.__main__._log_path", return_value=tmp_path / "server.log"),
-            patch("belvedere.log.configure") as mock_configure,
+            patch("sys.argv", ["grannos", "--log", "-v"]),
+            patch("grannos.__main__._cache_dir", return_value=tmp_path),
+            patch("grannos.__main__._log_path", return_value=tmp_path / "server.log"),
+            patch("grannos.log.configure") as mock_configure,
             patch.object(Server, "run", new_callable=AsyncMock),
         ):
             main()
@@ -32,10 +32,10 @@ class TestVerboseFlag:
 
     def test_log_level_is_info_without_verbose(self, tmp_path: pathlib.Path) -> None:
         with (
-            patch("sys.argv", ["belvedere", "--log"]),
-            patch("belvedere.__main__._cache_dir", return_value=tmp_path),
-            patch("belvedere.__main__._log_path", return_value=tmp_path / "server.log"),
-            patch("belvedere.log.configure") as mock_configure,
+            patch("sys.argv", ["grannos", "--log"]),
+            patch("grannos.__main__._cache_dir", return_value=tmp_path),
+            patch("grannos.__main__._log_path", return_value=tmp_path / "server.log"),
+            patch("grannos.log.configure") as mock_configure,
             patch.object(Server, "run", new_callable=AsyncMock),
         ):
             main()
@@ -44,24 +44,24 @@ class TestVerboseFlag:
 
 class TestColumnSampleSize:
     def test_default_is_3(self) -> None:
-        with patch("sys.argv", ["belvedere"]):
+        with patch("sys.argv", ["grannos"]):
             args = parse_cli_args()
         assert args.driver_settings.column_sample_size == 3
 
     def test_custom_value(self) -> None:
-        with patch("sys.argv", ["belvedere", "--column-sample-size", "10"]):
+        with patch("sys.argv", ["grannos", "--column-sample-size", "10"]):
             args = parse_cli_args()
         assert args.driver_settings.column_sample_size == 10
 
 
 class TestColumnSampleTimeout:
     def test_default_is_5(self) -> None:
-        with patch("sys.argv", ["belvedere"]):
+        with patch("sys.argv", ["grannos"]):
             args = parse_cli_args()
         assert args.driver_settings.column_sample_timeout == 5.0
 
     def test_custom_value(self) -> None:
-        with patch("sys.argv", ["belvedere", "--column-sample-timeout", "10.0"]):
+        with patch("sys.argv", ["grannos", "--column-sample-timeout", "10.0"]):
             args = parse_cli_args()
         assert args.driver_settings.column_sample_timeout == 10.0
 
@@ -71,8 +71,8 @@ class TestKeyboardInterrupt:
         self, capsys: pytest.CaptureFixture, tmp_path: pathlib.Path
     ) -> None:
         with (
-            patch("sys.argv", ["belvedere"]),
-            patch("belvedere.__main__._cache_dir", return_value=tmp_path),
+            patch("sys.argv", ["grannos"]),
+            patch("grannos.__main__._cache_dir", return_value=tmp_path),
             patch.object(
                 Server, "run", new_callable=AsyncMock, side_effect=KeyboardInterrupt
             ),
@@ -85,8 +85,8 @@ class TestKeyboardInterrupt:
     ) -> None:
         with (
             caplog.at_level(logging.INFO),
-            patch("sys.argv", ["belvedere"]),
-            patch("belvedere.__main__._cache_dir", return_value=tmp_path),
+            patch("sys.argv", ["grannos"]),
+            patch("grannos.__main__._cache_dir", return_value=tmp_path),
             patch.object(
                 Server, "run", new_callable=AsyncMock, side_effect=KeyboardInterrupt
             ),
@@ -96,8 +96,8 @@ class TestKeyboardInterrupt:
 
     def test_should_not_raise(self, tmp_path: pathlib.Path) -> None:
         with (
-            patch("sys.argv", ["belvedere"]),
-            patch("belvedere.__main__._cache_dir", return_value=tmp_path),
+            patch("sys.argv", ["grannos"]),
+            patch("grannos.__main__._cache_dir", return_value=tmp_path),
             patch.object(
                 Server, "run", new_callable=AsyncMock, side_effect=KeyboardInterrupt
             ),

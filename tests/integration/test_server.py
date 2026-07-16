@@ -12,9 +12,9 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 from pytest import MonkeyPatch
 
-from belvedere.drivers.base import ConnectionLostError, DriverSettings
-from belvedere.protocol import ReadResult, Request
-from belvedere.server import Server
+from grannos.drivers.base import ConnectionLostError, DriverSettings
+from grannos.protocol import ReadResult, Request
+from grannos.server import Server
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def server(out: io.BytesIO, tmp_path: pathlib.Path) -> Server:
 
 @pytest.fixture
 def mock_get_driver(monkeypatch: MonkeyPatch) -> MagicMock:
-    import belvedere.dispatcher as pkg
+    import grannos.dispatcher as pkg
 
     mock = MagicMock()
     monkeypatch.setattr(pkg, "get_driver", mock)

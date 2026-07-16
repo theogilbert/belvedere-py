@@ -115,7 +115,9 @@ async def discover(
                         fk_side=fk_side,
                         one_to_one=ref.unique,
                         fk_column=fk_column,
-                        fk_nullable=_column_nullable(nodes[owner_id].columns, fk_column),
+                        fk_nullable=_column_nullable(
+                            nodes[owner_id].columns, fk_column
+                        ),
                     )
                 )
 

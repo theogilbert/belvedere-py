@@ -7,7 +7,7 @@ import pathlib
 import sys
 from dataclasses import dataclass
 
-from belvedere.drivers.base import DriverSettings
+from grannos.drivers.base import DriverSettings
 
 from . import log
 from .server import Server
@@ -47,14 +47,14 @@ def _cache_dir() -> pathlib.Path:
     cache_home = os.environ.get(
         "XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")
     )
-    return pathlib.Path(cache_home) / "belvedere"
+    return pathlib.Path(cache_home) / "grannos"
 
 
 def _log_path() -> pathlib.Path:
     state_home = os.environ.get(
         "XDG_STATE_HOME", os.path.join(os.path.expanduser("~"), ".local", "state")
     )
-    return pathlib.Path(state_home) / "belvedere" / "server.log"
+    return pathlib.Path(state_home) / "grannos" / "server.log"
 
 
 def _enable_faulthandler() -> None:

@@ -16,9 +16,9 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.neo4j import Neo4jDriver
-from belvedere.protocol import ExploreItem, IndexDescription, ReadResult, WriteResult
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.neo4j import Neo4jDriver
+from grannos.protocol import ExploreItem, IndexDescription, ReadResult, WriteResult
 
 pytestmark = pytest.mark.external
 

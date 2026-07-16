@@ -61,7 +61,7 @@ class DuckDBDriver(BaseDriver):
     HELP: str = """\
 ## DuckDB
 
-**Install:** `pip install 'belvedere-py[duckdb]'`
+**Install:** `pip install 'grannos-py[duckdb]'`
 
 | Parameter  | Required | Default    | Description               |
 |------------|----------|------------|---------------------------|

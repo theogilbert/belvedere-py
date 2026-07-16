@@ -18,9 +18,9 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.postgres import PostgresDriver
-from belvedere.protocol import (
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.postgres import PostgresDriver
+from grannos.protocol import (
     ColumnDescription,
     ColumnsDescription,
     IndexDescription,

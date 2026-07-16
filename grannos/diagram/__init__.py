@@ -13,7 +13,7 @@ overprovisioned space back out. See ``canvas.py`` for the character-grid
 primitives both stages draw onto.
 
 Every table and column name drawn in the diagram is also tracked as a
-:class:`~belvedere.protocol.DiagramRegion`, so a client can map a cursor
+:class:`~grannos.protocol.DiagramRegion`, so a client can map a cursor
 position back to an ``explore.describe`` path.
 """
 

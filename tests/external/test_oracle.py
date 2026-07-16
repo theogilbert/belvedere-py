@@ -19,9 +19,9 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-from belvedere.drivers.base import DriverSettings
-from belvedere.drivers.oracle import OracleDriver
-from belvedere.protocol import (
+from grannos.drivers.base import DriverSettings
+from grannos.drivers.oracle import OracleDriver
+from grannos.protocol import (
     ColumnDescription,
     ColumnsDescription,
     IndexDescription,

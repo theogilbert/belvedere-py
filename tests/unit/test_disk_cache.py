@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from belvedere.dispatcher import Dispatcher
-from belvedere.drivers.base import DriverSettings
-from belvedere.explore_cache import cache_file
-from belvedere.protocol import (
+from grannos.dispatcher import Dispatcher
+from grannos.drivers.base import DriverSettings
+from grannos.explore_cache import cache_file
+from grannos.protocol import (
     ColumnDescription,
     ExploreItem,
     Method,
@@ -36,7 +36,7 @@ def _driver_class(driver: AsyncMock) -> AsyncMock:
 
 
 async def connect(dispatcher: Dispatcher, driver: AsyncMock, params: dict) -> str:
-    with patch("belvedere.dispatcher.get_driver", return_value=_driver_class(driver)):
+    with patch("grannos.dispatcher.get_driver", return_value=_driver_class(driver)):
         result = await dispatcher.dispatch(Method.CONNECT, params, noop_progress)
     return result["connection_id"]
 

@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pymongo.errors
 import pytest
 
-from belvedere.drivers.base import ConnectionLostError, DriverError, DriverSettings
-from belvedere.drivers.mongodb import MongoDriver, _make_mongo_client, _serialize
-from belvedere.protocol import LobPlaceholder, WriteResult
+from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
+from grannos.drivers.mongodb import MongoDriver, _make_mongo_client, _serialize
+from grannos.protocol import LobPlaceholder, WriteResult
 
 _CLOSED_EXC = pymongo.errors.InvalidOperation("Cannot use AsyncMongoClient after close")
 

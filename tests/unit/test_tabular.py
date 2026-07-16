@@ -1,5 +1,5 @@
-from belvedere.protocol import ReadResult
-from belvedere.tabular import flatten_docs
+from grannos.protocol import ReadResult
+from grannos.tabular import flatten_docs
 
 
 def test_empty_rows_preserves_columns() -> None:

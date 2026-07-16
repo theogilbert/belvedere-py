@@ -1,7 +1,7 @@
-from belvedere.diagram.graph import GraphEdge, GraphNode
-from belvedere.diagram.layout import compute_layout
-from belvedere.diagram.place import place
-from belvedere.protocol import ColumnInfo
+from grannos.diagram.graph import GraphEdge, GraphNode
+from grannos.diagram.layout import compute_layout
+from grannos.diagram.place import place
+from grannos.protocol import ColumnInfo
 
 
 def _node(id_: int, n_columns: int = 1) -> GraphNode:

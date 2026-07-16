@@ -1,6 +1,6 @@
-from belvedere.diagram.graph import GraphEdge, GraphNode
-from belvedere.diagram.place import STUB_LEN, PlaceResult, Rect
-from belvedere.diagram.route import (
+from grannos.diagram.graph import GraphEdge, GraphNode
+from grannos.diagram.place import STUB_LEN, PlaceResult, Rect
+from grannos.diagram.route import (
     _adjacent_to_any,
     _astar,
     _blocked_cells,

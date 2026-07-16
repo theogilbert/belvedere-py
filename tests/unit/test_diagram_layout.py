@@ -1,5 +1,5 @@
-from belvedere.diagram.graph import GraphEdge, GraphNode
-from belvedere.diagram.layout import (
+from grannos.diagram.graph import GraphEdge, GraphNode
+from grannos.diagram.layout import (
     _bump_same_column_edges,
     _order_columns,
     _partition_sides,

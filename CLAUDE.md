@@ -31,7 +31,7 @@ External tests (require a live service) live in `tests/external/`. The scripts i
 
 ## Architecture
 
-Belvedere is a **JSON-over-stdio server** that lets IDE clients (e.g. belvedere.nvim) query databases. The process model is:
+Grannos is a **JSON-over-stdio server** that lets IDE clients (e.g. grannos.nvim) query databases. The process model is:
 
 ```
 stdin → Server → Dispatcher → CachingDriver → BaseDriver implementation
@@ -49,7 +49,7 @@ stdin → Server → Dispatcher → CachingDriver → BaseDriver implementation
 
 **Describe result types** (`protocol.py`): `explore_describe` returns a `DescribeResult` union — `TableDescription`, `IndexDescription`, `IndicesDescription`, `ColumnDescription`, or `ColumnsDescription` (discriminate on the `type` field). `ColumnDescription` uses `data_type` (not `type`) for the SQL data type to avoid collision with the discriminator. `ColumnDescription.exclusive_indices` / `composite_indices` carry full `IndexDescription` objects, not booleans like the lighter `ColumnInfo` inside `TableDescription`.
 
-**Explore cache** (`explore_cache.py`): `CachingDriver` wraps any `BaseDriver` and caches `explore_list` / `explore_describe` results in a per-connection JSON file under `~/.cache/belvedere/`. The cache file is keyed by a SHA-256 of the non-sensitive connection params. Passwords and other `secret` params are never written to disk.
+**Explore cache** (`explore_cache.py`): `CachingDriver` wraps any `BaseDriver` and caches `explore_list` / `explore_describe` results in a per-connection JSON file under `~/.cache/grannos/`. The cache file is keyed by a SHA-256 of the non-sensitive connection params. Passwords and other `secret` params are never written to disk.
 
 ## Test layout
 

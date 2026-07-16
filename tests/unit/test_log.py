@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from belvedere.log import RequestIdFilter, request_id_var
+from grannos.log import RequestIdFilter, request_id_var
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ import pytest
 from grannos.dispatcher import Connection, Dispatcher, DispatchError, IdleTimer
 from grannos.drivers.base import ConnectionLostError, DriverSettings
 from grannos.protocol import (
+    PROTOCOL_VERSION,
     ColumnInfo,
     DriverParam,
     ExploreItem,
@@ -138,6 +139,10 @@ class TestCapabilities:
     async def test_should_return_server_name(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
         assert result["server"] == "grannos"
+
+    async def test_should_return_protocol_version(self, dispatcher: Dispatcher) -> None:
+        result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
+        assert result["protocol_version"] == PROTOCOL_VERSION
 
     async def test_should_always_include_sqlite(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)

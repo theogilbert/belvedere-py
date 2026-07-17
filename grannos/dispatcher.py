@@ -9,7 +9,7 @@ from .diagram import DiagramError, build_diagram
 from .drivers import get_driver, get_driver_help, list_drivers
 from .drivers.base import BaseDriver, ConnectionLostError, DriverSettings
 from .explore_cache import CachingDriver, ConnectionCache, cache_file
-from .protocol import DescribeResult, Method, ProgressCallback, WriteResult
+from .protocol import PROTOCOL_VERSION, DescribeResult, Method, ProgressCallback, WriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,11 @@ class Dispatcher:
         _params: dict[str, Any],
         _send_progress: ProgressCallback,
     ) -> dict[str, Any]:
-        return {"server": "grannos", "drivers": list_drivers()}
+        return {
+            "server": "grannos",
+            "protocol_version": PROTOCOL_VERSION,
+            "drivers": list_drivers(),
+        }
 
     async def _handle_driver_help(
         self,

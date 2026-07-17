@@ -19,6 +19,17 @@ from uuid import UUID
 logger = logging.getLogger(__name__)
 
 
+PROTOCOL_VERSION = "1.0"
+"""Wire-protocol version this server implements, as ``"<major>.<minor>"``.
+
+Bump ``major`` for changes that break existing clients (removed/renamed
+fields, changed method semantics); bump ``minor`` for additive,
+backward-compatible changes (new optional fields, new methods). Reported to
+clients via ``capabilities`` — clients only need to check ``major`` for
+compatibility, since a minor bump is guaranteed not to break them.
+"""
+
+
 class Method(StrEnum):
     """Supported request methods."""
 

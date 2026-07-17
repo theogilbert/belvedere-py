@@ -73,14 +73,6 @@ class MongoDriver(BaseDriver):
     HELP: str = """\
 ## MongoDB
 
-**Install:** `pip install pymongo`
-
-| Parameter  | Required | Description                                                        |
-|------------|----------|--------------------------------------------------------------------|
-| `uri`      | yes      | Connection URI (embed credentials and `authSource` here if needed) |
-| `username` | no       | Username (can also be embedded in the URI)                         |
-| `password` | no       | Password (masked; can also be embedded in the URI)                 |
-
 **Queries:** MongoDB Extended JSON command objects. `"db"` is required and
 names the target database. The top-level operation key names the collection.
 
@@ -135,7 +127,7 @@ passed through to the underlying pymongo call.
 
 Results are flattened with dot-notation column names (`address.city`, `address.zip`).
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)
@@ -145,8 +137,7 @@ Results are flattened with dot-notation column names (`address.city`, `address.z
         └── indexes  → index names
 ```
 
-`explore.describe` is supported on `[database, collection, "indexes", index_name]` paths
-and returns the index key fields with their sort direction (`asc` / `desc`).
+Describing an index returns its key fields with their sort direction (`asc` / `desc`).
 """
 
     def __init__(

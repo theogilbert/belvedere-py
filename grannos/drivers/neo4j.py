@@ -56,25 +56,16 @@ class Neo4jDriver(BaseDriver):
     HELP: str = """\
 ## Neo4j
 
-**Install:** `pip install neo4j`
-
-| Parameter  | Required | Default                  | Description       |
-|------------|----------|--------------------------|-------------------|
-| `uri`      | no       | `bolt://localhost:7687`  | Bolt URI          |
-| `user`     | no       | `neo4j`                  | Username          |
-| `password` | no       | —                        | Password (masked) |
-| `database` | no       | `neo4j`                  | Database name     |
-
-**Queries:** Cypher. Positional bind parameters are referenced as `$0`, `$1`, …
+**Queries:** Cypher.
 
 ```cypher
-MATCH (u:User {name: $0})-[:BOUGHT]->(p:Product) RETURN u, p
+MATCH (u:User {name: "Alice"})-[:BOUGHT]->(p:Product) RETURN u, p
 ```
 
 Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 …; relationships expand to `col._type`, `col.prop`, …
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)
@@ -83,9 +74,8 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 └── indexes        → index name
 ```
 
-`explore.describe` is supported on `["indexes", index_name]` paths and returns an
-`IndexDescription` with the indexed properties (direction = index type, e.g. `RANGE`,
-`TEXT`, `POINT`) and `unique`.
+Describing an index returns the indexed properties (direction = index type,
+e.g. `RANGE`, `TEXT`, `POINT`) and whether it's unique.
 """
 
     def __init__(

@@ -80,24 +80,15 @@ class SQLServerDriver(BaseDriver):
     HELP: str = """\
 ## SQL Server
 
-**Install:** `pip install mssql-python`
-
-| Parameter             | Required | Default     | Description                 |
-|-----------------------|----------|-------------|------------------------------|
-| `host`                | no       | `localhost` | Server hostname or IP        |
-| `port`                | no       | `1433`      | TCP port                     |
-| `database`            | no       | —           | Database name                |
-| `user`                | no       | —           | Login name                   |
-| `password`            | no       | —           | Password (masked)            |
-| `applicationIntent`   | no       | —           | `READ_WRITE` or `READ_ONLY`  |
-
-**Queries:** Standard T-SQL. Positional bind parameters use `?` placeholders.
+**Queries:** Standard T-SQL.
 
 ```sql
-SELECT * FROM dbo.orders WHERE status = ?
+SELECT * FROM dbo.orders WHERE status = 'open'
+SELECT o.id, c.name FROM dbo.orders o JOIN dbo.customers c ON c.id = o.customer_id
+INSERT INTO dbo.orders (customer_id, status) VALUES (1, 'open')
 ```
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)
@@ -110,8 +101,8 @@ SELECT * FROM dbo.orders WHERE status = ?
 
 System schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*`) are hidden.
 
-`explore.describe` is supported on `[schema, table]` paths and returns full
-column metadata (name, type, nullability, default).
+Describing a table or view returns full column metadata (name, type,
+nullability, default).
 """
 
     def __init__(

@@ -86,23 +86,15 @@ class PostgresDriver(BaseDriver):
     HELP: str = """\
 ## PostgreSQL
 
-**Install:** `pip install psycopg[binary]`
-
-| Parameter  | Required | Default     | Description       |
-|------------|----------|-------------|--------------------|
-| `host`     | no       | `localhost` | Server hostname or IP |
-| `port`     | no       | `5432`      | TCP port           |
-| `database` | no       | —           | Database name      |
-| `user`     | no       | —           | Role name          |
-| `password` | no       | —           | Password (masked)  |
-
-**Queries:** Standard SQL. Positional bind parameters use `%s` placeholders.
+**Queries:** Standard SQL.
 
 ```sql
-SELECT * FROM orders WHERE status = %s
+SELECT * FROM orders WHERE status = 'open'
+SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
+INSERT INTO orders (customer_id, status) VALUES (1, 'open') RETURNING id
 ```
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)  ← non-system schemas (pg_namespace, excluding pg_catalog/information_schema/pg_*)
@@ -113,10 +105,9 @@ SELECT * FROM orders WHERE status = %s
         └── constraints  → name, type (primary_key, unique, check, foreign_key)
 ```
 
-`explore.describe` is supported on `[schema, table]` paths (column metadata:
-name, type, nullability, primary key flag, default) and on
-`[schema, table, "indexes", index_name]` paths (key fields, direction,
-uniqueness, INCLUDE columns, and DDL as reported by `pg_indexes`).
+Describing a table or view returns column metadata (name, type, nullability,
+primary key flag, default). Describing an index returns its key fields,
+direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
 """
 
     def __init__(

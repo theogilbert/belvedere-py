@@ -70,18 +70,8 @@ class ElasticsearchDriver(BaseDriver):
     HELP: str = """\
 ## Elasticsearch
 
-**Install:** `pip install elasticsearch aiohttp`
-
-| Parameter    | Required | Default     | Description                             |
-|--------------|----------|-------------|------------------------------------------|
-| `host`       | no       | `localhost` | Server hostname or IP                   |
-| `port`       | no       | `9200`      | HTTP port                               |
-| `username`   | no       | —           | Username                                |
-| `password`   | no       | —           | Password (masked)                       |
-| `protocol`   | no       | `https`     | Connection protocol: `https` or `http`  |
-| `query_mode` | no       | `lucene`    | Query language: `lucene` or `dev_tools` |
-
 **Queries:** Prefix with the target index name (pattern or alias) and ` | `.
+The connection is configured for either Lucene or Dev Tools query syntax.
 
 *Lucene mode:*
 
@@ -109,9 +99,9 @@ Any Elasticsearch REST endpoint is accepted — the response is returned as a
 flat table. Search responses unpack `hits.hits`; all other responses are
 flattened as a single row.
 
-System indices (names starting with `.`) are hidden in the explore tree.
+System indices (names starting with `.`) are hidden in the resource tree.
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)
@@ -120,8 +110,7 @@ System indices (names starting with `.`) are hidden in the explore tree.
     └── aliases   → alias names
 ```
 
-`explore.describe` is supported on `[index]` paths and returns field metadata
-from the index mapping (name, type).
+Describing an index returns field metadata from its mapping (name, type).
 """
 
     def __init__(

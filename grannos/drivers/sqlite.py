@@ -53,19 +53,15 @@ class SQLiteDriver(BaseDriver):
     HELP: str = """\
 ## SQLite
 
-**Install:** none (stdlib)
-
-| Parameter  | Required | Default | Description               |
-|------------|----------|---------|---------------------------|
-| `database` | yes      | —       | File path or `:memory:`   |
-
-**Queries:** Standard SQL. Positional bind parameters use `?` placeholders.
+Standard SQL.
 
 ```sql
-SELECT * FROM users WHERE age > ?
+SELECT * FROM users WHERE age > 21
+SELECT u.id, o.total FROM users u JOIN orders o ON o.user_id = u.id
+INSERT INTO users (name, age) VALUES ('Alice', 30)
 ```
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)
@@ -75,8 +71,8 @@ SELECT * FROM users WHERE age > ?
     └── foreign_keys  → "col → ref_table.ref_col"
 ```
 
-`explore.describe` is supported on tables and views and returns full column
-metadata (name, type, nullability, primary key flag).
+Describing a table or view returns full column metadata (name, type,
+nullability, primary key flag).
 """
 
     def __init__(

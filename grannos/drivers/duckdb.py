@@ -61,13 +61,7 @@ class DuckDBDriver(BaseDriver):
     HELP: str = """\
 ## DuckDB
 
-**Install:** `pip install 'grannos-py[duckdb]'`
-
-| Parameter  | Required | Default    | Description               |
-|------------|----------|------------|---------------------------|
-| `database` | no       | `:memory:` | File path or `:memory:`   |
-
-**Queries:** Standard SQL. Positional bind parameters use `?` placeholders.
+Standard SQL. DuckDB's SQL dialect also reads files directly:
 
 ```sql
 SELECT * FROM read_parquet('/path/to/file.parquet')
@@ -75,7 +69,7 @@ SELECT * FROM read_csv('/path/to/file.csv', header = true)
 SELECT * FROM 'glob/**/*.parquet'
 ```
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)

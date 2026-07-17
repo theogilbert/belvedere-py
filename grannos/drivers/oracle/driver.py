@@ -93,23 +93,17 @@ class OracleDriver(BaseDriver):
     HELP: str = """\
 ## Oracle
 
-**Install:** `pip install oracledb` — thin mode, no Oracle Instant Client required.
+Uses the `oracledb` driver in thin mode — no Oracle Instant Client required.
 
-| Parameter      | Required | Default     | Description           |
-|----------------|----------|-------------|-----------------------|
-| `host`         | no       | `localhost` | Server hostname or IP |
-| `port`         | no       | `1521`      | Listener port         |
-| `service_name` | no       | `FREEPDB1`  | Database service name |
-| `user`         | no       | —           | Username              |
-| `password`     | no       | —           | Password (masked)     |
-
-**Queries:** Standard SQL. Positional bind parameters use `:1`, `:2`, … placeholders.
+**Queries:** Standard SQL.
 
 ```sql
-SELECT * FROM employees WHERE department_id = :1 AND hire_date > :2
+SELECT * FROM employees WHERE department_id = 10 AND hire_date > DATE '2024-01-01'
+SELECT e.id, d.name FROM employees e JOIN departments d ON d.id = e.department_id
+INSERT INTO employees (department_id, name) VALUES (10, 'Alice')
 ```
 
-**Explore tree:**
+**Resources:**
 
 ```
 (root)  ← non-system schemas (ALL_USERS where ORACLE_MAINTAINED = 'N')
@@ -120,9 +114,9 @@ SELECT * FROM employees WHERE department_id = :1 AND hire_date > :2
         └── constraints  → name, type (primary_key, unique, check, foreign_key)
 ```
 
-`explore.describe` is supported on `[schema, table]` paths (column metadata:
-name, type, nullability, primary key flag, default) and on
-`[schema, table, "indexes", index_name]` paths (key fields, direction, uniqueness).
+Describing a table or view returns column metadata (name, type, nullability,
+primary key flag, default). Describing an index returns its key fields,
+direction, and uniqueness.
 """
 
     def __init__(

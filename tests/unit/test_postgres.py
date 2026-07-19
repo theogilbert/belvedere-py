@@ -6,8 +6,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import psycopg
 import pytest
+from psycopg import sql
 
 from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
+from grannos.drivers.postgres.copy import (
+    CopyToCommand,
+    build_copy_to_statement,
+    parse_copy_to,
+)
 from grannos.drivers.postgres.driver import (
     PostgresDriver,
     _maybe_raise_connection_lost,
@@ -27,6 +33,45 @@ def _make_driver(
     cur.fetchall = AsyncMock(return_value=rows or [])
     cur.description = description
     cur.rowcount = rowcount
+    conn = MagicMock(spec=psycopg.AsyncConnection)
+    conn.cursor.return_value = cur
+    return PostgresDriver({}, conn, DriverSettings()), cur
+
+
+class _FakeAsyncCopy:
+    """Mimics psycopg's Copy object: an async context manager and async iterator."""
+
+    def __init__(
+        self, chunks: list[bytes] | None = None, enter_exc: Exception | None = None
+    ) -> None:
+        self._chunks = list(chunks or [])
+        self._enter_exc = enter_exc
+
+    async def __aenter__(self) -> "_FakeAsyncCopy":
+        if self._enter_exc is not None:
+            raise self._enter_exc
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+    def __aiter__(self) -> "_FakeAsyncCopy":
+        return self
+
+    async def __anext__(self) -> bytes:
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
+
+
+def _make_copy_driver(
+    chunks: list[bytes] | None = None,
+    rowcount: int = 0,
+    enter_exc: Exception | None = None,
+) -> tuple[PostgresDriver, MagicMock]:
+    cur = MagicMock()
+    cur.rowcount = rowcount
+    cur.copy = MagicMock(return_value=_FakeAsyncCopy(chunks, enter_exc))
     conn = MagicMock(spec=psycopg.AsyncConnection)
     conn.cursor.return_value = cur
     return PostgresDriver({}, conn, DriverSettings()), cur
@@ -147,6 +192,106 @@ class TestRootListing:
             ExploreItem(name="alice", type="schema", expandable=True),
             ExploreItem(name="bob", type="schema", expandable=True),
         ]
+
+
+class TestParseCopyTo:
+    def test_returns_none_for_non_copy_query(self) -> None:
+        assert parse_copy_to("SELECT 1") is None
+
+    def test_parses_table_source(self) -> None:
+        cmd = parse_copy_to("\\copy orders TO '/tmp/orders.csv'")
+        assert cmd == CopyToCommand(source="orders", path="/tmp/orders.csv", options="")
+
+    def test_parses_schema_qualified_table_source(self) -> None:
+        cmd = parse_copy_to("\\copy public.orders TO '/tmp/orders.csv'")
+        assert cmd is not None
+        assert cmd.source == "public.orders"
+
+    def test_parses_query_source(self) -> None:
+        cmd = parse_copy_to(
+            "\\copy (SELECT * FROM orders WHERE status = 'open') TO '/tmp/o.csv'"
+        )
+        assert cmd is not None
+        assert cmd.source == "(SELECT * FROM orders WHERE status = 'open')"
+        assert cmd.path == "/tmp/o.csv"
+
+    def test_parses_trailing_options(self) -> None:
+        cmd = parse_copy_to(
+            "\\copy orders TO '/tmp/orders.csv' WITH (FORMAT csv, HEADER)"
+        )
+        assert cmd is not None
+        assert cmd.options == "WITH (FORMAT csv, HEADER)"
+
+    def test_unescapes_doubled_quotes_in_path(self) -> None:
+        cmd = parse_copy_to("\\copy orders TO '/tmp/o''brien.csv'")
+        assert cmd is not None
+        assert cmd.path == "/tmp/o'brien.csv"
+
+    def test_case_insensitive(self) -> None:
+        assert parse_copy_to("\\COPY orders TO '/tmp/orders.csv'") is not None
+
+    def test_ignores_from_direction(self) -> None:
+        assert parse_copy_to("\\copy orders FROM '/tmp/orders.csv'") is None
+
+
+class TestBuildCopyToStatement:
+    def test_without_options(self) -> None:
+        cmd = CopyToCommand(source="orders", path="/tmp/o.csv", options="")
+        assert build_copy_to_statement(cmd) == "COPY orders TO STDOUT"
+
+    def test_with_options(self) -> None:
+        cmd = CopyToCommand(
+            source="orders", path="/tmp/o.csv", options="WITH (FORMAT csv, HEADER)"
+        )
+        assert (
+            build_copy_to_statement(cmd)
+            == "COPY orders TO STDOUT WITH (FORMAT csv, HEADER)"
+        )
+
+
+class TestExecuteCopyTo:
+    def test_streams_result_to_local_file(self, tmp_path) -> None:
+        dest = tmp_path / "orders.csv"
+        driver, cur = _make_copy_driver(
+            chunks=[b"id,status\n", b"1,open\n"], rowcount=1
+        )
+        result = asyncio.run(
+            driver.execute(f"\\copy orders TO '{dest}' (FORMAT csv, HEADER)")
+        )
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+        assert dest.read_bytes() == b"id,status\n1,open\n"
+        cur.copy.assert_called_once()
+
+        assert cur.copy.call_args[0][0] == sql.SQL(
+            "COPY orders TO STDOUT (FORMAT csv, HEADER)"
+        )
+
+    def test_negative_rowcount_defaults_to_zero(self, tmp_path) -> None:
+        dest = tmp_path / "orders.csv"
+        driver, _ = _make_copy_driver(chunks=[], rowcount=-1)
+        result = asyncio.run(driver.execute(f"\\copy orders TO '{dest}'"))
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 0
+
+    def test_write_failure_raises_driver_error(self) -> None:
+        driver, _ = _make_copy_driver(chunks=[b"data"])
+        with pytest.raises(DriverError, match="could not write"):
+            asyncio.run(
+                driver.execute("\\copy orders TO '/nonexistent-dir/orders.csv'")
+            )
+
+    def test_database_error_raises_driver_error(self) -> None:
+        exc = psycopg.errors.SyntaxError('relation "orders" does not exist')
+        driver, _ = _make_copy_driver(enter_exc=exc)
+        with pytest.raises(DriverError, match="does not exist"):
+            asyncio.run(driver.execute("\\copy orders TO '/tmp/orders.csv'"))
+
+    def test_operational_error_raises_connection_lost(self) -> None:
+        exc = psycopg.OperationalError("server closed the connection unexpectedly")
+        driver, _ = _make_copy_driver(enter_exc=exc)
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.execute("\\copy orders TO '/tmp/orders.csv'"))
 
 
 class TestTableGroupListing:

@@ -30,6 +30,7 @@ from ..base import (
     build_relationship_description,
     group_references_by_column,
 )
+from .copy import CopyToCommand, build_copy_to_statement, parse_copy_to
 from .queries import (
     build_column_index_lists,
     build_preview_query,
@@ -92,6 +93,19 @@ class PostgresDriver(BaseDriver):
 SELECT * FROM orders WHERE status = 'open'
 SELECT o.id, c.name FROM orders o JOIN customers c ON c.id = o.customer_id
 INSERT INTO orders (customer_id, status) VALUES (1, 'open') RETURNING id
+```
+
+**Exporting to a file:** `\\copy { table | (query) } TO '/local/path' [(options)]`,
+same syntax as psql's `\\copy`. The result is streamed straight to a file on
+the machine running grannos-py rather than returned as rows. `(options)` is
+passed straight through to Postgres's `COPY` command, so any option it
+accepts works here too — common ones are `FORMAT csv|text|binary`, `HEADER`,
+`DELIMITER '|'`, and `NULL 'value'`. Full list:
+https://www.postgresql.org/docs/current/sql-copy.html
+
+```sql
+\\copy orders TO '/tmp/orders.csv' (FORMAT csv, HEADER)
+\\copy (SELECT * FROM orders WHERE status = 'open') TO '/tmp/open_orders.csv' (FORMAT csv, HEADER)
 ```
 
 **Resources:**
@@ -164,6 +178,10 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
         Raises:
             ConnectionLostError: If the connection was lost during execution.
         """
+        copy_cmd = parse_copy_to(query)
+        if copy_cmd is not None:
+            return await self._execute_copy_to(copy_cmd)
+
         # psycopg only applies %-style substitution when params is not None, so
         # an empty/absent bind list must be sent as None — otherwise a literal
         # "%" in the query (e.g. a LIKE pattern) is misparsed as a placeholder.
@@ -178,6 +196,29 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
             invalidate_cache(self._conn)
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            if isinstance(exc, psycopg.Error):
+                raise DriverError(str(exc).strip()) from exc
+            raise
+
+    async def _execute_copy_to(self, cmd: CopyToCommand) -> WriteResult:
+        """Stream a ``COPY ... TO STDOUT`` result straight to a local file.
+
+        Mirrors what psql does for ``\\copy``: Postgres has no such command
+        itself, so it's rewritten to the real ``COPY TO STDOUT`` and the
+        client (grannos-py, here) writes the streamed bytes to disk.
+        """
+        stmt = build_copy_to_statement(cmd)
+        try:
+            cur = self._conn.cursor()
+            async with cur.copy(sql.SQL(stmt)) as copy:  # ty: ignore[invalid-argument-type]
+                with open(cmd.path, "wb") as f:
+                    async for chunk in copy:
+                        f.write(bytes(chunk))
+            return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
+        except OSError as exc:
+            raise DriverError(f"could not write to {cmd.path!r}: {exc}") from exc
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             if isinstance(exc, psycopg.Error):

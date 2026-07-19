@@ -5,13 +5,11 @@ import pytest
 from grannos.drivers.base import DriverSettings
 from grannos.drivers.sqlite import SQLiteDriver
 from grannos.protocol import (
-    ColumnDescription,
-    ColumnsDescription,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
     ReadResult,
-    RelationshipDescription,
-    TableDescription,
     TableReference,
     WriteResult,
 )
@@ -140,23 +138,24 @@ class TestExploreList:
 
 
 class TestExploreDescribe:
-    async def test_should_return_column_names_and_types(
+    async def test_should_return_field_names_and_types(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         desc = await driver.explore_describe(["t"])
         assert desc is not None
-        assert isinstance(desc, TableDescription)
-        assert desc.table == "t"
-        assert [c.name for c in desc.columns] == ["id", "val"]
-        assert [c.type for c in desc.columns] == ["INTEGER", "TEXT"]
+        assert isinstance(desc, EntityDescription)
+        assert desc.name == "t"
+        assert desc.kind == "table"
+        assert [f.name for f in desc.properties] == ["id", "val"]
+        assert [f.types for f in desc.properties] == [["INTEGER"], ["TEXT"]]
 
     async def test_should_return_nullable_flag(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", [])
         desc = await driver.explore_describe(["t"])
         assert desc is not None
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
         assert by_name["a"].nullable is False
         assert by_name["b"].nullable is True
 
@@ -164,52 +163,52 @@ class TestExploreDescribe:
         await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
         desc = await driver.explore_describe(["t"])
         assert desc is not None
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
         assert by_name["id"].pk is True
         assert by_name["val"].pk is False
 
-    async def test_should_return_exclusive_index_flag_for_single_column_index(
+    async def test_should_return_exclusive_index_for_single_column_index(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
         await driver.execute("CREATE INDEX idx ON t(val)", [])
         desc = await driver.explore_describe(["t"])
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["val"].exclusive_index is True
-        assert by_name["val"].composite_index is False
-        assert by_name["id"].exclusive_index is False
-        assert by_name["id"].composite_index is False
-        assert by_name["other"].exclusive_index is False
-        assert by_name["other"].composite_index is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert len(by_name["val"].exclusive_indices) == 1
+        assert by_name["val"].composite_indices == []
+        assert by_name["id"].exclusive_indices == []
+        assert by_name["id"].composite_indices == []
+        assert by_name["other"].exclusive_indices == []
+        assert by_name["other"].composite_indices == []
 
-    async def test_should_return_composite_index_flag_for_multi_column_index(
+    async def test_should_return_composite_index_for_multi_column_index(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
         await driver.execute("CREATE INDEX idx ON t(val, other)", [])
         desc = await driver.explore_describe(["t"])
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["val"].exclusive_index is False
-        assert by_name["val"].composite_index is True
-        assert by_name["other"].exclusive_index is False
-        assert by_name["other"].composite_index is True
-        assert by_name["id"].exclusive_index is False
-        assert by_name["id"].composite_index is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["val"].exclusive_indices == []
+        assert len(by_name["val"].composite_indices) == 1
+        assert by_name["other"].exclusive_indices == []
+        assert len(by_name["other"].composite_indices) == 1
+        assert by_name["id"].exclusive_indices == []
+        assert by_name["id"].composite_indices == []
 
-    async def test_should_return_both_flags_when_column_has_exclusive_and_composite_index(
+    async def test_should_return_both_when_column_has_exclusive_and_composite_index(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
         await driver.execute("CREATE INDEX idx1 ON t(val)", [])
         await driver.execute("CREATE INDEX idx2 ON t(val, other)", [])
         desc = await driver.explore_describe(["t"])
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["val"].exclusive_index is True
-        assert by_name["val"].composite_index is True
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert len(by_name["val"].exclusive_indices) == 1
+        assert len(by_name["val"].composite_indices) == 1
 
     async def test_should_return_outgoing_references(
         self, driver: SQLiteDriver
@@ -220,19 +219,23 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["child"])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == [
-            TableReference(column="parent_id", table="parent", ref_column="id")
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["parent_id"].outgoing_references == [
+            TableReference(
+                table="child", column="parent_id", ref_table="parent", ref_column="id"
+            )
         ]
-        assert desc.incoming_references == []
+        assert by_name["id"].outgoing_references == []
 
     async def test_should_return_empty_outgoing_references_when_none_exist(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         desc = await driver.explore_describe(["t"])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == []
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].outgoing_references == []
 
     async def test_should_return_incoming_references(
         self, driver: SQLiteDriver
@@ -243,19 +246,22 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["parent"])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references == [
-            TableReference(column="id", table="child", ref_column="parent_id")
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].incoming_references == [
+            TableReference(
+                table="child", column="parent_id", ref_table="parent", ref_column="id"
+            )
         ]
-        assert desc.outgoing_references == []
 
     async def test_should_return_empty_incoming_references_when_none_exist(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         desc = await driver.explore_describe(["t"])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references == []
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].incoming_references == []
 
     async def test_should_mark_outgoing_reference_unique_when_fk_column_is_pk(
         self, driver: SQLiteDriver
@@ -265,8 +271,9 @@ class TestExploreDescribe:
             "CREATE TABLE child (id INTEGER PRIMARY KEY REFERENCES parent(id))", []
         )
         desc = await driver.explore_describe(["child"])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].outgoing_references[0].unique is True
 
     async def test_should_mark_outgoing_reference_not_unique_by_default(
         self, driver: SQLiteDriver
@@ -277,8 +284,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["child"])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["parent_id"].outgoing_references[0].unique is False
 
     async def test_should_mark_incoming_reference_unique_when_fk_column_is_unique(
         self, driver: SQLiteDriver
@@ -288,8 +296,9 @@ class TestExploreDescribe:
             "CREATE TABLE child (parent_id INTEGER UNIQUE REFERENCES parent(id))", []
         )
         desc = await driver.explore_describe(["parent"])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].incoming_references[0].unique is True
 
     async def test_should_mark_incoming_reference_not_unique_by_default(
         self, driver: SQLiteDriver
@@ -300,13 +309,20 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["parent"])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].incoming_references[0].unique is False
 
     async def test_should_return_none_when_path_is_invalid(
         self, driver: SQLiteDriver
     ) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_columns_group_path_no_longer_resolves(
+        self, driver: SQLiteDriver
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert await driver.explore_describe(["t", "columns"]) is None
 
     async def test_should_describe_a_relationship(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
@@ -315,7 +331,7 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["child", "relationships", "parent_id"])
-        assert isinstance(desc, RelationshipDescription)
+        assert isinstance(desc, TableReference)
         assert desc.table == "child"
         assert desc.column == "parent_id"
         assert desc.ref_table == "parent"
@@ -335,7 +351,7 @@ class TestExploreDescribeIndex:
         await driver.execute("CREATE INDEX idx ON t(val)", [])
         desc = await driver.explore_describe(["t", "indices", "idx"])
         assert isinstance(desc, IndexDescription)
-        assert desc.index == "idx"
+        assert desc.name == "idx"
         assert len(desc.fields) == 1
         assert desc.fields[0].name == "val"
         assert desc.fields[0].direction == "asc"
@@ -392,157 +408,83 @@ class TestExploreDescribeIndex:
         assert await driver.explore_describe(["t", "indices", "no_such_idx"]) is None
 
 
-class TestExploreDescribeColumns:
-    async def test_columns_description_returns_all_columns(
-        self, driver: SQLiteDriver
-    ) -> None:
-        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
-        desc = await driver.explore_describe(["t", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        assert [c.name for c in desc.columns] == ["id", "val"]
-
-    async def test_columns_description_data_type(self, driver: SQLiteDriver) -> None:
-        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
-        desc = await driver.explore_describe(["t", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["id"].data_type == "INTEGER"
-        assert by_name["val"].data_type == "TEXT"
-
-    async def test_columns_description_pk(self, driver: SQLiteDriver) -> None:
-        await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
-        desc = await driver.explore_describe(["t", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["id"].pk is True
-        assert by_name["val"].pk is False
-
-    async def test_columns_description_nullable(self, driver: SQLiteDriver) -> None:
-        await driver.execute("CREATE TABLE t (a INTEGER NOT NULL, b INTEGER)", [])
-        desc = await driver.explore_describe(["t", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["a"].nullable is False
-        assert by_name["b"].nullable is True
-
-    async def test_columns_description_exclusive_index(
-        self, driver: SQLiteDriver
-    ) -> None:
-        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
-        await driver.execute("CREATE INDEX idx ON t(val)", [])
-        desc = await driver.explore_describe(["t", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["val"].exclusive_indices) == 1
-        assert by_name["val"].exclusive_indices[0].index == "idx"
-        assert by_name["id"].exclusive_indices == []
-        assert by_name["val"].composite_indices == []
-
-    async def test_columns_description_composite_index(
-        self, driver: SQLiteDriver
-    ) -> None:
-        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
-        await driver.execute("CREATE INDEX idx ON t(val, other)", [])
-        desc = await driver.explore_describe(["t", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["val"].composite_indices) == 1
-        assert by_name["val"].composite_indices[0].index == "idx"
-        assert by_name["val"].exclusive_indices == []
-
-    async def test_columns_description_sample_values(
-        self, driver: SQLiteDriver
-    ) -> None:
-        await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
-        for i, v in enumerate(["a", "b", "c", "a"]):
-            await driver.execute("INSERT INTO t VALUES (?, ?)", [i, v])
-        desc = await driver.explore_describe(["t", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        sample = by_name["val"].sample
-        assert len(sample) <= 3
-        assert set(sample).issubset({"a", "b", "c"})
-
-    async def test_columns_description_outgoing_references(
-        self, driver: SQLiteDriver
-    ) -> None:
-        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
-        await driver.execute(
-            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
-            [],
-        )
-        desc = await driver.explore_describe(["child", "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["parent_id"].outgoing_references == [
-            TableReference(column="parent_id", table="parent", ref_column="id")
-        ]
-        assert by_name["id"].outgoing_references == []
-
-
-class TestExploreDescribeColumn:
-    async def test_single_column_basic_fields(self, driver: SQLiteDriver) -> None:
+class TestExploreDescribeField:
+    async def test_single_field_basic_fields(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT NOT NULL)", [])
         desc = await driver.explore_describe(["t", "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.name == "val"
-        assert desc.data_type == "TEXT"
+        assert desc.types == ["TEXT"]
         assert desc.nullable is False
         assert desc.pk is False
 
-    async def test_single_column_pk(self, driver: SQLiteDriver) -> None:
+    async def test_single_field_pk(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", [])
         desc = await driver.explore_describe(["t", "columns", "id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.pk is True
 
-    async def test_single_column_exclusive_index(self, driver: SQLiteDriver) -> None:
+    async def test_single_field_exclusive_index(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         await driver.execute("CREATE INDEX idx ON t(val)", [])
         desc = await driver.explore_describe(["t", "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.exclusive_indices) == 1
-        assert desc.exclusive_indices[0].index == "idx"
+        assert desc.exclusive_indices[0].name == "idx"
         assert desc.composite_indices == []
 
-    async def test_single_column_composite_index(self, driver: SQLiteDriver) -> None:
+    async def test_single_field_composite_index(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT, other TEXT)", [])
         await driver.execute("CREATE INDEX idx ON t(val, other)", [])
         desc = await driver.explore_describe(["t", "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.composite_indices) == 1
-        assert desc.composite_indices[0].index == "idx"
+        assert desc.composite_indices[0].name == "idx"
         assert desc.exclusive_indices == []
 
-    async def test_single_column_sample_values(self, driver: SQLiteDriver) -> None:
+    async def test_single_field_sample_values(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         for i, v in enumerate(["x", "y", "z", "x"]):
             await driver.execute("INSERT INTO t VALUES (?, ?)", [i, v])
         desc = await driver.explore_describe(["t", "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"x", "y", "z"})
 
-    async def test_single_column_outgoing_references(
-        self, driver: SQLiteDriver
-    ) -> None:
+    async def test_single_field_outgoing_references(self, driver: SQLiteDriver) -> None:
         await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
         await driver.execute(
             "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
             [],
         )
         desc = await driver.explore_describe(["child", "columns", "parent_id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.outgoing_references == [
-            TableReference(column="parent_id", table="parent", ref_column="id")
+            TableReference(
+                table="child", column="parent_id", ref_table="parent", ref_column="id"
+            )
         ]
 
-    async def test_single_column_empty_outgoing_references_when_not_fk(
+    async def test_single_field_incoming_references(self, driver: SQLiteDriver) -> None:
+        await driver.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", [])
+        await driver.execute(
+            "CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id))",
+            [],
+        )
+        desc = await driver.explore_describe(["parent", "columns", "id"])
+        assert isinstance(desc, FieldDescription)
+        assert desc.incoming_references == [
+            TableReference(
+                table="child", column="parent_id", ref_table="parent", ref_column="id"
+            )
+        ]
+
+    async def test_single_field_empty_outgoing_references_when_not_fk(
         self, driver: SQLiteDriver
     ) -> None:
         await driver.execute("CREATE TABLE t (id INTEGER)", [])
         desc = await driver.explore_describe(["t", "columns", "id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(self, driver: SQLiteDriver) -> None:
@@ -556,5 +498,5 @@ class TestExploreDescribeColumn:
         await driver.execute("CREATE TABLE t (id INTEGER, val TEXT)", [])
         await driver.execute("INSERT INTO t VALUES (1, 'x')", [])
         desc = await driver.explore_describe(["t", "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.sample == []

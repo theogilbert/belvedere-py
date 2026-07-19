@@ -10,45 +10,45 @@ from ..protocol import (
     ExploreItem,
     Language,
     ReadResult,
-    RelationshipDescription,
-    TableDescription,
     TableReference,
     WriteResult,
 )
 
 
-def build_relationship_description(
-    desc: TableDescription, table: str, schema: str | None, column: str
-) -> RelationshipDescription | None:
-    """Build the ``RelationshipDescription`` for one of *table*'s own outgoing
-    FK columns, for a describe path ending in ``["relationships", column]``.
+def find_reference(refs: list[TableReference], column: str) -> TableReference | None:
+    """Find one of a table's own outgoing FK references by local column, for a
+    describe path ending in ``["relationships", column]``. Since
+    :class:`TableReference` is self-contained (carries both the local and
+    referenced side), the match can be returned directly — no reconstruction
+    needed.
 
     Returns:
-        None if *column* does not name one of *table*'s own foreign keys.
+        None if *column* does not name one of the table's own foreign keys.
     """
-    ref = next((r for r in desc.outgoing_references if r.column == column), None)
-    if ref is None:
-        return None
-    return RelationshipDescription(
-        table=table,
-        schema=schema,
-        column=ref.column,
-        ref_table=ref.table,
-        ref_schema=ref.schema,
-        ref_column=ref.ref_column,
-        constraint_name=ref.constraint_name,
-    )
+    return next((r for r in refs if r.column == column), None)
 
 
 def group_references_by_column(
     refs: list[TableReference],
 ) -> dict[str, list[TableReference]]:
-    """Group a table's outgoing FK references by local column, for populating
-    ``ColumnDescription.outgoing_references``."""
+    """Group a table's own outgoing FK references by local column, for populating
+    ``FieldDescription.outgoing_references``."""
     by_column: dict[str, list[TableReference]] = {}
     for ref in refs:
         by_column.setdefault(ref.column, []).append(ref)
     return by_column
+
+
+def group_references_by_ref_column(
+    refs: list[TableReference],
+) -> dict[str, list[TableReference]]:
+    """Group FK references that point *at* a table by the local column they
+    target (``ref_column``, not ``column`` — the owning side lives on another
+    table), for populating ``FieldDescription.incoming_references``."""
+    by_ref_column: dict[str, list[TableReference]] = {}
+    for ref in refs:
+        by_ref_column.setdefault(ref.ref_column, []).append(ref)
+    return by_ref_column
 
 
 @dataclass(frozen=True)
@@ -168,18 +168,21 @@ class BaseDriver(ABC):
 
     @abstractmethod
     async def explore_describe(self, path: list[str]) -> DescribeResult:
-        """Return column metadata for the node at the given path.
+        """Return metadata for the node at the given path.
 
-        Contract: when a path yields a ``ColumnsDescription``, describing the
-        child path ``[*path, column_name]`` must yield an equivalent
-        ``ColumnDescription`` — the explore cache pre-populates per-column
-        entries from the columns result relying on this.
+        Contract: when a path yields an ``EntityDescription``, describing the
+        child path ``[*path, "columns", field_name]`` must yield the exact
+        same ``FieldDescription`` object found in ``EntityDescription.properties``
+        — the explore cache pre-populates per-field (and per-relationship)
+        entries from the entity result relying on this being exact, not just
+        equivalent.
 
         Args:
             path: Ordered path segments identifying a node.
 
         Returns:
-            Column metadata, or None if the path does not resolve to a node.
+            Entity/field/index/relationship metadata, or None if the path does
+            not resolve to a describable node.
         """
         ...
 

@@ -21,12 +21,10 @@ import pytest
 from grannos.drivers.base import DriverSettings
 from grannos.drivers.postgres import PostgresDriver
 from grannos.protocol import (
-    ColumnDescription,
-    ColumnsDescription,
+    EntityDescription,
+    FieldDescription,
     IndexDescription,
     ReadResult,
-    RelationshipDescription,
-    TableDescription,
     TableReference,
     WriteResult,
 )
@@ -308,21 +306,22 @@ class TestExploreList:
 
 
 class TestExploreDescribe:
-    async def test_returns_column_metadata(
+    async def test_returns_field_metadata(
         self, driver: PostgresDriver, schema: str, table: str
     ) -> None:
         await driver.execute(
             f'CREATE TABLE "{schema}"."{table}" (id integer NOT NULL, val text)', []
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.schema == schema
-        assert desc.table == table
-        by_name = {c.name: c for c in desc.columns}
+        assert desc.name == table
+        assert desc.kind == "table"
+        by_name = {f.name: f for f in desc.properties}
         assert list(by_name) == ["id", "val"]
-        assert by_name["id"].type == "integer"
+        assert by_name["id"].types == ["integer"]
         assert by_name["id"].nullable is False
-        assert by_name["val"].type == "text"
+        assert by_name["val"].types == ["text"]
         assert by_name["val"].nullable is True
 
     async def test_returns_pk_flag(
@@ -332,8 +331,8 @@ class TestExploreDescribe:
             f'CREATE TABLE "{schema}"."{table}" (id integer PRIMARY KEY, val text)', []
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
         assert by_name["id"].pk is True
         assert by_name["val"].pk is False
 
@@ -344,13 +343,19 @@ class TestExploreDescribe:
             f'CREATE TABLE "{schema}"."{table}" (id integer DEFAULT 0, val text)', []
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
         assert by_name["id"].default == "0"
         assert by_name["val"].default is None
 
     async def test_returns_none_for_unknown_path(self, driver: PostgresDriver) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_columns_group_path_no_longer_resolves(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(f'CREATE TABLE "{schema}"."{table}" (id integer)', [])
+        assert await driver.explore_describe([schema, table, "columns"]) is None
 
     async def test_comment(
         self, driver: PostgresDriver, schema: str, table: str
@@ -360,7 +365,7 @@ class TestExploreDescribe:
             f'COMMENT ON TABLE "{schema}"."{table}" IS \'A test table comment\'', []
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.comment == "A test table comment"
 
     async def test_comment_defaults_to_none(
@@ -368,8 +373,85 @@ class TestExploreDescribe:
     ) -> None:
         await driver.execute(f'CREATE TABLE "{schema}"."{table}" (id integer)', [])
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.comment is None
+
+    async def test_data_type(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].types == ["integer"]
+        assert by_name["val"].types == ["text"]
+
+    async def test_exclusive_index(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
+        )
+        idx = "idx_" + table
+        await driver.execute(f'CREATE INDEX "{idx}" ON "{schema}"."{table}"(val)', [])
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert len(by_name["val"].exclusive_indices) == 1
+        assert by_name["val"].exclusive_indices[0].name == idx
+        assert by_name["id"].exclusive_indices == []
+        assert by_name["val"].composite_indices == []
+
+    async def test_composite_index(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{table}" (id integer, val text, other text)',
+            [],
+        )
+        idx = "idx_" + table
+        await driver.execute(
+            f'CREATE INDEX "{idx}" ON "{schema}"."{table}"(val, other)', []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert len(by_name["val"].composite_indices) == 1
+        assert by_name["val"].exclusive_indices == []
+
+    async def test_field_comment(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
+        )
+        await driver.execute(
+            f'COMMENT ON COLUMN "{schema}"."{table}".val IS \'A test comment\'', []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["val"].comment == "A test comment"
+        assert by_name["id"].comment is None
+
+    async def test_sample_values(
+        self, driver: PostgresDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
+        )
+        for i, v in enumerate(["x", "y", "z", "x"]):
+            await driver.execute(
+                f'INSERT INTO "{schema}"."{table}" VALUES (%s, %s)', [i, v]
+            )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        sample = by_name["val"].sample
+        assert len(sample) <= 3
+        assert set(sample).issubset({"x", "y", "z"})
 
     async def test_returns_outgoing_references(
         self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
@@ -386,17 +468,20 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == [
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["parent_id"].outgoing_references == [
             TableReference(
-                column="parent_id",
-                table=parent,
-                ref_column="id",
+                table=child,
                 schema=schema,
+                column="parent_id",
+                ref_table=parent,
+                ref_schema=schema,
+                ref_column="id",
                 constraint_name=f"{child}_parent_id_fkey",
             )
         ]
-        assert desc.incoming_references == []
+        assert by_name["id"].outgoing_references == []
 
     async def test_returns_incoming_references(
         self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
@@ -413,26 +498,29 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references == [
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].incoming_references == [
             TableReference(
-                column="id",
                 table=child,
-                ref_column="parent_id",
                 schema=schema,
+                column="parent_id",
+                ref_table=parent,
+                ref_schema=schema,
+                ref_column="id",
                 constraint_name=f"{child}_parent_id_fkey",
             )
         ]
-        assert desc.outgoing_references == []
 
     async def test_references_default_to_empty(
         self, driver: PostgresDriver, schema: str, table: str
     ) -> None:
         await driver.execute(f'CREATE TABLE "{schema}"."{table}" (id integer)', [])
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == []
-        assert desc.incoming_references == []
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].outgoing_references == []
+        assert by_name["id"].incoming_references == []
 
     async def test_outgoing_reference_is_unique_when_fk_column_has_unique_constraint(
         self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
@@ -449,8 +537,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["parent_id"].outgoing_references[0].unique is True
 
     async def test_outgoing_reference_is_not_unique_by_default(
         self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
@@ -467,8 +556,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["parent_id"].outgoing_references[0].unique is False
 
     async def test_incoming_reference_is_unique_when_fk_column_has_unique_constraint(
         self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
@@ -485,8 +575,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].incoming_references[0].unique is True
 
     async def test_incoming_reference_is_not_unique_by_default(
         self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
@@ -503,8 +594,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["id"].incoming_references[0].unique is False
 
     async def test_should_describe_a_relationship(
         self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
@@ -523,7 +615,7 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(
             [schema, child, "relationships", "parent_id"]
         )
-        assert isinstance(desc, RelationshipDescription)
+        assert isinstance(desc, TableReference)
         assert desc.table == child
         assert desc.schema == schema
         assert desc.column == "parent_id"
@@ -551,7 +643,7 @@ class TestExploreDescribeIndex:
         await driver.execute(f'CREATE INDEX "{idx}" ON "{schema}"."{table}"(val)', [])
         desc = await driver.explore_describe([schema, table, "indexes", idx])
         assert isinstance(desc, IndexDescription)
-        assert desc.index == idx
+        assert desc.name == idx
         assert len(desc.fields) == 1
         assert desc.fields[0].name == "val"
         assert desc.fields[0].direction == "asc"
@@ -638,140 +730,7 @@ class TestExploreDescribeIndex:
         )
 
 
-class TestExploreDescribeColumns:
-    async def test_returns_all_columns(
-        self, driver: PostgresDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        assert [c.name for c in desc.columns] == ["id", "val"]
-
-    async def test_data_type(
-        self, driver: PostgresDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["id"].data_type == "integer"
-        assert by_name["val"].data_type == "text"
-
-    async def test_pk_and_nullable(
-        self, driver: PostgresDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{table}"'
-            f" (id integer PRIMARY KEY, val text NOT NULL)",
-            [],
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["id"].pk is True
-        assert by_name["val"].pk is False
-        assert by_name["id"].nullable is False
-        assert by_name["val"].nullable is False
-
-    async def test_exclusive_index(
-        self, driver: PostgresDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
-        )
-        idx = "idx_" + table
-        await driver.execute(f'CREATE INDEX "{idx}" ON "{schema}"."{table}"(val)', [])
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["val"].exclusive_indices) == 1
-        assert by_name["val"].exclusive_indices[0].index == idx
-        assert by_name["id"].exclusive_indices == []
-        assert by_name["val"].composite_indices == []
-
-    async def test_composite_index(
-        self, driver: PostgresDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{table}" (id integer, val text, other text)',
-            [],
-        )
-        idx = "idx_" + table
-        await driver.execute(
-            f'CREATE INDEX "{idx}" ON "{schema}"."{table}"(val, other)', []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["val"].composite_indices) == 1
-        assert by_name["val"].exclusive_indices == []
-
-    async def test_comment(
-        self, driver: PostgresDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
-        )
-        await driver.execute(
-            f'COMMENT ON COLUMN "{schema}"."{table}".val IS \'A test comment\'', []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["val"].comment == "A test comment"
-        assert by_name["id"].comment is None
-
-    async def test_sample_values(
-        self, driver: PostgresDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{table}" (id integer, val text)', []
-        )
-        for i, v in enumerate(["x", "y", "z", "x"]):
-            await driver.execute(
-                f'INSERT INTO "{schema}"."{table}" VALUES (%s, %s)', [i, v]
-            )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        sample = by_name["val"].sample
-        assert len(sample) <= 3
-        assert set(sample).issubset({"x", "y", "z"})
-
-    async def test_outgoing_references(
-        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
-    ) -> None:
-        parent, child = tables
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
-        )
-        await driver.execute(
-            f'CREATE TABLE "{schema}"."{child}" ('
-            f"  id integer, parent_id integer,"
-            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
-            ")",
-            [],
-        )
-        desc = await driver.explore_describe([schema, child, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["parent_id"].outgoing_references == [
-            TableReference(
-                column="parent_id",
-                table=parent,
-                ref_column="id",
-                schema=schema,
-                constraint_name=f"{child}_parent_id_fkey",
-            )
-        ]
-        assert by_name["id"].outgoing_references == []
-
-
-class TestExploreDescribeColumn:
+class TestExploreDescribeField:
     async def test_basic_fields(
         self, driver: PostgresDriver, schema: str, table: str
     ) -> None:
@@ -779,9 +738,9 @@ class TestExploreDescribeColumn:
             f'CREATE TABLE "{schema}"."{table}" (id integer, val text NOT NULL)', []
         )
         desc = await driver.explore_describe([schema, table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.name == "val"
-        assert desc.data_type == "text"
+        assert desc.types == ["text"]
         assert desc.nullable is False
         assert desc.pk is False
 
@@ -792,7 +751,7 @@ class TestExploreDescribeColumn:
             f'CREATE TABLE "{schema}"."{table}" (id integer PRIMARY KEY, val text)', []
         )
         desc = await driver.explore_describe([schema, table, "columns", "id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.pk is True
 
     async def test_exclusive_index(
@@ -804,9 +763,9 @@ class TestExploreDescribeColumn:
         idx = "idx_" + table
         await driver.execute(f'CREATE INDEX "{idx}" ON "{schema}"."{table}"(val)', [])
         desc = await driver.explore_describe([schema, table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.exclusive_indices) == 1
-        assert desc.exclusive_indices[0].index == idx
+        assert desc.exclusive_indices[0].name == idx
         assert desc.composite_indices == []
 
     async def test_comment(
@@ -819,7 +778,7 @@ class TestExploreDescribeColumn:
             f'COMMENT ON COLUMN "{schema}"."{table}".val IS \'Column comment\'', []
         )
         desc = await driver.explore_describe([schema, table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.comment == "Column comment"
 
     async def test_sample_values(
@@ -833,7 +792,7 @@ class TestExploreDescribeColumn:
                 f'INSERT INTO "{schema}"."{table}" VALUES (%s, %s)', [i, v]
             )
         desc = await driver.explore_describe([schema, table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"a", "b", "c"})
 
@@ -852,13 +811,43 @@ class TestExploreDescribeColumn:
             [],
         )
         desc = await driver.explore_describe([schema, child, "columns", "parent_id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.outgoing_references == [
             TableReference(
-                column="parent_id",
-                table=parent,
-                ref_column="id",
+                table=child,
                 schema=schema,
+                column="parent_id",
+                ref_table=parent,
+                ref_schema=schema,
+                ref_column="id",
+                constraint_name=f"{child}_parent_id_fkey",
+            )
+        ]
+
+    async def test_incoming_references(
+        self, driver: PostgresDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{parent}" (id integer PRIMARY KEY)', []
+        )
+        await driver.execute(
+            f'CREATE TABLE "{schema}"."{child}" ('
+            f"  id integer, parent_id integer,"
+            f'  FOREIGN KEY (parent_id) REFERENCES "{schema}"."{parent}"(id)'
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, parent, "columns", "id"])
+        assert isinstance(desc, FieldDescription)
+        assert desc.incoming_references == [
+            TableReference(
+                table=child,
+                schema=schema,
+                column="parent_id",
+                ref_table=parent,
+                ref_schema=schema,
+                ref_column="id",
                 constraint_name=f"{child}_parent_id_fkey",
             )
         ]
@@ -868,7 +857,7 @@ class TestExploreDescribeColumn:
     ) -> None:
         await driver.execute(f'CREATE TABLE "{schema}"."{table}" (id integer)', [])
         desc = await driver.explore_describe([schema, table, "columns", "id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(

@@ -14,7 +14,6 @@ from ..protocol import (
     ExploreItem,
     IndexDescription,
     IndexKeyField,
-    IndicesDescription,
     LobPlaceholder,
     ParamType,
     ReadResult,
@@ -361,11 +360,10 @@ Describing an index returns its key fields with their sort direction (`asc` / `d
         match path:
             case [db_name, collection_name, "indexes"]:
                 info = await self._client[db_name][collection_name].index_information()
-                indices = [
+                return [
                     _spec_to_index_description(name, spec, collection_name)
                     for name, spec in sorted(info.items())
                 ]
-                return IndicesDescription(indices=indices)
             case [db_name, collection_name, "indexes", index_name]:
                 info = await self._client[db_name][collection_name].index_information()
                 spec = info.get(index_name)
@@ -412,7 +410,7 @@ def _spec_to_index_description(
     index_type = next(iter(non_numeric)).lower() if non_numeric else "regular"
     partial = spec.get("partialFilterExpression")
     return IndexDescription(
-        index=index_name,
+        name=index_name,
         fields=fields,
         unique=bool(spec.get("unique", False)),
         tables=[collection_name],

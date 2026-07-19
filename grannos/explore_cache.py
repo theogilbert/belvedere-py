@@ -9,16 +9,13 @@ from grannos.drivers import SENSITIVE_PARAM_KEYS
 
 from .drivers.base import BaseDriver, DriverSettings, ReadResult, WriteResult
 from .protocol import (
-    ColumnDescription,
-    ColumnInfo,
-    ColumnsDescription,
+    Connection,
     DescribeResult,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
     IndexKeyField,
-    IndicesDescription,
-    RelationshipDescription,
-    TableDescription,
     TableReference,
     json_default,
 )
@@ -26,14 +23,11 @@ from .protocol import (
 logger = logging.getLogger(__name__)
 
 CachedDescribe = (
-    TableDescription
-    | IndexDescription
-    | IndicesDescription
-    | ColumnDescription
-    | ColumnsDescription
-    | RelationshipDescription
+    EntityDescription | FieldDescription | IndexDescription | TableReference
 )
-"""Non-None explore.describe results storable in the cache."""
+"""Non-None explore.describe results storable in the cache, at a single path.
+A group path (e.g. an indices group node) stores ``list[IndexDescription]``
+instead — see ``_describe``'s value type."""
 
 
 class CachingDriver(BaseDriver):
@@ -76,9 +70,19 @@ class CachingDriver(BaseDriver):
         desc = await self._inner.explore_describe(path)
         if desc is None:
             return None
-        entries: list[tuple[list[str], CachedDescribe]] = [(path, desc)]
-        if isinstance(desc, ColumnsDescription):
-            entries += [([*path, col.name], col) for col in desc.columns]
+        entries: list[tuple[list[str], CachedDescribe | list[IndexDescription]]] = [
+            (path, desc)
+        ]
+        if isinstance(desc, EntityDescription):
+            entries += [([*path, "columns", f.name], f) for f in desc.properties]
+            for f in desc.properties:
+                entries += [
+                    ([*path, "relationships", ref.column], ref)
+                    for ref in f.outgoing_references
+                ]
+        elif isinstance(desc, list):
+            indices = [idx for idx in desc if isinstance(idx, IndexDescription)]
+            entries += [([*path, idx.name], idx) for idx in indices]
         self._cache.set_describes(entries)
         return desc
 
@@ -121,7 +125,9 @@ class ConnectionCache:
         """Path to the backing JSON cache file."""
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
         """In-memory cache mapping path tuples to their explore.list results."""
-        self._describe: dict[tuple[str, ...], CachedDescribe] = {}
+        self._describe: dict[
+            tuple[str, ...], CachedDescribe | list[IndexDescription]
+        ] = {}
         """In-memory cache mapping path tuples to their explore.describe results."""
         self._load()
 
@@ -131,17 +137,21 @@ class ConnectionCache:
         Args:
             path: Path prefix to reset. Entries whose keys start with this prefix
                 (including the prefix itself) are removed, along with any ancestor
-                list entries (since their children may have changed). An empty list
-                resets the entire cache.
+                list/describe entries (since their children may have changed — an
+                ancestor's own describe result, e.g. an EntityDescription, may embed
+                a now-stale copy of what we just reset). An empty list resets the
+                entire cache.
         """
         prefix = tuple(path)
         n = len(prefix)
         for d in (self._list, self._describe):
             for k in [k for k in d if k[:n] == prefix]:
                 del d[k]
-        # Evict list entries for all ancestor paths — their children may have changed.
+        # Evict ancestor entries for all ancestor paths — their children may have
+        # changed, or (for _describe) may now embed stale data of their own.
         for i in range(n):
             self._list.pop(prefix[:i], None)
+            self._describe.pop(prefix[:i], None)
         if self._list or self._describe:
             self._persist()
         else:
@@ -180,7 +190,9 @@ class ConnectionCache:
         """Return cached explore.describe results for path, or None on a miss."""
         return self._describe.get(tuple(path))
 
-    def set_describe(self, path: list[str], desc: CachedDescribe) -> None:
+    def set_describe(
+        self, path: list[str], desc: CachedDescribe | list[IndexDescription]
+    ) -> None:
         """Store explore.describe results for path and persist to disk.
 
         Args:
@@ -189,7 +201,9 @@ class ConnectionCache:
         """
         self.set_describes([(path, desc)])
 
-    def set_describes(self, entries: list[tuple[list[str], CachedDescribe]]) -> None:
+    def set_describes(
+        self, entries: list[tuple[list[str], CachedDescribe | list[IndexDescription]]]
+    ) -> None:
         """Store several explore.describe results, persisting to disk once.
 
         Args:
@@ -211,18 +225,16 @@ class ConnectionCache:
                 key = tuple(json.loads(str_path))
                 if desc is None:
                     pass  # legacy: None was cached before; skip it
+                elif isinstance(desc, list):
+                    self._describe[key] = [_deserialize_index(idx) for idx in desc]
                 elif desc.get("type") == "index":
                     self._describe[key] = _deserialize_index(desc)
-                elif desc.get("type") == "indices":
-                    self._describe[key] = _deserialize_indices(desc)
-                elif desc.get("type") == "column":
-                    self._describe[key] = _deserialize_column(desc)
-                elif desc.get("type") == "columns":
-                    self._describe[key] = _deserialize_columns(desc)
+                elif desc.get("type") == "field":
+                    self._describe[key] = _deserialize_field(desc)
                 elif desc.get("type") == "relationship":
-                    self._describe[key] = _deserialize_relationship(desc)
+                    self._describe[key] = _deserialize_reference(desc)
                 else:
-                    self._describe[key] = _deserialize_table(desc)
+                    self._describe[key] = _deserialize_entity(desc)
         except Exception:
             logger.warning(f"Discarding unreadable explore cache at {self._path}")
             self._list.clear()
@@ -241,7 +253,11 @@ class ConnectionCache:
                     for key, items in self._list.items()
                 },
                 "describe": {
-                    json.dumps(list(key)): asdict(desc) if desc is not None else None
+                    json.dumps(list(key)): (
+                        [asdict(item) for item in desc]  # ty: ignore[invalid-argument-type]
+                        if isinstance(desc, list)
+                        else asdict(desc)
+                    )
                     for key, desc in self._describe.items()
                 },
             }
@@ -254,7 +270,7 @@ class ConnectionCache:
 
 def _deserialize_index(d: dict[str, Any]) -> IndexDescription:
     return IndexDescription(
-        index=d["index"],
+        name=d["name"],
         fields=[IndexKeyField(**f) for f in d.get("fields", [])],
         unique=d.get("unique", False),
         tables=d.get("tables", []),
@@ -266,16 +282,23 @@ def _deserialize_index(d: dict[str, Any]) -> IndexDescription:
     )
 
 
-def _deserialize_indices(d: dict[str, Any]) -> IndicesDescription:
-    return IndicesDescription(
-        indices=[_deserialize_index(idx) for idx in d.get("indices", [])]
+def _deserialize_reference(d: dict[str, Any]) -> TableReference:
+    return TableReference(
+        table=d["table"],
+        column=d["column"],
+        ref_table=d["ref_table"],
+        ref_column=d["ref_column"],
+        schema=d.get("schema"),
+        ref_schema=d.get("ref_schema"),
+        unique=d.get("unique", False),
+        constraint_name=d.get("constraint_name"),
     )
 
 
-def _deserialize_column(d: dict[str, Any]) -> ColumnDescription:
-    return ColumnDescription(
+def _deserialize_field(d: dict[str, Any]) -> FieldDescription:
+    return FieldDescription(
         name=d["name"],
-        data_type=d["data_type"],
+        types=d.get("types", []),
         nullable=d.get("nullable"),
         pk=d.get("pk", False),
         default=d.get("default"),
@@ -288,39 +311,20 @@ def _deserialize_column(d: dict[str, Any]) -> ColumnDescription:
         comment=d.get("comment"),
         sample=d.get("sample", []),
         outgoing_references=[
-            TableReference(**ref) for ref in d.get("outgoing_references", [])
-        ],
-    )
-
-
-def _deserialize_columns(d: dict[str, Any]) -> ColumnsDescription:
-    return ColumnsDescription(
-        columns=[_deserialize_column(c) for c in d.get("columns", [])]
-    )
-
-
-def _deserialize_relationship(d: dict[str, Any]) -> RelationshipDescription:
-    return RelationshipDescription(
-        table=d["table"],
-        column=d["column"],
-        ref_table=d["ref_table"],
-        ref_column=d["ref_column"],
-        schema=d.get("schema"),
-        ref_schema=d.get("ref_schema"),
-        constraint_name=d.get("constraint_name"),
-    )
-
-
-def _deserialize_table(d: dict[str, Any]) -> TableDescription:
-    return TableDescription(
-        table=d["table"],
-        schema=d.get("schema"),
-        comment=d.get("comment"),
-        columns=[ColumnInfo(**col) for col in d.get("columns", [])],
-        outgoing_references=[
-            TableReference(**ref) for ref in d.get("outgoing_references", [])
+            _deserialize_reference(r) for r in d.get("outgoing_references", [])
         ],
         incoming_references=[
-            TableReference(**ref) for ref in d.get("incoming_references", [])
+            _deserialize_reference(r) for r in d.get("incoming_references", [])
         ],
+    )
+
+
+def _deserialize_entity(d: dict[str, Any]) -> EntityDescription:
+    return EntityDescription(
+        name=d["name"],
+        kind=d.get("kind", ""),
+        properties=[_deserialize_field(f) for f in d.get("properties", [])],
+        schema=d.get("schema"),
+        comment=d.get("comment"),
+        connections=[Connection(**c) for c in d.get("connections", [])],
     )

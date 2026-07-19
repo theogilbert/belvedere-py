@@ -10,7 +10,7 @@ overprovisioned space back out once every path is known.
 from collections import defaultdict
 from dataclasses import dataclass
 
-from ..protocol import ColumnInfo
+from ..protocol import FieldDescription
 from .canvas import _Line, _Segment
 from .graph import GraphEdge, GraphNode
 from .layout import Layout
@@ -87,7 +87,7 @@ def place(
 def _box_lines(node: GraphNode) -> list[_Line]:
     if node.unavailable:
         content_lines = ["(unavailable)"]
-        display_cols: list[ColumnInfo] = []
+        display_cols: list[FieldDescription] = []
         hidden = False
     else:
         display_cols = [
@@ -106,7 +106,7 @@ def _box_lines(node: GraphNode) -> list[_Line]:
                     markers.append("PK")
                 if col.name in node.fk_columns:
                     markers.append("FK")
-                rows.append((col.name, col.type, ",".join(markers)))
+                rows.append((col.name, "|".join(col.types), ",".join(markers)))
             name_w = max((len(r[0]) for r in rows), default=0)
             type_w = max((len(r[1]) for r in rows), default=0)
             content_lines = [

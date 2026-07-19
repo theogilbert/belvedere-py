@@ -9,7 +9,13 @@ from .diagram import DiagramError, build_diagram
 from .drivers import get_driver, get_driver_help, list_drivers
 from .drivers.base import BaseDriver, ConnectionLostError, DriverSettings
 from .explore_cache import CachingDriver, ConnectionCache, cache_file
-from .protocol import PROTOCOL_VERSION, DescribeResult, Method, ProgressCallback, WriteResult
+from .protocol import (
+    PROTOCOL_VERSION,
+    DescribeResult,
+    Method,
+    ProgressCallback,
+    WriteResult,
+)
 
 logger = logging.getLogger(__name__)
 

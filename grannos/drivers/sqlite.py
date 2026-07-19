@@ -5,20 +5,17 @@ from collections.abc import Callable
 from typing import Any, ClassVar, TypeVar
 
 from ..protocol import (
-    ColumnDescription,
-    ColumnInfo,
-    ColumnsDescription,
     DescribeResult,
     DriverParam,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
     IndexKeyField,
-    IndicesDescription,
     Language,
     LobPlaceholder,
     ParamType,
     ReadResult,
-    TableDescription,
     TableReference,
     WriteResult,
 )
@@ -26,8 +23,9 @@ from .base import (
     BaseDriver,
     DriverError,
     DriverSettings,
-    build_relationship_description,
+    find_reference,
     group_references_by_column,
+    group_references_by_ref_column,
 )
 
 T = TypeVar("T")
@@ -184,7 +182,7 @@ nullability, primary key flag).
             case [table, "foreign_keys"]:
                 return [
                     ExploreItem(
-                        name=f"{ref.column} → {ref.table}.{ref.ref_column}",
+                        name=f"{ref.column} → {ref.ref_table}.{ref.ref_column}",
                         type="foreign_key",
                         expandable=False,
                     )
@@ -203,7 +201,7 @@ nullability, primary key flag).
                 return None
 
     async def explore_describe(self, path: list[str]) -> DescribeResult:
-        """Return column metadata for the table at the given path.
+        """Return entity/field metadata for the node at the given path.
 
         Args:
             path: Single-element path with the table name (e.g. ``["users"]``),
@@ -211,18 +209,19 @@ nullability, primary key flag).
                 ``[table, "indices", index_name]`` for a single index.
 
         Returns:
-            TableDescription, IndicesDescription, or IndexDescription depending on the path.
+            EntityDescription, FieldDescription, IndexDescription, list[IndexDescription],
+            or TableReference depending on the path.
         """
         match path:
-            case [table, "columns"]:
-                base = await self._run(self._describe_columns_sync, table)
-                columns = []
-                for col in base.columns:
-                    sample = await self._fetch_sample(table, col.name)
-                    columns.append(dataclasses.replace(col, sample=sample))
-                return ColumnsDescription(columns=columns)
+            case [table]:
+                base = await self._run(self._describe_entity_sync, table)
+                properties = []
+                for f in base.properties:
+                    sample = await self._fetch_sample(table, f.name)
+                    properties.append(dataclasses.replace(f, sample=sample))
+                return dataclasses.replace(base, properties=properties)
             case [table, "columns", col_name]:
-                base = await self._run(self._describe_column_sync, table, col_name)
+                base = await self._run(self._describe_field_sync, table, col_name)
                 if base is None:
                     return None
                 sample = await self._fetch_sample(table, col_name)
@@ -232,74 +231,64 @@ nullability, primary key flag).
 
     def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
         match path:
-            case [table]:
-                cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-                index_list = self._conn.execute(
-                    f"PRAGMA index_list({table})"
-                ).fetchall()
-                col_indexes: dict[str, list[str]] = {}
-                index_col_count: dict[str, int] = {}
-                for idx_row in index_list:
-                    idx_name = idx_row[1]
-                    xinfo = self._conn.execute(
-                        f"PRAGMA index_xinfo({idx_name})"
-                    ).fetchall()
-                    key_cols = [r for r in xinfo if r[5]]
-                    index_col_count[idx_name] = len(key_cols)
-                    for r in key_cols:
-                        col_indexes.setdefault(r[2], []).append(idx_name)
-                return TableDescription(
-                    table=table,
-                    columns=[
-                        ColumnInfo(
-                            name=r[1],
-                            type=r[2],
-                            nullable=not bool(r[3]),
-                            pk=bool(r[5]),
-                            exclusive_index=any(
-                                index_col_count[i] == 1
-                                for i in col_indexes.get(r[1], [])
-                            ),
-                            composite_index=any(
-                                index_col_count[i] > 1
-                                for i in col_indexes.get(r[1], [])
-                            ),
-                        )
-                        for r in cols
-                    ],
-                    outgoing_references=self._outgoing_references_sync(table),
-                    incoming_references=self._incoming_references_sync(table),
-                )
-
             case [table, "indices"]:
                 return self._describe_indices_sync(table)
 
             case [table, "indices", index_name]:
                 return self._describe_index_sync(table, index_name)
 
-            case [table, "columns"]:
-                return self._describe_columns_sync(table)
-
-            case [table, "columns", col_name]:
-                return self._describe_column_sync(table, col_name)
-
             case [table, "relationships", column]:
-                desc = self._explore_describe_sync([table])
-                if not isinstance(desc, TableDescription):
-                    return None
-                return build_relationship_description(desc, table, None, column)
+                refs = self._outgoing_references_sync(table)
+                return find_reference(refs, column)
 
             case _:
                 return None
 
-    def _describe_indices_sync(self, table: str) -> IndicesDescription:
+    def _describe_entity_sync(self, table: str) -> EntityDescription:
+        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        idx_desc_list = self._describe_indices_sync(table)
+        col_excl: dict[str, list[IndexDescription]] = {}
+        col_comp: dict[str, list[IndexDescription]] = {}
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            for cn in key_col_names:
+                if len(key_col_names) == 1:
+                    col_excl.setdefault(cn, []).append(idx_desc)
+                else:
+                    col_comp.setdefault(cn, []).append(idx_desc)
+        outgoing_by_col = group_references_by_column(
+            self._outgoing_references_sync(table)
+        )
+        incoming_by_col = group_references_by_ref_column(
+            self._incoming_references_sync(table)
+        )
+
+        return EntityDescription(
+            name=table,
+            kind="table",
+            properties=[
+                FieldDescription(
+                    name=r[1],
+                    types=[r[2] or ""],
+                    nullable=not bool(r[3]),
+                    pk=bool(r[5]),
+                    exclusive_indices=col_excl.get(r[1], []),
+                    composite_indices=col_comp.get(r[1], []),
+                    outgoing_references=outgoing_by_col.get(r[1], []),
+                    incoming_references=incoming_by_col.get(r[1], []),
+                )
+                for r in cols
+            ],
+        )
+
+    def _describe_indices_sync(self, table: str) -> list[IndexDescription]:
         index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
         indices = []
         for idx_row in index_list:
             idx = self._describe_index_sync(table, idx_row[1])
             if idx is not None:
                 indices.append(idx)
-        return IndicesDescription(indices=indices)
+        return indices
 
     def _describe_index_sync(
         self, table: str, index_name: str
@@ -321,7 +310,7 @@ nullability, primary key flag).
         ).fetchone()
         ddl: str | None = row[0] if row and row[0] else None
         return IndexDescription(
-            index=index_name,
+            name=index_name,
             fields=fields,
             unique=unique,
             tables=[table],
@@ -329,45 +318,15 @@ nullability, primary key flag).
             ddl=ddl,
         )
 
-    def _describe_columns_sync(self, table: str) -> ColumnsDescription:
-        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-        idx_desc_list = self._describe_indices_sync(table).indices
-        col_excl: dict[str, list[IndexDescription]] = {}
-        col_comp: dict[str, list[IndexDescription]] = {}
-        for idx_desc in idx_desc_list:
-            key_col_names = [f.name for f in idx_desc.fields]
-            for cn in key_col_names:
-                if len(key_col_names) == 1:
-                    col_excl.setdefault(cn, []).append(idx_desc)
-                else:
-                    col_comp.setdefault(cn, []).append(idx_desc)
-        refs_by_col = group_references_by_column(self._outgoing_references_sync(table))
-
-        result = []
-        for r in cols:
-            cn = r[1]
-            result.append(
-                ColumnDescription(
-                    name=cn,
-                    data_type=r[2] or "",
-                    nullable=not bool(r[3]),
-                    pk=bool(r[5]),
-                    exclusive_indices=col_excl.get(cn, []),
-                    composite_indices=col_comp.get(cn, []),
-                    outgoing_references=refs_by_col.get(cn, []),
-                )
-            )
-        return ColumnsDescription(columns=result)
-
-    def _describe_column_sync(
+    def _describe_field_sync(
         self, table: str, col_name: str
-    ) -> ColumnDescription | None:
+    ) -> FieldDescription | None:
         cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
         row = next((r for r in cols if r[1] == col_name), None)
         if row is None:
             return None
 
-        idx_desc_list = self._describe_indices_sync(table).indices
+        idx_desc_list = self._describe_indices_sync(table)
         exclusive_indices = []
         composite_indices = []
         for idx_desc in idx_desc_list:
@@ -378,16 +337,22 @@ nullability, primary key flag).
                 exclusive_indices.append(idx_desc)
             else:
                 composite_indices.append(idx_desc)
-        refs_by_col = group_references_by_column(self._outgoing_references_sync(table))
+        outgoing_by_col = group_references_by_column(
+            self._outgoing_references_sync(table)
+        )
+        incoming_by_col = group_references_by_ref_column(
+            self._incoming_references_sync(table)
+        )
 
-        return ColumnDescription(
+        return FieldDescription(
             name=col_name,
-            data_type=row[2] or "",
+            types=[row[2] or ""],
             nullable=not bool(row[3]),
             pk=bool(row[5]),
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
-            outgoing_references=refs_by_col.get(col_name, []),
+            outgoing_references=outgoing_by_col.get(col_name, []),
+            incoming_references=incoming_by_col.get(col_name, []),
         )
 
     def _outgoing_references_sync(self, table: str) -> list[TableReference]:
@@ -395,7 +360,11 @@ nullability, primary key flag).
         unique_cols = self._unique_columns_sync(table)
         return [
             TableReference(
-                column=r[3], table=r[2], ref_column=r[4], unique=r[3] in unique_cols
+                table=table,
+                column=r[3],
+                ref_table=r[2],
+                ref_column=r[4],
+                unique=r[3] in unique_cols,
             )
             for r in rows
         ]
@@ -416,9 +385,10 @@ nullability, primary key flag).
             unique_cols = self._unique_columns_sync(other_table)
             references.extend(
                 TableReference(
-                    column=r[4],
                     table=other_table,
-                    ref_column=r[3],
+                    column=r[3],
+                    ref_table=table,
+                    ref_column=r[4],
                     unique=r[3] in unique_cols,
                 )
                 for r in matching

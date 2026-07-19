@@ -5,10 +5,10 @@ import pytest
 
 from grannos.diagram import DiagramError, build_diagram
 from grannos.protocol import (
-    ColumnInfo,
     DescribeResult,
+    EntityDescription,
+    FieldDescription,
     IndexDescription,
-    TableDescription,
     TableReference,
 )
 
@@ -22,6 +22,58 @@ def _describe_from(table_by_path: Mapping[tuple[str, ...], DescribeResult]) -> D
     return describe
 
 
+def _entity(
+    name: str,
+    schema: str | None = None,
+    fields: list[FieldDescription] | None = None,
+) -> EntityDescription:
+    return EntityDescription(
+        name=name, kind="table", schema=schema, properties=fields or []
+    )
+
+
+def _field(
+    name: str,
+    type_: str = "INTEGER",
+    pk: bool = False,
+    outgoing: list[TableReference] | None = None,
+    incoming: list[TableReference] | None = None,
+) -> FieldDescription:
+    return FieldDescription(
+        name=name,
+        types=[type_],
+        pk=pk,
+        outgoing_references=outgoing or [],
+        incoming_references=incoming or [],
+    )
+
+
+def _outgoing(
+    table: str, column: str, ref_table: str, ref_column: str, unique: bool = False
+) -> TableReference:
+    return TableReference(
+        table=table,
+        column=column,
+        ref_table=ref_table,
+        ref_column=ref_column,
+        unique=unique,
+    )
+
+
+def _incoming(
+    owner_table: str, owner_column: str, this_table: str, this_column: str
+) -> TableReference:
+    """A reference owned by *owner_table* that targets *this_table*'s field —
+    i.e. what belongs on ``this_table``'s ``this_column`` field's
+    ``incoming_references``."""
+    return TableReference(
+        table=owner_table,
+        column=owner_column,
+        ref_table=this_table,
+        ref_column=this_column,
+    )
+
+
 class TestBuildDiagram:
     async def test_raises_when_path_does_not_resolve_to_a_table(self) -> None:
         describe = _describe_from({})
@@ -29,113 +81,109 @@ class TestBuildDiagram:
             await build_diagram(["users"], describe)
 
     async def test_single_table_renders_a_box_with_its_name(self) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
         assert "users" in result.diagram
         assert "id" in result.diagram
 
     async def test_schema_qualified_table_shows_schema_dot_table(self) -> None:
-        desc = TableDescription(schema="dbo", table="users", columns=[])
+        desc = _entity("users", schema="dbo")
         describe = _describe_from({("dbo", "users"): desc})
         result = await build_diagram(["dbo", "users"], describe)
         assert "dbo.users" in result.diagram
 
     async def test_pk_column_is_marked(self) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
         assert "PK" in result.diagram
 
     async def test_fk_column_is_marked(self) -> None:
-        desc = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id")
+        desc = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id", outgoing=[_outgoing("orders", "user_id", "users", "id")]
+                )
             ],
         )
-        users = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        users = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("orders",): desc, ("users",): users})
         result = await build_diagram(["orders"], describe)
         assert "FK" in result.diagram
 
     async def test_many_to_one_edge_shows_star_and_one_markers(self) -> None:
-        orders = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id")
+        orders = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id", outgoing=[_outgoing("orders", "user_id", "users", "id")]
+                )
             ],
         )
-        users = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        users = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("orders",): orders, ("users",): users})
         result = await build_diagram(["orders"], describe)
         # "*" (many) at the FK side, "1" at the referenced side.
         assert re.search(r"│\*─*1│", result.diagram)
 
     async def test_one_to_one_edge_shows_one_markers_on_both_ends(self) -> None:
-        orders = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(
-                    column="user_id", table="users", ref_column="id", unique=True
+        orders = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id",
+                    outgoing=[
+                        _outgoing("orders", "user_id", "users", "id", unique=True)
+                    ],
                 )
             ],
         )
-        users = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        users = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("orders",): orders, ("users",): users})
         result = await build_diagram(["orders"], describe)
         # FK column is itself unique, so both ends show "1" instead of "*".
         assert re.search(r"│1─*1│", result.diagram)
 
     async def test_outgoing_reference_renders_connected_table(self) -> None:
-        orders = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id")
+        orders = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id", outgoing=[_outgoing("orders", "user_id", "users", "id")]
+                )
             ],
         )
-        users = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        users = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("orders",): orders, ("users",): users})
         result = await build_diagram(["orders"], describe)
         assert "users" in result.diagram
 
     async def test_incoming_reference_renders_connected_table(self) -> None:
-        users = TableDescription(
-            table="users",
-            columns=[ColumnInfo(name="id", type="INTEGER", pk=True)],
-            incoming_references=[
-                TableReference(column="id", table="orders", ref_column="user_id")
+        users = _entity(
+            "users",
+            fields=[
+                _field(
+                    "id",
+                    pk=True,
+                    incoming=[_incoming("orders", "user_id", "users", "id")],
+                )
             ],
         )
-        orders = TableDescription(
-            table="orders", columns=[ColumnInfo(name="user_id", type="INTEGER")]
-        )
+        orders = _entity("orders", fields=[_field("user_id")])
         describe = _describe_from({("users",): users, ("orders",): orders})
         result = await build_diagram(["users"], describe)
         assert "orders" in result.diagram
 
     async def test_self_reference_is_not_duplicated(self) -> None:
-        desc = TableDescription(
-            table="employees",
-            columns=[ColumnInfo(name="manager_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="manager_id", table="employees", ref_column="id")
+        desc = _entity(
+            "employees",
+            fields=[
+                _field(
+                    "manager_id",
+                    outgoing=[_outgoing("employees", "manager_id", "employees", "id")],
+                )
             ],
         )
         describe = _describe_from({("employees",): desc})
@@ -143,19 +191,13 @@ class TestBuildDiagram:
         assert result.diagram.count("┌─ employees") == 1
 
     async def test_cycle_does_not_recurse_infinitely(self) -> None:
-        a = TableDescription(
-            table="a",
-            columns=[ColumnInfo(name="b_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="b_id", table="b", ref_column="id")
-            ],
+        a = _entity(
+            "a",
+            fields=[_field("b_id", outgoing=[_outgoing("a", "b_id", "b", "id")])],
         )
-        b = TableDescription(
-            table="b",
-            columns=[ColumnInfo(name="a_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="a_id", table="a", ref_column="id")
-            ],
+        b = _entity(
+            "b",
+            fields=[_field("a_id", outgoing=[_outgoing("b", "a_id", "a", "id")])],
         )
         describe = _describe_from({("a",): a, ("b",): b})
         result = await build_diagram(["a"], describe)
@@ -163,11 +205,12 @@ class TestBuildDiagram:
         assert result.diagram.count("┌─ b") == 1
 
     async def test_unresolvable_reference_gets_a_placeholder_box(self) -> None:
-        desc = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id")
+        desc = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id", outgoing=[_outgoing("orders", "user_id", "users", "id")]
+                )
             ],
         )
         describe = _describe_from({("orders",): desc})
@@ -176,17 +219,17 @@ class TestBuildDiagram:
         assert "(unavailable)" in result.diagram
 
     async def test_non_table_describe_result_raises(self) -> None:
-        describe = _describe_from({("i",): IndexDescription(index="i", fields=[])})
+        describe = _describe_from({("i",): IndexDescription(name="i", fields=[])})
         with pytest.raises(DiagramError):
             await build_diagram(["i"], describe)
 
     async def test_non_key_columns_are_collapsed_to_an_ellipsis(self) -> None:
-        desc = TableDescription(
-            table="users",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="name", type="TEXT"),
-                ColumnInfo(name="email", type="TEXT"),
+        desc = _entity(
+            "users",
+            fields=[
+                _field("id", pk=True),
+                _field("name", "TEXT"),
+                _field("email", "TEXT"),
             ],
         )
         describe = _describe_from({("users",): desc})
@@ -196,20 +239,19 @@ class TestBuildDiagram:
         assert "email" not in result.diagram
 
     async def test_incoming_fk_column_is_kept(self) -> None:
-        users = TableDescription(
-            table="users",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="username", type="TEXT"),
-                ColumnInfo(name="bio", type="TEXT"),
-            ],
-            incoming_references=[
-                TableReference(column="username", table="posts", ref_column="author")
+        users = _entity(
+            "users",
+            fields=[
+                _field("id", pk=True),
+                _field(
+                    "username",
+                    "TEXT",
+                    incoming=[_incoming("posts", "author", "users", "username")],
+                ),
+                _field("bio", "TEXT"),
             ],
         )
-        posts = TableDescription(
-            table="posts", columns=[ColumnInfo(name="author", type="TEXT")]
-        )
+        posts = _entity("posts", fields=[_field("author", "TEXT")])
         describe = _describe_from({("users",): users, ("posts",): posts})
         result = await build_diagram(["users"], describe)
         assert "username" in result.diagram
@@ -217,15 +259,16 @@ class TestBuildDiagram:
         assert "..." in result.diagram
 
     async def test_no_ellipsis_when_all_columns_are_keys(self) -> None:
-        desc = TableDescription(
-            table="orders",
-            columns=[
-                ColumnInfo(name="user_id", type="INTEGER"),
-                ColumnInfo(name="product_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id"),
-                TableReference(column="product_id", table="products", ref_column="id"),
+        desc = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id", outgoing=[_outgoing("orders", "user_id", "users", "id")]
+                ),
+                _field(
+                    "product_id",
+                    outgoing=[_outgoing("orders", "product_id", "products", "id")],
+                ),
             ],
         )
         describe = _describe_from({("orders",): desc})
@@ -233,41 +276,35 @@ class TestBuildDiagram:
         assert "..." not in result.diagram
 
     async def test_diamond_reference_draws_exactly_one_box(self) -> None:
-        root = TableDescription(
-            table="root",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="a_id", type="INTEGER"),
-                ColumnInfo(name="b_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="a_id", table="a", ref_column="id"),
-                TableReference(column="b_id", table="b", ref_column="id"),
+        root = _entity(
+            "root",
+            fields=[
+                _field("id", pk=True),
+                _field("a_id", outgoing=[_outgoing("root", "a_id", "a", "id")]),
+                _field("b_id", outgoing=[_outgoing("root", "b_id", "b", "id")]),
             ],
         )
-        a = TableDescription(
-            table="a",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="shared_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="shared_id", table="shared", ref_column="id")
-            ],
-        )
-        b = TableDescription(
-            table="b",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="shared_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="shared_id", table="shared", ref_column="id")
+        a = _entity(
+            "a",
+            fields=[
+                _field("id", pk=True),
+                _field(
+                    "shared_id",
+                    outgoing=[_outgoing("a", "shared_id", "shared", "id")],
+                ),
             ],
         )
-        shared = TableDescription(
-            table="shared", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        b = _entity(
+            "b",
+            fields=[
+                _field("id", pk=True),
+                _field(
+                    "shared_id",
+                    outgoing=[_outgoing("b", "shared_id", "shared", "id")],
+                ),
+            ],
         )
+        shared = _entity("shared", fields=[_field("id", pk=True)])
         describe = _describe_from(
             {("root",): root, ("a",): a, ("b",): b, ("shared",): shared}
         )
@@ -275,19 +312,16 @@ class TestBuildDiagram:
         assert result.diagram.count("┌─ shared") == 1
 
     async def test_edge_between_boxes_of_different_heights_is_straight(self) -> None:
-        tall = TableDescription(
-            table="tall",
-            columns=[
-                ColumnInfo(name=f"k{i}", type="INTEGER", pk=True) for i in range(4)
-            ]
-            + [ColumnInfo(name="small_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="small_id", table="small", ref_column="id")
+        tall = _entity(
+            "tall",
+            fields=[_field(f"k{i}", pk=True) for i in range(4)]
+            + [
+                _field(
+                    "small_id", outgoing=[_outgoing("tall", "small_id", "small", "id")]
+                )
             ],
         )
-        small = TableDescription(
-            table="small", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        small = _entity("small", fields=[_field("id", pk=True)])
         describe = _describe_from({("tall",): tall, ("small",): small})
         result = await build_diagram(["tall"], describe)
         # small is nudged down so both anchors share a row — one straight
@@ -299,31 +333,24 @@ class TestBuildDiagram:
     async def test_skip_edge_routes_past_the_intermediate_box_via_a_bypass_lane(
         self,
     ) -> None:
-        root = TableDescription(
-            table="root",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="mid_id", type="INTEGER"),
-                ColumnInfo(name="leaf_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="mid_id", table="mid", ref_column="id"),
-                TableReference(column="leaf_id", table="leaf", ref_column="id"),
+        root = _entity(
+            "root",
+            fields=[
+                _field("id", pk=True),
+                _field("mid_id", outgoing=[_outgoing("root", "mid_id", "mid", "id")]),
+                _field(
+                    "leaf_id", outgoing=[_outgoing("root", "leaf_id", "leaf", "id")]
+                ),
             ],
         )
-        mid = TableDescription(
-            table="mid",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="leaf_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="leaf_id", table="leaf", ref_column="id")
+        mid = _entity(
+            "mid",
+            fields=[
+                _field("id", pk=True),
+                _field("leaf_id", outgoing=[_outgoing("mid", "leaf_id", "leaf", "id")]),
             ],
         )
-        leaf = TableDescription(
-            table="leaf", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        leaf = _entity("leaf", fields=[_field("id", pk=True)])
         describe = _describe_from({("root",): root, ("mid",): mid, ("leaf",): leaf})
         result = await build_diagram(["root"], describe)
         # The root→leaf edge crosses mid's rank; it should bypass mid via a
@@ -340,29 +367,18 @@ class TestBuildDiagram:
     ) -> None:
         # a and c both land on the hub's same side (b takes the other side by
         # LPT balancing) — their edges must not both bunch at one anchor.
-        root = TableDescription(
-            table="root",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="a_id", type="INTEGER"),
-                ColumnInfo(name="b_id", type="INTEGER"),
-                ColumnInfo(name="c_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="a_id", table="a", ref_column="id"),
-                TableReference(column="b_id", table="b", ref_column="id"),
-                TableReference(column="c_id", table="c", ref_column="id"),
+        root = _entity(
+            "root",
+            fields=[
+                _field("id", pk=True),
+                _field("a_id", outgoing=[_outgoing("root", "a_id", "a", "id")]),
+                _field("b_id", outgoing=[_outgoing("root", "b_id", "b", "id")]),
+                _field("c_id", outgoing=[_outgoing("root", "c_id", "c", "id")]),
             ],
         )
-        a = TableDescription(
-            table="a", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
-        b = TableDescription(
-            table="b", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
-        c = TableDescription(
-            table="c", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        a = _entity("a", fields=[_field("id", pk=True)])
+        b = _entity("b", fields=[_field("id", pk=True)])
+        c = _entity("c", fields=[_field("id", pk=True)])
         describe = _describe_from({("root",): root, ("a",): a, ("b",): b, ("c",): c})
         result = await build_diagram(["root"], describe)
 
@@ -377,7 +393,7 @@ class TestBuildDiagram:
 
 class TestBuildDiagramRegions:
     async def test_table_header_region_resolves_to_table_path(self) -> None:
-        desc = TableDescription(schema="dbo", table="users", columns=[])
+        desc = _entity("users", schema="dbo")
         describe = _describe_from({("dbo", "users"): desc})
         result = await build_diagram(["dbo", "users"], describe)
 
@@ -387,9 +403,7 @@ class TestBuildDiagramRegions:
         assert "dbo.users" in span
 
     async def test_column_region_resolves_to_column_path(self) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -399,9 +413,7 @@ class TestBuildDiagramRegions:
         assert span == "id"
 
     async def test_column_region_offset_accounts_for_multibyte_box_chars(self) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -413,41 +425,35 @@ class TestBuildDiagramRegions:
         assert region.col_start == 4
 
     async def test_table_referenced_twice_still_gets_drawn_as_one_box(self) -> None:
-        root = TableDescription(
-            table="root",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="a_id", type="INTEGER"),
-                ColumnInfo(name="b_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="a_id", table="a", ref_column="id"),
-                TableReference(column="b_id", table="b", ref_column="id"),
+        root = _entity(
+            "root",
+            fields=[
+                _field("id", pk=True),
+                _field("a_id", outgoing=[_outgoing("root", "a_id", "a", "id")]),
+                _field("b_id", outgoing=[_outgoing("root", "b_id", "b", "id")]),
             ],
         )
-        a = TableDescription(
-            table="a",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="shared_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="shared_id", table="shared", ref_column="id")
-            ],
-        )
-        b = TableDescription(
-            table="b",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="shared_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="shared_id", table="shared", ref_column="id")
+        a = _entity(
+            "a",
+            fields=[
+                _field("id", pk=True),
+                _field(
+                    "shared_id",
+                    outgoing=[_outgoing("a", "shared_id", "shared", "id")],
+                ),
             ],
         )
-        shared = TableDescription(
-            table="shared", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        b = _entity(
+            "b",
+            fields=[
+                _field("id", pk=True),
+                _field(
+                    "shared_id",
+                    outgoing=[_outgoing("b", "shared_id", "shared", "id")],
+                ),
+            ],
         )
+        shared = _entity("shared", fields=[_field("id", pk=True)])
         describe = _describe_from(
             {("root",): root, ("a",): a, ("b",): b, ("shared",): shared}
         )
@@ -459,13 +465,7 @@ class TestBuildDiagramRegions:
         assert len({r.row for r in matches}) == 3
 
     async def test_ellipsis_region_resolves_to_the_table_column_list(self) -> None:
-        desc = TableDescription(
-            table="users",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="name", type="TEXT"),
-            ],
-        )
+        desc = _entity("users", fields=[_field("id", pk=True), _field("name", "TEXT")])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -475,11 +475,12 @@ class TestBuildDiagramRegions:
         assert span == "..."
 
     async def test_unresolved_reference_still_gets_a_region(self) -> None:
-        desc = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id")
+        desc = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id", outgoing=[_outgoing("orders", "user_id", "users", "id")]
+                )
             ],
         )
         describe = _describe_from({("orders",): desc})
@@ -491,7 +492,7 @@ class TestBuildDiagramRegions:
         assert "users" in span
 
     async def test_table_header_region_has_table_kind(self) -> None:
-        desc = TableDescription(table="users", columns=[])
+        desc = _entity("users")
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -499,9 +500,7 @@ class TestBuildDiagramRegions:
         assert region.kind == "table"
 
     async def test_column_region_has_column_kind(self) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -509,16 +508,15 @@ class TestBuildDiagramRegions:
         assert region.kind == "column"
 
     async def test_relationship_gets_an_edge_kind_region(self) -> None:
-        orders = TableDescription(
-            table="orders",
-            columns=[ColumnInfo(name="user_id", type="INTEGER")],
-            outgoing_references=[
-                TableReference(column="user_id", table="users", ref_column="id")
+        orders = _entity(
+            "orders",
+            fields=[
+                _field(
+                    "user_id", outgoing=[_outgoing("orders", "user_id", "users", "id")]
+                )
             ],
         )
-        users = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        users = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("orders",): orders, ("users",): users})
         result = await build_diagram(["orders"], describe)
 
@@ -534,31 +532,24 @@ class TestBuildDiagramRegions:
         # The mid->leaf edge in the skip-edge fixture detours vertically past
         # root's rank, spanning several rows — every row it touches gets its
         # own region, all sharing the same path.
-        root = TableDescription(
-            table="root",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="mid_id", type="INTEGER"),
-                ColumnInfo(name="leaf_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="mid_id", table="mid", ref_column="id"),
-                TableReference(column="leaf_id", table="leaf", ref_column="id"),
+        root = _entity(
+            "root",
+            fields=[
+                _field("id", pk=True),
+                _field("mid_id", outgoing=[_outgoing("root", "mid_id", "mid", "id")]),
+                _field(
+                    "leaf_id", outgoing=[_outgoing("root", "leaf_id", "leaf", "id")]
+                ),
             ],
         )
-        mid = TableDescription(
-            table="mid",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="leaf_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="leaf_id", table="leaf", ref_column="id")
+        mid = _entity(
+            "mid",
+            fields=[
+                _field("id", pk=True),
+                _field("leaf_id", outgoing=[_outgoing("mid", "leaf_id", "leaf", "id")]),
             ],
         )
-        leaf = TableDescription(
-            table="leaf", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        leaf = _entity("leaf", fields=[_field("id", pk=True)])
         describe = _describe_from({("root",): root, ("mid",): mid, ("leaf",): leaf})
         result = await build_diagram(["root"], describe)
 
@@ -571,9 +562,7 @@ class TestBuildDiagramRegions:
         assert len({tuple(r.path) for r in edge_regions}) == 1
 
     async def test_table_box_border_gets_a_region_on_every_row(self) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -584,9 +573,7 @@ class TestBuildDiagramRegions:
     async def test_table_border_region_on_column_row_does_not_overlap_column(
         self,
     ) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -605,9 +592,7 @@ class TestBuildDiagramRegions:
             assert not overlap
 
     async def test_table_regions_all_share_the_same_path(self) -> None:
-        desc = TableDescription(
-            table="users", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        desc = _entity("users", fields=[_field("id", pk=True)])
         describe = _describe_from({("users",): desc})
         result = await build_diagram(["users"], describe)
 
@@ -615,10 +600,7 @@ class TestBuildDiagramRegions:
         assert all(r.path == ["users"] for r in table_regions)
 
     async def test_every_interior_row_gets_a_left_and_right_border_region(self) -> None:
-        desc = TableDescription(
-            table="t",
-            columns=[ColumnInfo(name=n, type="INTEGER", pk=True) for n in "abcd"],
-        )
+        desc = _entity("t", fields=[_field(n, pk=True) for n in "abcd"])
         describe = _describe_from({("t",): desc})
         result = await build_diagram(["t"], describe)
 
@@ -628,31 +610,24 @@ class TestBuildDiagramRegions:
             assert sum(1 for r in table_regions if r.row == row) == 2
 
     async def test_skip_edge_never_overlaps_an_unrelated_table_region(self) -> None:
-        root = TableDescription(
-            table="root",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="mid_id", type="INTEGER"),
-                ColumnInfo(name="leaf_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="mid_id", table="mid", ref_column="id"),
-                TableReference(column="leaf_id", table="leaf", ref_column="id"),
+        root = _entity(
+            "root",
+            fields=[
+                _field("id", pk=True),
+                _field("mid_id", outgoing=[_outgoing("root", "mid_id", "mid", "id")]),
+                _field(
+                    "leaf_id", outgoing=[_outgoing("root", "leaf_id", "leaf", "id")]
+                ),
             ],
         )
-        mid = TableDescription(
-            table="mid",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="leaf_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="leaf_id", table="leaf", ref_column="id")
+        mid = _entity(
+            "mid",
+            fields=[
+                _field("id", pk=True),
+                _field("leaf_id", outgoing=[_outgoing("mid", "leaf_id", "leaf", "id")]),
             ],
         )
-        leaf = TableDescription(
-            table="leaf", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        leaf = _entity("leaf", fields=[_field("id", pk=True)])
         describe = _describe_from({("root",): root, ("mid",): mid, ("leaf",): leaf})
         result = await build_diagram(["root"], describe)
 
@@ -677,39 +652,25 @@ class TestBuildDiagramRegions:
     async def test_edges_fanning_out_from_the_same_box_never_share_a_cell(
         self,
     ) -> None:
-        root = TableDescription(
-            table="root",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="a_id", type="INTEGER"),
-                ColumnInfo(name="b_id", type="INTEGER"),
-                ColumnInfo(name="c_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="a_id", table="a", ref_column="id"),
-                TableReference(column="b_id", table="b", ref_column="id"),
-                TableReference(column="c_id", table="c", ref_column="id"),
+        root = _entity(
+            "root",
+            fields=[
+                _field("id", pk=True),
+                _field("a_id", outgoing=[_outgoing("root", "a_id", "a", "id")]),
+                _field("b_id", outgoing=[_outgoing("root", "b_id", "b", "id")]),
+                _field("c_id", outgoing=[_outgoing("root", "c_id", "c", "id")]),
             ],
         )
-        a = TableDescription(
-            table="a", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
-        b = TableDescription(
-            table="b",
-            columns=[
-                ColumnInfo(name="id", type="INTEGER", pk=True),
-                ColumnInfo(name="d_id", type="INTEGER"),
-            ],
-            outgoing_references=[
-                TableReference(column="d_id", table="d", ref_column="id")
+        a = _entity("a", fields=[_field("id", pk=True)])
+        b = _entity(
+            "b",
+            fields=[
+                _field("id", pk=True),
+                _field("d_id", outgoing=[_outgoing("b", "d_id", "d", "id")]),
             ],
         )
-        c = TableDescription(
-            table="c", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
-        d = TableDescription(
-            table="d", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
-        )
+        c = _entity("c", fields=[_field("id", pk=True)])
+        d = _entity("d", fields=[_field("id", pk=True)])
         describe = _describe_from(
             {("root",): root, ("a",): a, ("b",): b, ("c",): c, ("d",): d}
         )

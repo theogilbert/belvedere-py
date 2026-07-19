@@ -8,21 +8,18 @@ from typing import Any, TypeVar
 import mssql_python
 
 from ..protocol import (
-    ColumnDescription,
-    ColumnInfo,
-    ColumnsDescription,
     DescribeResult,
     DriverParam,
     DriverParamChoice,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
     IndexKeyField,
-    IndicesDescription,
     Language,
     LobPlaceholder,
     ParamType,
     ReadResult,
-    TableDescription,
     TableReference,
     WriteResult,
 )
@@ -33,8 +30,9 @@ from .base import (
     DriverError,
     DriverSettings,
     build_column_samples,
-    build_relationship_description,
+    find_reference,
     group_references_by_column,
+    group_references_by_ref_column,
 )
 
 T = TypeVar("T")
@@ -294,14 +292,15 @@ nullability, default).
                 return None
 
     async def explore_describe(self, path: list[str]) -> DescribeResult:
-        """Return column metadata for the table at the given path.
+        """Return entity/field metadata for the node at the given path.
 
         Args:
             path: Two-element path ``[schema, table]``, ``[schema, table, "indices"]``
                 for all indexes, or ``[schema, table, "indices", index_name]`` for one.
 
         Returns:
-            TableDescription, IndicesDescription, or IndexDescription depending on the path.
+            EntityDescription, FieldDescription, IndexDescription, list[IndexDescription],
+            or TableReference depending on the path.
         """
         try:
             return await self._explore_describe(path)
@@ -311,18 +310,19 @@ nullability, default).
 
     async def _explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
-            case [schema, table, "columns"]:
-                base = await self._run(self._describe_columns_sync, schema, table)
+            case [schema, table]:
+                base = await self._run(self._describe_entity_sync, schema, table)
                 samples = await self._fetch_samples(schema, table)
-                return ColumnsDescription(
-                    columns=[
-                        dataclasses.replace(col, sample=samples.get(col.name, []))
-                        for col in base.columns
-                    ]
+                return dataclasses.replace(
+                    base,
+                    properties=[
+                        dataclasses.replace(f, sample=samples.get(f.name, []))
+                        for f in base.properties
+                    ],
                 )
             case [schema, table, "columns", col_name]:
                 base = await self._run(
-                    self._describe_column_sync, schema, table, col_name
+                    self._describe_field_sync, schema, table, col_name
                 )
                 if base is None:
                     return None
@@ -334,73 +334,6 @@ nullability, default).
     def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
 
         match path:
-            case [schema, table]:
-                cur = self._conn.cursor()
-                cur.execute(
-                    "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
-                    " FROM INFORMATION_SCHEMA.COLUMNS"
-                    " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
-                    " ORDER BY ORDINAL_POSITION",
-                    (schema, table),
-                )
-                col_rows = cur.fetchall()  # ty: ignore[missing-argument]
-                cur.execute(
-                    "SELECT c.name, i.name"
-                    " FROM sys.indexes i"
-                    " JOIN sys.index_columns ic"
-                    "  ON i.object_id = ic.object_id AND i.index_id = ic.index_id"
-                    " JOIN sys.columns c"
-                    "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
-                    " JOIN sys.objects o ON i.object_id = o.object_id"
-                    " JOIN sys.schemas s ON o.schema_id = s.schema_id"
-                    " WHERE s.name = ? AND o.name = ? AND i.name IS NOT NULL",
-                    (schema, table),
-                )
-                col_indexes: dict[str, list[str]] = {}
-                index_cols: dict[str, set[str]] = {}
-                for col_name, idx_name in cur.fetchall():  # ty: ignore[missing-argument]
-                    col_indexes.setdefault(col_name, []).append(idx_name)
-                    index_cols.setdefault(idx_name, set()).add(col_name)
-                index_col_count = {k: len(v) for k, v in index_cols.items()}
-                cur.execute(
-                    "SELECT CAST(ep.value AS NVARCHAR(MAX))"
-                    " FROM sys.objects o"
-                    " JOIN sys.schemas s ON o.schema_id = s.schema_id"
-                    " LEFT JOIN sys.extended_properties ep"
-                    "  ON ep.major_id = o.object_id AND ep.minor_id = 0"
-                    "  AND ep.name = 'MS_Description'"
-                    " WHERE s.name = ? AND o.name = ?",
-                    (schema, table),
-                )
-                comment_row = cur.fetchone()  # ty: ignore[missing-argument]
-                table_comment: str | None = (
-                    comment_row[0].strip() if comment_row and comment_row[0] else None
-                )
-                return TableDescription(
-                    table=table,
-                    schema=schema,
-                    comment=table_comment,
-                    columns=[
-                        ColumnInfo(
-                            name=r[0],
-                            type=r[1],
-                            nullable=r[2] == "YES",
-                            default=r[3],
-                            exclusive_index=any(
-                                index_col_count[i] == 1
-                                for i in col_indexes.get(r[0], [])
-                            ),
-                            composite_index=any(
-                                index_col_count[i] > 1
-                                for i in col_indexes.get(r[0], [])
-                            ),
-                        )
-                        for r in col_rows
-                    ],
-                    outgoing_references=self._outgoing_references_sync(schema, table),
-                    incoming_references=self._incoming_references_sync(schema, table),
-                )
-
             case [schema, table, "indices"]:
                 return self._describe_indices_sync(schema, table)
 
@@ -408,15 +341,183 @@ nullability, default).
                 return self._describe_index_sync(schema, table, index_name)
 
             case [schema, table, "relationships", column]:
-                desc = self._explore_describe_sync([schema, table])
-                if not isinstance(desc, TableDescription):
-                    return None
-                return build_relationship_description(desc, table, schema, column)
+                refs = self._outgoing_references_sync(schema, table)
+                return find_reference(refs, column)
 
             case _:
                 return None
 
-    def _describe_indices_sync(self, schema: str, table: str) -> IndicesDescription:
+    def _describe_entity_sync(self, schema: str, table: str) -> EntityDescription:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
+            " FROM INFORMATION_SCHEMA.COLUMNS"
+            " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+            " ORDER BY ORDINAL_POSITION",
+            (schema, table),
+        )
+        col_rows = cur.fetchall()  # ty: ignore[missing-argument]
+
+        cur.execute(
+            "SELECT c.name FROM sys.key_constraints kc"
+            " JOIN sys.index_columns ic"
+            "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
+            " JOIN sys.columns c"
+            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+            " JOIN sys.objects o ON kc.parent_object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND kc.type = 'PK'",
+            (schema, table),
+        )
+        pk_cols: set[str] = {r[0] for r in cur.fetchall()}  # ty: ignore[missing-argument]
+
+        cur.execute(
+            "SELECT c.name, CAST(ep.value AS NVARCHAR(MAX))"
+            " FROM sys.columns c"
+            " JOIN sys.objects o ON c.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " LEFT JOIN sys.extended_properties ep"
+            "  ON ep.major_id = c.object_id AND ep.minor_id = c.column_id"
+            "  AND ep.name = 'MS_Description'"
+            " WHERE s.name = ? AND o.name = ?",
+            (schema, table),
+        )
+        col_comments: dict[str, str | None] = {
+            r[0]: (r[1].strip() if r[1] else None)
+            for r in cur.fetchall()  # ty: ignore[missing-argument]
+        }
+
+        cur.execute(
+            "SELECT CAST(ep.value AS NVARCHAR(MAX))"
+            " FROM sys.objects o"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " LEFT JOIN sys.extended_properties ep"
+            "  ON ep.major_id = o.object_id AND ep.minor_id = 0"
+            "  AND ep.name = 'MS_Description'"
+            " WHERE s.name = ? AND o.name = ?",
+            (schema, table),
+        )
+        comment_row = cur.fetchone()  # ty: ignore[missing-argument]
+        table_comment: str | None = (
+            comment_row[0].strip() if comment_row and comment_row[0] else None
+        )
+
+        idx_desc_list = self._describe_indices_sync(schema, table)
+        col_excl: dict[str, list[IndexDescription]] = {}
+        col_comp: dict[str, list[IndexDescription]] = {}
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            for cn in key_col_names:
+                if len(key_col_names) == 1:
+                    col_excl.setdefault(cn, []).append(idx_desc)
+                else:
+                    col_comp.setdefault(cn, []).append(idx_desc)
+
+        outgoing_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
+        incoming_by_col = group_references_by_ref_column(
+            self._incoming_references_sync(schema, table)
+        )
+
+        return EntityDescription(
+            name=table,
+            kind="table",
+            schema=schema,
+            comment=table_comment,
+            properties=[
+                FieldDescription(
+                    name=r[0],
+                    types=[r[1]],
+                    nullable=r[2] == "YES",
+                    pk=r[0] in pk_cols,
+                    default=r[3],
+                    exclusive_indices=col_excl.get(r[0], []),
+                    composite_indices=col_comp.get(r[0], []),
+                    comment=col_comments.get(r[0]),
+                    outgoing_references=outgoing_by_col.get(r[0], []),
+                    incoming_references=incoming_by_col.get(r[0], []),
+                )
+                for r in col_rows
+            ],
+        )
+
+    def _describe_field_sync(
+        self, schema: str, table: str, col_name: str
+    ) -> FieldDescription | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
+            " FROM INFORMATION_SCHEMA.COLUMNS"
+            " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+            (schema, table, col_name),
+        )
+        rows = cur.fetchall()  # ty: ignore[missing-argument]
+        if not rows:
+            return None
+        r = rows[0]
+
+        cur.execute(
+            "SELECT c.name FROM sys.key_constraints kc"
+            " JOIN sys.index_columns ic"
+            "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
+            " JOIN sys.columns c"
+            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
+            " JOIN sys.objects o ON kc.parent_object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " WHERE s.name = ? AND o.name = ? AND kc.type = 'PK'",
+            (schema, table),
+        )
+        pk_cols: set[str] = {row[0] for row in cur.fetchall()}  # ty: ignore[missing-argument]
+
+        cur.execute(
+            "SELECT CAST(ep.value AS NVARCHAR(MAX))"
+            " FROM sys.columns c"
+            " JOIN sys.objects o ON c.object_id = o.object_id"
+            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
+            " LEFT JOIN sys.extended_properties ep"
+            "  ON ep.major_id = c.object_id AND ep.minor_id = c.column_id"
+            "  AND ep.name = 'MS_Description'"
+            " WHERE s.name = ? AND o.name = ? AND c.name = ?",
+            (schema, table, col_name),
+        )
+        comment_row = cur.fetchone()  # ty: ignore[missing-argument]
+        comment: str | None = (
+            comment_row[0].strip() if comment_row and comment_row[0] else None
+        )
+
+        idx_desc_list = self._describe_indices_sync(schema, table)
+        exclusive_indices = []
+        composite_indices = []
+        for idx_desc in idx_desc_list:
+            key_col_names = [f.name for f in idx_desc.fields]
+            if col_name not in key_col_names:
+                continue
+            if len(key_col_names) == 1:
+                exclusive_indices.append(idx_desc)
+            else:
+                composite_indices.append(idx_desc)
+        outgoing_by_col = group_references_by_column(
+            self._outgoing_references_sync(schema, table)
+        )
+        incoming_by_col = group_references_by_ref_column(
+            self._incoming_references_sync(schema, table)
+        )
+
+        return FieldDescription(
+            name=col_name,
+            types=[r[1] or ""],
+            nullable=r[2] == "YES",
+            pk=col_name in pk_cols,
+            default=r[3],
+            exclusive_indices=exclusive_indices,
+            composite_indices=composite_indices,
+            comment=comment,
+            outgoing_references=outgoing_by_col.get(col_name, []),
+            incoming_references=incoming_by_col.get(col_name, []),
+        )
+
+    def _describe_indices_sync(self, schema: str, table: str) -> list[IndexDescription]:
         cur = self._conn.cursor()
         cur.execute(
             "SELECT i.name, i.type_desc, i.is_unique,"
@@ -477,7 +578,7 @@ nullability, default).
             )
             indices.append(
                 IndexDescription(
-                    index=idx_name,
+                    name=idx_name,
                     fields=fields,
                     unique=bool(is_unique),
                     tables=[table],
@@ -488,7 +589,7 @@ nullability, default).
                     ddl=ddl,
                 )
             )
-        return IndicesDescription(indices=indices)
+        return indices
 
     def _describe_index_sync(
         self, schema: str, table: str, index_name: str
@@ -544,7 +645,7 @@ nullability, default).
             condition,
         )
         return IndexDescription(
-            index=index_name,
+            name=index_name,
             fields=fields,
             unique=bool(is_unique),
             tables=[table],
@@ -553,150 +654,6 @@ nullability, default).
             visible=not bool(is_disabled),
             included_columns=included,
             ddl=ddl,
-        )
-
-    def _describe_columns_sync(self, schema: str, table: str) -> ColumnsDescription:
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
-            " FROM INFORMATION_SCHEMA.COLUMNS"
-            " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
-            " ORDER BY ORDINAL_POSITION",
-            (schema, table),
-        )
-        col_rows = cur.fetchall()  # ty: ignore[missing-argument]
-
-        cur.execute(
-            "SELECT c.name FROM sys.key_constraints kc"
-            " JOIN sys.index_columns ic"
-            "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
-            " JOIN sys.columns c"
-            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
-            " JOIN sys.objects o ON kc.parent_object_id = o.object_id"
-            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
-            " WHERE s.name = ? AND o.name = ? AND kc.type = 'PK'",
-            (schema, table),
-        )
-        pk_cols: set[str] = {r[0] for r in cur.fetchall()}  # ty: ignore[missing-argument]
-
-        cur.execute(
-            "SELECT c.name, CAST(ep.value AS NVARCHAR(MAX))"
-            " FROM sys.columns c"
-            " JOIN sys.objects o ON c.object_id = o.object_id"
-            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
-            " LEFT JOIN sys.extended_properties ep"
-            "  ON ep.major_id = c.object_id AND ep.minor_id = c.column_id"
-            "  AND ep.name = 'MS_Description'"
-            " WHERE s.name = ? AND o.name = ?",
-            (schema, table),
-        )
-        col_comments: dict[str, str | None] = {
-            r[0]: (r[1].strip() if r[1] else None)
-            for r in cur.fetchall()  # ty: ignore[missing-argument]
-        }
-
-        idx_desc_list = self._describe_indices_sync(schema, table).indices
-        col_excl: dict[str, list[IndexDescription]] = {}
-        col_comp: dict[str, list[IndexDescription]] = {}
-        for idx_desc in idx_desc_list:
-            key_col_names = [f.name for f in idx_desc.fields]
-            for cn in key_col_names:
-                if len(key_col_names) == 1:
-                    col_excl.setdefault(cn, []).append(idx_desc)
-                else:
-                    col_comp.setdefault(cn, []).append(idx_desc)
-
-        refs_by_col = group_references_by_column(
-            self._outgoing_references_sync(schema, table)
-        )
-
-        result = []
-        for r in col_rows:
-            cn = r[0]
-            result.append(
-                ColumnDescription(
-                    name=cn,
-                    data_type=r[1] or "",
-                    nullable=r[2] == "YES",
-                    pk=cn in pk_cols,
-                    default=r[3],
-                    exclusive_indices=col_excl.get(cn, []),
-                    composite_indices=col_comp.get(cn, []),
-                    comment=col_comments.get(cn),
-                    outgoing_references=refs_by_col.get(cn, []),
-                )
-            )
-        return ColumnsDescription(columns=result)
-
-    def _describe_column_sync(
-        self, schema: str, table: str, col_name: str
-    ) -> ColumnDescription | None:
-        cur = self._conn.cursor()
-        cur.execute(
-            "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
-            " FROM INFORMATION_SCHEMA.COLUMNS"
-            " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
-            (schema, table, col_name),
-        )
-        rows = cur.fetchall()  # ty: ignore[missing-argument]
-        if not rows:
-            return None
-        r = rows[0]
-
-        cur.execute(
-            "SELECT c.name FROM sys.key_constraints kc"
-            " JOIN sys.index_columns ic"
-            "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
-            " JOIN sys.columns c"
-            "  ON ic.object_id = c.object_id AND ic.column_id = c.column_id"
-            " JOIN sys.objects o ON kc.parent_object_id = o.object_id"
-            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
-            " WHERE s.name = ? AND o.name = ? AND kc.type = 'PK'",
-            (schema, table),
-        )
-        pk_cols: set[str] = {row[0] for row in cur.fetchall()}  # ty: ignore[missing-argument]
-
-        cur.execute(
-            "SELECT CAST(ep.value AS NVARCHAR(MAX))"
-            " FROM sys.columns c"
-            " JOIN sys.objects o ON c.object_id = o.object_id"
-            " JOIN sys.schemas s ON o.schema_id = s.schema_id"
-            " LEFT JOIN sys.extended_properties ep"
-            "  ON ep.major_id = c.object_id AND ep.minor_id = c.column_id"
-            "  AND ep.name = 'MS_Description'"
-            " WHERE s.name = ? AND o.name = ? AND c.name = ?",
-            (schema, table, col_name),
-        )
-        comment_row = cur.fetchone()  # ty: ignore[missing-argument]
-        comment: str | None = (
-            comment_row[0].strip() if comment_row and comment_row[0] else None
-        )
-
-        idx_desc_list = self._describe_indices_sync(schema, table).indices
-        exclusive_indices = []
-        composite_indices = []
-        for idx_desc in idx_desc_list:
-            key_col_names = [f.name for f in idx_desc.fields]
-            if col_name not in key_col_names:
-                continue
-            if len(key_col_names) == 1:
-                exclusive_indices.append(idx_desc)
-            else:
-                composite_indices.append(idx_desc)
-        refs_by_col = group_references_by_column(
-            self._outgoing_references_sync(schema, table)
-        )
-
-        return ColumnDescription(
-            name=col_name,
-            data_type=r[1] or "",
-            nullable=r[2] == "YES",
-            pk=col_name in pk_cols,
-            default=r[3],
-            exclusive_indices=exclusive_indices,
-            composite_indices=composite_indices,
-            comment=comment,
-            outgoing_references=refs_by_col.get(col_name, []),
         )
 
     def _outgoing_references_sync(
@@ -722,10 +679,12 @@ nullability, default).
         unique_cols = self._unique_columns_sync(schema, table)
         return [
             TableReference(
+                table=table,
+                schema=schema,
                 column=r[0],
-                table=r[2],
+                ref_table=r[2],
+                ref_schema=r[1],
                 ref_column=r[3],
-                schema=r[1],
                 unique=r[0] in unique_cols,
                 constraint_name=r[4],
             )
@@ -756,10 +715,12 @@ nullability, default).
             unique_cols = self._unique_columns_sync(r[1], r[2])
             references.append(
                 TableReference(
-                    column=r[0],
                     table=r[2],
-                    ref_column=r[3],
                     schema=r[1],
+                    column=r[3],
+                    ref_table=table,
+                    ref_schema=schema,
+                    ref_column=r[0],
                     unique=r[3] in unique_cols,
                     constraint_name=r[4],
                 )

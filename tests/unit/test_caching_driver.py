@@ -7,28 +7,39 @@ import pytest
 
 from grannos.explore_cache import CachingDriver, ConnectionCache
 from grannos.protocol import (
-    ColumnDescription,
-    ColumnsDescription,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
     IndexKeyField,
-    TableDescription,
+    TableReference,
 )
 
 PARAMS = {"driver": "sqlite", "database": ":memory:"}
 
 
-def _columns_desc() -> ColumnsDescription:
+def _entity_desc() -> EntityDescription:
     idx = IndexDescription(
-        index="i1", fields=[IndexKeyField(name="ID", direction="asc")], unique=True
+        name="i1", fields=[IndexKeyField(name="ID", direction="asc")], unique=True
     )
-    return ColumnsDescription(
-        columns=[
-            ColumnDescription(
-                name="ID", data_type="NUMBER", pk=True, exclusive_indices=[idx]
+    return EntityDescription(
+        name="t",
+        kind="table",
+        properties=[
+            FieldDescription(
+                name="ID", types=["NUMBER"], pk=True, exclusive_indices=[idx]
             ),
-            ColumnDescription(name="VAL", data_type="VARCHAR2", sample=["a", "b"]),
-        ]
+            FieldDescription(
+                name="VAL",
+                types=["VARCHAR2"],
+                sample=["a", "b"],
+                outgoing_references=[
+                    TableReference(
+                        table="t", column="VAL", ref_table="other", ref_column="ID"
+                    )
+                ],
+            ),
+        ],
     )
 
 
@@ -41,7 +52,9 @@ def cache(tmp_path: pathlib.Path) -> ConnectionCache:
 def inner() -> AsyncMock:
     d = AsyncMock()
     d.explore_list.return_value = [ExploreItem(name="t", type="table", expandable=True)]
-    d.explore_describe.return_value = TableDescription(table="t", columns=[])
+    d.explore_describe.return_value = EntityDescription(
+        name="t", kind="table", properties=[]
+    )
     return d
 
 
@@ -109,7 +122,7 @@ class TestExploreDescribeCaching:
         self, driver: CachingDriver, inner: AsyncMock
     ) -> None:
         inner.explore_describe.return_value = IndexDescription(
-            index="idx", fields=[], unique=False
+            name="idx", fields=[], unique=False
         )
         await driver.explore_describe(["s", "t", "indices", "idx"])
         result = await driver.explore_describe(["s", "t", "indices", "idx"])
@@ -117,78 +130,100 @@ class TestExploreDescribeCaching:
         inner.explore_describe.assert_awaited_once()
 
 
-class TestColumnsFanOut:
-    async def test_columns_result_populates_per_column_entries(
+class TestEntityFanOut:
+    async def test_entity_result_populates_per_field_entries(
         self, driver: CachingDriver, inner: AsyncMock
     ) -> None:
-        inner.explore_describe.return_value = _columns_desc()
-        await driver.explore_describe(["s", "t", "columns"])
-        col = await driver.explore_describe(["s", "t", "columns", "ID"])
-        assert col == _columns_desc().columns[0]
+        inner.explore_describe.return_value = _entity_desc()
+        await driver.explore_describe(["s", "t"])
+        field = await driver.explore_describe(["s", "t", "columns", "ID"])
+        assert field == _entity_desc().properties[0]
         inner.explore_describe.assert_awaited_once()
 
-    async def test_all_columns_served_from_fan_out(
+    async def test_all_fields_served_from_fan_out(
         self, driver: CachingDriver, inner: AsyncMock
     ) -> None:
-        inner.explore_describe.return_value = _columns_desc()
-        await driver.explore_describe(["s", "t", "columns"])
+        inner.explore_describe.return_value = _entity_desc()
+        await driver.explore_describe(["s", "t"])
         val = await driver.explore_describe(["s", "t", "columns", "VAL"])
-        assert val == _columns_desc().columns[1]
+        assert val == _entity_desc().properties[1]
+        inner.explore_describe.assert_awaited_once()
+
+    async def test_relationship_also_served_from_fan_out(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_describe.return_value = _entity_desc()
+        await driver.explore_describe(["s", "t"])
+        ref = await driver.explore_describe(["s", "t", "relationships", "VAL"])
+        assert ref == _entity_desc().properties[1].outgoing_references[0]
         inner.explore_describe.assert_awaited_once()
 
     async def test_reset_clears_fanned_out_entries(
         self, driver: CachingDriver, inner: AsyncMock
     ) -> None:
-        inner.explore_describe.return_value = _columns_desc()
-        await driver.explore_describe(["s", "t", "columns"])
-        driver.reset_cache(["s", "t", "columns"])
+        inner.explore_describe.return_value = _entity_desc()
+        await driver.explore_describe(["s", "t"])
+        driver.reset_cache(["s", "t"])
         await driver.explore_describe(["s", "t", "columns", "ID"])
+        assert inner.explore_describe.await_count == 2
+
+    async def test_resetting_a_field_also_evicts_the_parent_entity(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        # The parent entity's cached copy embeds this field's data (including
+        # sample values) — resetting just the field must not leave the parent
+        # holding a stale copy of it.
+        inner.explore_describe.return_value = _entity_desc()
+        await driver.explore_describe(["s", "t"])
+        driver.reset_cache(["s", "t", "columns", "ID"])
+        await driver.explore_describe(["s", "t"])
         assert inner.explore_describe.await_count == 2
 
 
 class TestDescribeDiskRoundTrip:
-    def test_columns_description_round_trips(self, tmp_path: pathlib.Path) -> None:
+    def test_entity_description_round_trips(self, tmp_path: pathlib.Path) -> None:
         path = tmp_path / "c.json"
-        ConnectionCache(PARAMS, path).set_describe(
-            ["s", "t", "columns"], _columns_desc()
-        )
+        ConnectionCache(PARAMS, path).set_describe(["s", "t"], _entity_desc())
         reloaded = ConnectionCache(PARAMS, path)
-        assert reloaded.get_describe(["s", "t", "columns"]) == _columns_desc()
+        assert reloaded.get_describe(["s", "t"]) == _entity_desc()
 
-    def test_column_description_round_trips(self, tmp_path: pathlib.Path) -> None:
+    def test_field_description_round_trips(self, tmp_path: pathlib.Path) -> None:
         path = tmp_path / "c.json"
-        col = _columns_desc().columns[0]
-        ConnectionCache(PARAMS, path).set_describe(["s", "t", "columns", "ID"], col)
+        field = _entity_desc().properties[0]
+        ConnectionCache(PARAMS, path).set_describe(["s", "t", "columns", "ID"], field)
         reloaded = ConnectionCache(PARAMS, path)
-        assert reloaded.get_describe(["s", "t", "columns", "ID"]) == col
+        assert reloaded.get_describe(["s", "t", "columns", "ID"]) == field
 
-    def test_columns_entry_does_not_poison_other_entries(
+    def test_field_entry_does_not_poison_other_entries(
         self, tmp_path: pathlib.Path
     ) -> None:
         path = tmp_path / "c.json"
         cache = ConnectionCache(PARAMS, path)
-        cache.set_describe(["s", "t"], TableDescription(table="t", columns=[]))
-        cache.set_describe(["s", "t", "columns"], _columns_desc())
+        other = EntityDescription(name="other", kind="table", properties=[])
+        cache.set_describe(["s", "other"], other)
+        cache.set_describe(["s", "t"], _entity_desc())
         reloaded = ConnectionCache(PARAMS, path)
-        assert reloaded.get_describe(["s", "t"]) == TableDescription(
-            table="t", columns=[]
-        )
+        assert reloaded.get_describe(["s", "other"]) == other
 
     def test_non_json_sample_values_persist(self, tmp_path: pathlib.Path) -> None:
         path = tmp_path / "c.json"
-        col = ColumnDescription(
-            name="TS", data_type="DATE", sample=[datetime(2024, 1, 1), Decimal("1.5")]
+        field = FieldDescription(
+            name="TS",
+            types=["DATE"],
+            sample=[datetime(2024, 1, 1), Decimal("1.5")],
         )
-        ConnectionCache(PARAMS, path).set_describe(["s", "t", "columns", "TS"], col)
+        ConnectionCache(PARAMS, path).set_describe(["s", "t", "columns", "TS"], field)
         reloaded = ConnectionCache(PARAMS, path).get_describe(
             ["s", "t", "columns", "TS"]
         )
-        assert isinstance(reloaded, ColumnDescription)
+        assert isinstance(reloaded, FieldDescription)
         assert reloaded.sample == ["2024-01-01T00:00:00", 1.5]
 
     def test_table_comment_round_trips(self, tmp_path: pathlib.Path) -> None:
         path = tmp_path / "c.json"
-        desc = TableDescription(table="t", columns=[], comment="a comment")
+        desc = EntityDescription(
+            name="t", kind="table", properties=[], comment="a comment"
+        )
         ConnectionCache(PARAMS, path).set_describe(["s", "t"], desc)
         reloaded = ConnectionCache(PARAMS, path)
         assert reloaded.get_describe(["s", "t"]) == desc

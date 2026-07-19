@@ -222,7 +222,7 @@ class TestExploreDescribeIndex:
             driver.explore_describe(["MYSCHEMA", "MYTABLE", "indexes", "MY_IDX"])
         )
         assert isinstance(result, IndexDescription)
-        assert result.index == "MY_IDX"
+        assert result.name == "MY_IDX"
         assert result.unique is True
         assert result.tables == ["MYTABLE"]
         assert [f.name for f in result.fields] == ["ID", "NAME"]

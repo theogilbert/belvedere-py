@@ -7,20 +7,17 @@ from typing import Any, ClassVar, TypeVar
 import duckdb
 
 from ..protocol import (
-    ColumnDescription,
-    ColumnInfo,
-    ColumnsDescription,
     DescribeResult,
     DriverParam,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
     IndexKeyField,
-    IndicesDescription,
     Language,
     LobPlaceholder,
     ParamType,
     ReadResult,
-    TableDescription,
     TableReference,
     WriteResult,
 )
@@ -28,8 +25,9 @@ from .base import (
     BaseDriver,
     DriverError,
     DriverSettings,
-    build_relationship_description,
+    find_reference,
     group_references_by_column,
+    group_references_by_ref_column,
 )
 
 T = TypeVar("T")
@@ -239,16 +237,16 @@ SELECT * FROM 'glob/**/*.parquet'
                 ``[schema, table, "indices", index_name]`` for one index.
         """
         match path:
-            case [schema, table, "columns"]:
-                base = await self._run(self._describe_columns_sync, schema, table)
-                columns = []
-                for col in base.columns:
-                    sample = await self._fetch_sample(schema, table, col.name)
-                    columns.append(dataclasses.replace(col, sample=sample))
-                return ColumnsDescription(columns=columns)
+            case [schema, table]:
+                base = await self._run(self._describe_entity_sync, schema, table)
+                properties = []
+                for f in base.properties:
+                    sample = await self._fetch_sample(schema, table, f.name)
+                    properties.append(dataclasses.replace(f, sample=sample))
+                return dataclasses.replace(base, properties=properties)
             case [schema, table, "columns", col_name]:
                 base = await self._run(
-                    self._describe_column_sync, schema, table, col_name
+                    self._describe_field_sync, schema, table, col_name
                 )
                 if base is None:
                     return None
@@ -259,70 +257,6 @@ SELECT * FROM 'glob/**/*.parquet'
 
     def _explore_describe_sync(self, path: list[str]) -> DescribeResult:
         match path:
-            case [schema, table]:
-                col_rows = self._conn.execute(
-                    "SELECT column_name, data_type, is_nullable"
-                    " FROM information_schema.columns"
-                    " WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
-                    [schema, table],
-                ).fetchall()
-                pk_rows = self._conn.execute(
-                    "SELECT constraint_column_names FROM duckdb_constraints()"
-                    " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'",
-                    [schema, table],
-                ).fetchall()
-                pk_cols: set[str] = set(pk_rows[0][0]) if pk_rows else set()
-                idx_rows = self._conn.execute(
-                    "SELECT index_name, sql FROM duckdb_indexes()"
-                    " WHERE schema_name = ? AND table_name = ?",
-                    [schema, table],
-                ).fetchall()
-                col_indexes: dict[str, list[str]] = {}
-                index_col_count: dict[str, int] = {}
-                for idx_name, sql in idx_rows:
-                    key_fields = _parse_index_columns(sql)
-                    index_col_count[idx_name] = len(key_fields)
-                    for key_field in key_fields:
-                        col_indexes.setdefault(key_field.name, []).append(idx_name)
-                table_comment: str | None = None
-                try:
-                    comment_rows = self._conn.execute(
-                        "SELECT comment FROM duckdb_tables()"
-                        " WHERE schema_name = ? AND table_name = ?",
-                        [schema, table],
-                    ).fetchall()
-                    table_comment = (
-                        comment_rows[0][0]
-                        if comment_rows and comment_rows[0][0]
-                        else None
-                    )
-                except Exception:
-                    pass
-                return TableDescription(
-                    table=table,
-                    schema=schema,
-                    comment=table_comment,
-                    columns=[
-                        ColumnInfo(
-                            name=r[0],
-                            type=r[1],
-                            nullable=r[2] == "YES",
-                            pk=r[0] in pk_cols,
-                            exclusive_index=any(
-                                index_col_count[i] == 1
-                                for i in col_indexes.get(r[0], [])
-                            ),
-                            composite_index=any(
-                                index_col_count[i] > 1
-                                for i in col_indexes.get(r[0], [])
-                            ),
-                        )
-                        for r in col_rows
-                    ],
-                    outgoing_references=self._outgoing_references_sync(schema, table),
-                    incoming_references=self._incoming_references_sync(schema, table),
-                )
-
             case [schema, table, "indices"]:
                 return self._describe_indices_sync(schema, table)
 
@@ -336,7 +270,7 @@ SELECT * FROM 'glob/**/*.parquet'
                     return None
                 is_unique, sql = rows[0]
                 return IndexDescription(
-                    index=index_name,
+                    name=index_name,
                     fields=_parse_index_columns(sql) if sql else [],
                     unique=bool(is_unique),
                     tables=[table],
@@ -344,34 +278,13 @@ SELECT * FROM 'glob/**/*.parquet'
                 )
 
             case [schema, table, "relationships", column]:
-                desc = self._explore_describe_sync([schema, table])
-                if not isinstance(desc, TableDescription):
-                    return None
-                return build_relationship_description(desc, table, schema, column)
+                refs = self._outgoing_references_sync(schema, table)
+                return find_reference(refs, column)
 
             case _:
                 return None
 
-    def _describe_indices_sync(self, schema: str, table: str) -> IndicesDescription:
-        rows = self._conn.execute(
-            "SELECT index_name, is_unique, sql FROM duckdb_indexes()"
-            " WHERE schema_name = ? AND table_name = ? ORDER BY index_name",
-            [schema, table],
-        ).fetchall()
-        return IndicesDescription(
-            indices=[
-                IndexDescription(
-                    index=idx_name,
-                    fields=_parse_index_columns(sql) if sql else [],
-                    unique=bool(is_unique),
-                    tables=[table],
-                    ddl=sql,
-                )
-                for idx_name, is_unique, sql in rows
-            ]
-        )
-
-    def _describe_columns_sync(self, schema: str, table: str) -> ColumnsDescription:
+    def _describe_entity_sync(self, schema: str, table: str) -> EntityDescription:
         col_rows = self._conn.execute(
             "SELECT column_name, data_type, is_nullable"
             " FROM information_schema.columns"
@@ -385,7 +298,7 @@ SELECT * FROM 'glob/**/*.parquet'
         ).fetchall()
         pk_cols: set[str] = set(pk_rows[0][0]) if pk_rows else set()
 
-        idx_desc_list = self._describe_indices_sync(schema, table).indices
+        idx_desc_list = self._describe_indices_sync(schema, table)
         col_excl: dict[str, list[IndexDescription]] = {}
         col_comp: dict[str, list[IndexDescription]] = {}
         for idx_desc in idx_desc_list:
@@ -406,30 +319,68 @@ SELECT * FROM 'glob/**/*.parquet'
                 col_comments[r[0]] = r[1] if r[1] else None
         except Exception:
             pass
-        refs_by_col = group_references_by_column(
+
+        table_comment: str | None = None
+        try:
+            comment_rows = self._conn.execute(
+                "SELECT comment FROM duckdb_tables()"
+                " WHERE schema_name = ? AND table_name = ?",
+                [schema, table],
+            ).fetchall()
+            table_comment = (
+                comment_rows[0][0] if comment_rows and comment_rows[0][0] else None
+            )
+        except Exception:
+            pass
+
+        outgoing_by_col = group_references_by_column(
             self._outgoing_references_sync(schema, table)
         )
+        incoming_by_col = group_references_by_ref_column(
+            self._incoming_references_sync(schema, table)
+        )
 
-        result = []
-        for r in col_rows:
-            cn = r[0]
-            result.append(
-                ColumnDescription(
-                    name=cn,
-                    data_type=r[1] or "",
+        return EntityDescription(
+            name=table,
+            kind="table",
+            schema=schema,
+            comment=table_comment,
+            properties=[
+                FieldDescription(
+                    name=r[0],
+                    types=[r[1] or ""],
                     nullable=r[2] == "YES",
-                    pk=cn in pk_cols,
-                    exclusive_indices=col_excl.get(cn, []),
-                    composite_indices=col_comp.get(cn, []),
-                    comment=col_comments.get(cn),
-                    outgoing_references=refs_by_col.get(cn, []),
+                    pk=r[0] in pk_cols,
+                    exclusive_indices=col_excl.get(r[0], []),
+                    composite_indices=col_comp.get(r[0], []),
+                    comment=col_comments.get(r[0]),
+                    outgoing_references=outgoing_by_col.get(r[0], []),
+                    incoming_references=incoming_by_col.get(r[0], []),
                 )
-            )
-        return ColumnsDescription(columns=result)
+                for r in col_rows
+            ],
+        )
 
-    def _describe_column_sync(
+    def _describe_indices_sync(self, schema: str, table: str) -> list[IndexDescription]:
+        rows = self._conn.execute(
+            "SELECT index_name, is_unique, sql FROM duckdb_indexes()"
+            " WHERE schema_name = ? AND table_name = ? ORDER BY index_name",
+            [schema, table],
+        ).fetchall()
+        return [
+            IndexDescription(
+                name=idx_name,
+                fields=_parse_index_columns(sql) if sql else [],
+                unique=bool(is_unique),
+                tables=[table],
+                ddl=sql,
+            )
+            for idx_name, is_unique, sql in rows
+        ]
+
+    def _describe_field_sync(
         self, schema: str, table: str, col_name: str
-    ) -> ColumnDescription | None:
+    ) -> FieldDescription | None:
         col_rows = self._conn.execute(
             "SELECT column_name, data_type, is_nullable"
             " FROM information_schema.columns"
@@ -447,7 +398,7 @@ SELECT * FROM 'glob/**/*.parquet'
         ).fetchall()
         pk_cols: set[str] = set(pk_rows[0][0]) if pk_rows else set()
 
-        idx_desc_list = self._describe_indices_sync(schema, table).indices
+        idx_desc_list = self._describe_indices_sync(schema, table)
         exclusive_indices = []
         composite_indices = []
         for idx_desc in idx_desc_list:
@@ -469,19 +420,23 @@ SELECT * FROM 'glob/**/*.parquet'
             comment = rows[0][0] if rows and rows[0][0] else None
         except Exception:
             pass
-        refs_by_col = group_references_by_column(
+        outgoing_by_col = group_references_by_column(
             self._outgoing_references_sync(schema, table)
         )
+        incoming_by_col = group_references_by_ref_column(
+            self._incoming_references_sync(schema, table)
+        )
 
-        return ColumnDescription(
+        return FieldDescription(
             name=col_name,
-            data_type=r[1] or "",
+            types=[r[1] or ""],
             nullable=r[2] == "YES",
             pk=col_name in pk_cols,
             exclusive_indices=exclusive_indices,
             composite_indices=composite_indices,
             comment=comment,
-            outgoing_references=refs_by_col.get(col_name, []),
+            outgoing_references=outgoing_by_col.get(col_name, []),
+            incoming_references=incoming_by_col.get(col_name, []),
         )
 
     def _outgoing_fk_rows_sync(
@@ -504,10 +459,12 @@ SELECT * FROM 'glob/**/*.parquet'
         unique_cols = self._unique_columns_sync(schema, table)
         return [
             TableReference(
-                column=src_col,
-                table=fk_table,
-                ref_column=ref_col,
+                table=table,
                 schema=schema,
+                column=src_col,
+                ref_table=fk_table,
+                ref_schema=schema,
+                ref_column=ref_col,
                 unique=src_col in unique_cols,
                 constraint_name=constraint_name,
             )
@@ -530,10 +487,12 @@ SELECT * FROM 'glob/**/*.parquet'
             unique_cols = self._unique_columns_sync(schema, other_table)
             references.extend(
                 TableReference(
-                    column=ref_col,
                     table=other_table,
-                    ref_column=fk_col,
                     schema=schema,
+                    column=fk_col,
+                    ref_table=table,
+                    ref_schema=schema,
+                    ref_column=ref_col,
                     unique=fk_col in unique_cols,
                     constraint_name=constraint_name,
                 )

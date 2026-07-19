@@ -1,17 +1,20 @@
 """Neo4j driver — requires: pip install neo4j"""
 
+import asyncio
 from typing import Any, LiteralString
 
 import neo4j
 import neo4j.exceptions
 
 from ..protocol import (
+    Connection,
     DescribeResult,
     DriverParam,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
     IndexKeyField,
-    IndicesDescription,
     Language,
     LobPlaceholder,
     ParamType,
@@ -19,7 +22,14 @@ from ..protocol import (
     WriteResult,
 )
 from ..tabular import flatten_docs
-from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
+from .base import (
+    SAMPLE_SCAN_ROWS,
+    BaseDriver,
+    ConnectionLostError,
+    DriverError,
+    DriverSettings,
+    build_column_samples,
+)
 
 
 class Neo4jDriver(BaseDriver):
@@ -76,6 +86,11 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 
 Describing an index returns the indexed properties (direction = index type,
 e.g. `RANGE`, `TEXT`, `POINT`) and whether it's unique.
+
+Describing a label or relationship type returns its properties (name,
+observed types, whether mandatory) and the relationship types connecting it
+to other labels (or, for a relationship type, the label pairs it connects).
+Describing a single property adds a value sample.
 """
 
     def __init__(
@@ -218,13 +233,20 @@ e.g. `RANGE`, `TEXT`, `POINT`) and whether it's unique.
                 return await self._describe_all_indices()
             case ["indexes", index_name]:
                 return await self._describe_index(index_name)
+            case ["entities", label]:
+                return await self._describe_node_entity(label)
+            case ["entities", label, prop]:
+                return await self._describe_node_field(label, prop)
+            case ["relationships", rel_type]:
+                return await self._describe_relationship_entity(rel_type)
+            case ["relationships", rel_type, prop]:
+                return await self._describe_relationship_field(rel_type, prop)
             case _:
                 return None
 
-    async def _describe_all_indices(self) -> IndicesDescription:
+    async def _describe_all_indices(self) -> list[IndexDescription]:
         specs = await self._all_index_specs()
-        indices = [self._spec_to_description(s) for s in specs]
-        return IndicesDescription(indices=indices)
+        return [self._spec_to_description(s) for s in specs]
 
     async def _describe_index(self, index_name: str) -> IndexDescription | None:
         specs = await self._all_index_specs()
@@ -237,7 +259,7 @@ e.g. `RANGE`, `TEXT`, `POINT`) and whether it's unique.
         labels_or_types: list[str] = spec.get("labelsOrTypes") or []
         idx_type: str = spec.get("type") or ""
         return IndexDescription(
-            index=spec["name"],
+            name=spec["name"],
             fields=[
                 IndexKeyField(name=prop, direction=idx_type)
                 for prop in (spec.get("properties") or [])
@@ -246,6 +268,78 @@ e.g. `RANGE`, `TEXT`, `POINT`) and whether it's unique.
             tables=labels_or_types,
             index_type=idx_type.lower() if idx_type else None,
             ddl=spec.get("createStatement"),
+        )
+
+    async def _describe_node_entity(self, label: str) -> EntityDescription:
+        properties = await self._node_type_properties(label)
+        samples = await self._node_samples(label)
+        connections = await self._node_connections(label)
+        return EntityDescription(
+            name=label,
+            kind="node",
+            properties=[
+                FieldDescription(
+                    name=name,
+                    types=types,
+                    nullable=not mandatory,
+                    sample=samples.get(name, []),
+                )
+                for name, types, mandatory in properties
+            ],
+            connections=connections,
+        )
+
+    async def _describe_node_field(
+        self, label: str, prop: str
+    ) -> FieldDescription | None:
+        match = next(
+            (p for p in await self._node_type_properties(label) if p[0] == prop),
+            None,
+        )
+        if match is None:
+            return None
+        name, types, mandatory = match
+        samples = await self._node_samples(label)
+        return FieldDescription(
+            name=name, types=types, nullable=not mandatory, sample=samples.get(name, [])
+        )
+
+    async def _describe_relationship_entity(self, rel_type: str) -> EntityDescription:
+        properties = await self._relationship_type_properties(rel_type)
+        samples = await self._relationship_samples(rel_type)
+        connections = await self._relationship_type_connections(rel_type)
+        return EntityDescription(
+            name=rel_type,
+            kind="relationship",
+            properties=[
+                FieldDescription(
+                    name=name,
+                    types=types,
+                    nullable=not mandatory,
+                    sample=samples.get(name, []),
+                )
+                for name, types, mandatory in properties
+            ],
+            connections=connections,
+        )
+
+    async def _describe_relationship_field(
+        self, rel_type: str, prop: str
+    ) -> FieldDescription | None:
+        match = next(
+            (
+                p
+                for p in await self._relationship_type_properties(rel_type)
+                if p[0] == prop
+            ),
+            None,
+        )
+        if match is None:
+            return None
+        name, types, mandatory = match
+        samples = await self._relationship_samples(rel_type)
+        return FieldDescription(
+            name=name, types=types, nullable=not mandatory, sample=samples.get(name, [])
         )
 
     async def _all_index_specs(self) -> list[dict]:
@@ -282,6 +376,160 @@ e.g. `RANGE`, `TEXT`, `POINT`) and whether it's unique.
                 " RETURN DISTINCT prop ORDER BY prop"
             )
             return [r["prop"] for r in await result.data()]
+
+    async def _node_type_properties(
+        self, label: str
+    ) -> list[tuple[str, list[str], bool]]:
+        db = self.params.get("database", "neo4j")
+        async with self._driver.session(database=db) as session:
+            result = await session.run(
+                "CALL db.schema.nodeTypeProperties()"
+                " YIELD nodeLabels, propertyName, propertyTypes, mandatory"
+                " WHERE $label IN nodeLabels AND propertyName IS NOT NULL"
+                " RETURN propertyName, propertyTypes, mandatory",
+                {"label": label},
+            )
+            return _aggregate_properties(await result.data())
+
+    async def _relationship_type_properties(
+        self, rel_type: str
+    ) -> list[tuple[str, list[str], bool]]:
+        db = self.params.get("database", "neo4j")
+        async with self._driver.session(database=db) as session:
+            result = await session.run(
+                "CALL db.schema.relTypeProperties()"
+                " YIELD relType, propertyName, propertyTypes, mandatory"
+                " WHERE propertyName IS NOT NULL"
+                " RETURN relType, propertyName, propertyTypes, mandatory"
+            )
+            rows = [
+                r
+                for r in await result.data()
+                if _strip_rel_type(r["relType"]) == rel_type
+            ]
+            return _aggregate_properties(rows)
+
+    async def _node_connections(self, label: str) -> list[Connection]:
+        db = self.params.get("database", "neo4j")
+        async with self._driver.session(database=db) as session:
+            result = await session.run(
+                f"MATCH (n:`{label}`)-[r]-(m)"  # ty: ignore[invalid-argument-type]
+                " RETURN DISTINCT type(r) AS relType,"
+                " labels(startNode(r)) AS fromLabels, labels(endNode(r)) AS toLabels"
+            )
+            rows = await result.data()
+        seen: set[tuple[str, str, str]] = set()
+        connections: list[Connection] = []
+        for row in rows:
+            for from_label in row["fromLabels"]:
+                for to_label in row["toLabels"]:
+                    key = (row["relType"], from_label, to_label)
+                    if key not in seen:
+                        seen.add(key)
+                        connections.append(
+                            Connection(
+                                rel_type=row["relType"],
+                                from_label=from_label,
+                                to_label=to_label,
+                            )
+                        )
+        connections.sort(key=lambda c: (c.rel_type, c.from_label, c.to_label))
+        return connections
+
+    async def _relationship_type_connections(self, rel_type: str) -> list[Connection]:
+        db = self.params.get("database", "neo4j")
+        async with self._driver.session(database=db) as session:
+            result = await session.run(
+                f"MATCH (a)-[r:`{rel_type}`]->(b)"  # ty: ignore[invalid-argument-type]
+                " RETURN DISTINCT labels(a) AS fromLabels, labels(b) AS toLabels"
+            )
+            rows = await result.data()
+        seen: set[tuple[str, str]] = set()
+        connections: list[Connection] = []
+        for row in rows:
+            for from_label in row["fromLabels"]:
+                for to_label in row["toLabels"]:
+                    key = (from_label, to_label)
+                    if key not in seen:
+                        seen.add(key)
+                        connections.append(
+                            Connection(
+                                rel_type=rel_type,
+                                from_label=from_label,
+                                to_label=to_label,
+                            )
+                        )
+        connections.sort(key=lambda c: (c.from_label, c.to_label))
+        return connections
+
+    async def _node_samples(self, label: str) -> dict[str, list[Any]]:
+        try:
+            return await asyncio.wait_for(
+                self._fetch_node_samples(label),
+                timeout=self._settings.column_sample_timeout,
+            )
+        except asyncio.TimeoutError:
+            return {}
+
+    async def _fetch_node_samples(self, label: str) -> dict[str, list[Any]]:
+        db = self.params.get("database", "neo4j")
+        async with self._driver.session(database=db) as session:
+            result = await session.run(
+                f"MATCH (n:`{label}`) RETURN n LIMIT $limit",  # ty: ignore[invalid-argument-type]
+                {"limit": SAMPLE_SCAN_ROWS},
+            )
+            nodes = [dict(record["n"]) async for record in result]
+        columns = sorted({k for n in nodes for k in n})
+        rows = [tuple(n.get(c) for c in columns) for n in nodes]
+        return build_column_samples(columns, rows, self._settings.column_sample_size)
+
+    async def _relationship_samples(self, rel_type: str) -> dict[str, list[Any]]:
+        try:
+            return await asyncio.wait_for(
+                self._fetch_relationship_samples(rel_type),
+                timeout=self._settings.column_sample_timeout,
+            )
+        except asyncio.TimeoutError:
+            return {}
+
+    async def _fetch_relationship_samples(self, rel_type: str) -> dict[str, list[Any]]:
+        db = self.params.get("database", "neo4j")
+        async with self._driver.session(database=db) as session:
+            result = await session.run(
+                f"MATCH ()-[r:`{rel_type}`]->() RETURN r LIMIT $limit",  # ty: ignore[invalid-argument-type]
+                {"limit": SAMPLE_SCAN_ROWS},
+            )
+            rels = [dict(record["r"]) async for record in result]
+        columns = sorted({k for r in rels for k in r})
+        rows = [tuple(r.get(c) for c in columns) for r in rels]
+        return build_column_samples(columns, rows, self._settings.column_sample_size)
+
+
+def _aggregate_properties(rows: list[dict]) -> list[tuple[str, list[str], bool]]:
+    """Group db.schema.*Properties() rows by propertyName, merging types across
+    the label/rel-type combinations that carry it and requiring *mandatory*
+    in every combination for the aggregated property to count as mandatory."""
+    by_name: dict[str, list[tuple[list[str], bool]]] = {}
+    for row in rows:
+        name = row.get("propertyName")
+        if name is None:
+            continue
+        by_name.setdefault(name, []).append(
+            (row.get("propertyTypes") or [], bool(row.get("mandatory")))
+        )
+    return [
+        (
+            name,
+            sorted({t for types, _ in entries for t in types}),
+            all(m for _, m in entries),
+        )
+        for name, entries in sorted(by_name.items())
+    ]
+
+
+def _strip_rel_type(rel_type: str) -> str:
+    """Convert db.schema.relTypeProperties()'s ``":`TYPE`"`` format to ``"TYPE"``."""
+    return rel_type.removeprefix(":").strip("`")
 
 
 def _serialize(value: Any) -> Any:

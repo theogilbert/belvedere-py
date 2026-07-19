@@ -9,13 +9,13 @@ from grannos.dispatcher import Connection, Dispatcher, DispatchError, IdleTimer
 from grannos.drivers.base import ConnectionLostError, DriverSettings
 from grannos.protocol import (
     PROTOCOL_VERSION,
-    ColumnInfo,
     DriverParam,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     Method,
     ParamType,
     ReadResult,
-    TableDescription,
     WriteResult,
 )
 
@@ -486,8 +486,10 @@ class TestExploreDescribe:
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
-        td = TableDescription(
-            table="t", columns=[ColumnInfo(name="id", type="INTEGER")]
+        td = EntityDescription(
+            name="t",
+            kind="table",
+            properties=[FieldDescription(name="id", types=["INTEGER"])],
         )
         driver.explore_describe.return_value = td
         result = await disp.dispatch(
@@ -501,8 +503,10 @@ class TestExploreDescribe:
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
-        driver.explore_describe.return_value = TableDescription(
-            table="t", columns=[ColumnInfo(name="id", type="INTEGER")]
+        driver.explore_describe.return_value = EntityDescription(
+            name="t",
+            kind="table",
+            properties=[FieldDescription(name="id", types=["INTEGER"])],
         )
         await disp.dispatch(
             Method.EXPLORE_DESCRIBE,
@@ -584,8 +588,10 @@ class TestExploreDiagram:
         self, connected: tuple[Dispatcher, str, AsyncMock]
     ) -> None:
         disp, conn_id, driver = connected
-        driver.explore_describe.return_value = TableDescription(
-            table="t", columns=[ColumnInfo(name="id", type="INTEGER", pk=True)]
+        driver.explore_describe.return_value = EntityDescription(
+            name="t",
+            kind="table",
+            properties=[FieldDescription(name="id", types=["INTEGER"], pk=True)],
         )
         result = await disp.dispatch(
             Method.EXPLORE_DIAGRAM,
@@ -615,7 +621,7 @@ class TestExploreDiagram:
         disp, conn_id, driver = connected
         driver.explore_describe.side_effect = [
             ConnectionLostError(),
-            TableDescription(table="t", columns=[]),
+            EntityDescription(name="t", kind="table", properties=[]),
         ]
         await disp.dispatch(
             Method.EXPLORE_DIAGRAM,

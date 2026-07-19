@@ -18,7 +18,15 @@ import pytest
 
 from grannos.drivers.base import DriverSettings
 from grannos.drivers.neo4j import Neo4jDriver
-from grannos.protocol import ExploreItem, IndexDescription, ReadResult, WriteResult
+from grannos.protocol import (
+    Connection,
+    EntityDescription,
+    ExploreItem,
+    FieldDescription,
+    IndexDescription,
+    ReadResult,
+    WriteResult,
+)
 
 pytestmark = pytest.mark.external
 
@@ -202,10 +210,90 @@ class TestExploreList:
 
 
 class TestExploreDescribe:
-    async def test_returns_none_for_all_paths(self, driver: Neo4jDriver) -> None:
+    async def test_returns_none_for_root_and_group_paths(
+        self, driver: Neo4jDriver
+    ) -> None:
         assert await driver.explore_describe([]) is None
         assert await driver.explore_describe(["entities"]) is None
-        assert await driver.explore_describe(["entities", "User"]) is None
+        assert await driver.explore_describe(["relationships"]) is None
+
+    async def test_describes_node_properties(self, driver: Neo4jDriver) -> None:
+        await driver.execute(
+            "CREATE (:User {name: 'Alice', age: 30}), (:User {name: 'Bob'})", []
+        )
+        desc = await driver.explore_describe(["entities", "User"])
+        assert isinstance(desc, EntityDescription)
+        assert desc.name == "User"
+        assert desc.kind == "node"
+        props = {p.name: p for p in desc.properties}
+        assert props["name"].nullable is False
+        assert props["age"].nullable is True
+        assert props["name"].types == ["String"]
+
+    async def test_describes_node_connections(self, driver: Neo4jDriver) -> None:
+        await driver.execute(
+            "CREATE (:User)-[:BOUGHT]->(:Product)<-[:BOUGHT]-(:User)", []
+        )
+        desc = await driver.explore_describe(["entities", "User"])
+        assert isinstance(desc, EntityDescription)
+        assert desc.connections == [
+            Connection(rel_type="BOUGHT", from_label="User", to_label="Product")
+        ]
+
+    async def test_describes_unknown_label_as_empty(self, driver: Neo4jDriver) -> None:
+        desc = await driver.explore_describe(["entities", "Ghost"])
+        assert isinstance(desc, EntityDescription)
+        assert desc.properties == []
+        assert desc.connections == []
+
+    async def test_describes_node_property_sample(self, driver: Neo4jDriver) -> None:
+        await driver.execute("CREATE (:User {name: 'Alice'})", [])
+        desc = await driver.explore_describe(["entities", "User", "name"])
+        assert isinstance(desc, FieldDescription)
+        assert desc.name == "name"
+        assert desc.sample == ["Alice"]
+
+    async def test_describes_unknown_node_property_returns_none(
+        self, driver: Neo4jDriver
+    ) -> None:
+        await driver.execute("CREATE (:User {name: 'Alice'})", [])
+        assert await driver.explore_describe(["entities", "User", "ghost"]) is None
+
+    async def test_describes_relationship_type_properties(
+        self, driver: Neo4jDriver
+    ) -> None:
+        await driver.execute("CREATE (:User)-[:BOUGHT {price: 9.99}]->(:Product)", [])
+        desc = await driver.explore_describe(["relationships", "BOUGHT"])
+        assert isinstance(desc, EntityDescription)
+        assert desc.name == "BOUGHT"
+        assert desc.kind == "relationship"
+        assert [p.name for p in desc.properties] == ["price"]
+
+    async def test_describes_relationship_type_connects(
+        self, driver: Neo4jDriver
+    ) -> None:
+        await driver.execute("CREATE (:User)-[:BOUGHT]->(:Product)", [])
+        desc = await driver.explore_describe(["relationships", "BOUGHT"])
+        assert isinstance(desc, EntityDescription)
+        assert desc.connections == [
+            Connection(rel_type="BOUGHT", from_label="User", to_label="Product")
+        ]
+
+    async def test_describes_relationship_property_sample(
+        self, driver: Neo4jDriver
+    ) -> None:
+        await driver.execute("CREATE (:User)-[:BOUGHT {price: 9.99}]->(:Product)", [])
+        desc = await driver.explore_describe(["relationships", "BOUGHT", "price"])
+        assert isinstance(desc, FieldDescription)
+        assert desc.sample == [9.99]
+
+    async def test_describes_unknown_relationship_property_returns_none(
+        self, driver: Neo4jDriver
+    ) -> None:
+        await driver.execute("CREATE (:User)-[:BOUGHT]->(:Product)", [])
+        assert (
+            await driver.explore_describe(["relationships", "BOUGHT", "ghost"]) is None
+        )
 
 
 class TestExploreDescribeIndex:
@@ -213,7 +301,7 @@ class TestExploreDescribeIndex:
         await driver.execute("CREATE INDEX test_idx FOR (n:User) ON (n.name)", [])
         desc = await driver.explore_describe(["indexes", "test_idx"])
         assert isinstance(desc, IndexDescription)
-        assert desc.index == "test_idx"
+        assert desc.name == "test_idx"
         assert desc.tables == ["User"]
         assert len(desc.fields) == 1
         assert desc.fields[0].name == "name"

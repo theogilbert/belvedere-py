@@ -321,9 +321,11 @@ async def fetch_outgoing_references(
     unique_cols = await fetch_unique_columns(conn, schema, table)
     return [
         TableReference(
+            table=table,
+            schema=schema,
             column=r[0],
-            schema=r[1],
-            table=r[2],
+            ref_table=r[2],
+            ref_schema=r[1],
             ref_column=r[3],
             unique=r[0] in unique_cols,
             constraint_name=r[4],
@@ -359,10 +361,12 @@ async def fetch_incoming_references(
         unique_cols = await fetch_unique_columns(conn, fk_schema, fk_table)
         references.append(
             TableReference(
-                column=r[0],
-                schema=fk_schema,
                 table=fk_table,
-                ref_column=fk_col,
+                schema=fk_schema,
+                column=fk_col,
+                ref_table=table,
+                ref_schema=schema,
+                ref_column=r[0],
                 unique=fk_col in unique_cols,
                 constraint_name=constraint_name,
             )
@@ -644,7 +648,7 @@ def build_column_index_lists(
     *fields_by_index* is the result of :func:`fetch_index_fields_for_table`;
     *all_indices* is the full list of :class:`IndexDescription` for the table.
     """
-    idx_by_name = {idx.index: idx for idx in all_indices}
+    idx_by_name = {idx.name: idx for idx in all_indices}
     excl: dict[str, list[IndexDescription]] = {}
     comp: dict[str, list[IndexDescription]] = {}
     for idx_name, fields in fields_by_index.items():

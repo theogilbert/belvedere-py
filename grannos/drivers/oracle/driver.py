@@ -8,18 +8,16 @@ import oracledb
 from oracledb import AsyncConnection
 
 from ...protocol import (
-    ColumnDescription,
-    ColumnInfo,
-    ColumnsDescription,
     DescribeResult,
     DriverParam,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     IndexDescription,
-    IndicesDescription,
     Language,
     ParamType,
     ReadResult,
-    TableDescription,
+    TableReference,
     WriteResult,
 )
 from ..base import (
@@ -28,8 +26,9 @@ from ..base import (
     DriverError,
     DriverSettings,
     build_column_samples,
-    build_relationship_description,
+    find_reference,
     group_references_by_column,
+    group_references_by_ref_column,
 )
 from .queries import (
     apply_metadata_transform,
@@ -37,7 +36,6 @@ from .queries import (
     build_preview_query,
     fetch_all_column_comments,
     fetch_column_details,
-    fetch_column_index_mapping,
     fetch_column_names_and_types,
     fetch_constraint_names_and_types,
     fetch_explain_plan,
@@ -289,7 +287,7 @@ direction, and uniqueness.
     async def _explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
             case [schema, table]:
-                return await self._describe_table(schema.upper(), table.upper())
+                return await self._describe_entity(schema.upper(), table.upper())
 
             case [schema, table, "indexes"]:
                 return await self._describe_indices(schema.upper(), table.upper())
@@ -299,65 +297,61 @@ direction, and uniqueness.
                     schema.upper(), table.upper(), index_name.upper()
                 )
 
-            case [schema, table, "columns"]:
-                return await self._describe_columns(schema.upper(), table.upper())
-
             case [schema, table, "columns", col_name]:
-                return await self._describe_column(
+                return await self._describe_field(
                     schema.upper(), table.upper(), col_name.upper()
                 )
 
             case [schema, table, "relationships", column]:
-                desc = await self._describe_table(schema.upper(), table.upper())
-                return build_relationship_description(
-                    desc, table.upper(), schema.upper(), column.upper()
+                return await self._describe_relationship(
+                    schema.upper(), table.upper(), column.upper()
                 )
 
             case _:
                 return None
 
-    async def _describe_table(self, schema: str, table: str) -> TableDescription:
+    async def _describe_entity(self, schema: str, table: str) -> EntityDescription:
         col_details = await fetch_column_details(self._conn, schema, table)
         pk_cols = await fetch_pk_columns(self._conn, schema, table)
-        col_index_map = await fetch_column_index_mapping(self._conn, schema, table)
+        indices = await self._describe_indices(schema, table, fetch_ddl=False)
+        fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
+        excl, comp = build_column_index_lists(fields_by_index, indices)
+        comments = await fetch_all_column_comments(self._conn, schema, table)
+        samples = await self._fetch_samples(schema, table)
         comment = await fetch_table_comment(self._conn, schema, table)
+        outgoing_by_col = group_references_by_column(
+            await fetch_outgoing_references(self._conn, schema, table)
+        )
+        incoming_by_col = group_references_by_ref_column(
+            await fetch_incoming_references(self._conn, schema, table)
+        )
 
-        index_cols: dict[str, set[str]] = {}
-        for col_name, idx_names in col_index_map.items():
-            for idx_name in idx_names:
-                index_cols.setdefault(idx_name, set()).add(col_name)
-        index_col_count = {k: len(v) for k, v in index_cols.items()}
-
-        outgoing_references = await fetch_outgoing_references(self._conn, schema, table)
-        incoming_references = await fetch_incoming_references(self._conn, schema, table)
-
-        return TableDescription(
-            table=table,
+        return EntityDescription(
+            name=table,
+            kind="table",
             schema=schema,
             comment=comment,
-            columns=[
-                ColumnInfo(
+            properties=[
+                FieldDescription(
                     name=col.name,
-                    type=col.type,
+                    types=[col.type],
                     nullable=col.nullable,
                     pk=col.name in pk_cols,
                     default=col.default,
-                    exclusive_index=any(
-                        index_col_count[i] == 1 for i in col_index_map.get(col.name, [])
-                    ),
-                    composite_index=any(
-                        index_col_count[i] > 1 for i in col_index_map.get(col.name, [])
-                    ),
+                    exclusive_indices=excl.get(col.name, []),
+                    composite_indices=comp.get(col.name, []),
+                    comment=comments.get(col.name),
+                    sample=samples.get(col.name, []),
+                    outgoing_references=outgoing_by_col.get(col.name, []),
+                    incoming_references=incoming_by_col.get(col.name, []),
                 )
                 for col in col_details
             ],
-            outgoing_references=outgoing_references,
-            incoming_references=incoming_references,
         )
 
     async def _describe_indices(
         self, schema: str, table: str, *, fetch_ddl: bool = True
-    ) -> IndicesDescription:
+    ) -> list[IndexDescription]:
         metas = await fetch_index_metas_for_table(self._conn, schema, table)
         fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
         join_tables = await fetch_join_tables_for_table(self._conn, schema, table)
@@ -371,7 +365,7 @@ direction, and uniqueness.
             )
             indices.append(
                 IndexDescription(
-                    index=meta.name,
+                    name=meta.name,
                     fields=fields_by_index.get(meta.name, []),
                     unique=meta.unique,
                     tables=join_tables.get(meta.name, [table]),
@@ -381,7 +375,7 @@ direction, and uniqueness.
                 )
             )
 
-        return IndicesDescription(indices=indices)
+        return indices
 
     async def _describe_index(
         self, schema: str, table: str, index_name: str
@@ -401,7 +395,7 @@ direction, and uniqueness.
         )
 
         return IndexDescription(
-            index=index_name,
+            name=index_name,
             fields=fields,
             unique=meta.unique,
             tables=tables,
@@ -410,61 +404,30 @@ direction, and uniqueness.
             ddl=ddl,
         )
 
-    async def _describe_columns(self, schema: str, table: str) -> ColumnsDescription:
-        col_details = await fetch_column_details(self._conn, schema, table)
-        pk_cols = await fetch_pk_columns(self._conn, schema, table)
-        all_indices = (
-            await self._describe_indices(schema, table, fetch_ddl=False)
-        ).indices
-        fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
-        excl, comp = build_column_index_lists(fields_by_index, all_indices)
-        comments = await fetch_all_column_comments(self._conn, schema, table)
-        samples = await self._fetch_samples(schema, table)
-        refs_by_col = group_references_by_column(
-            await fetch_outgoing_references(self._conn, schema, table)
-        )
-
-        return ColumnsDescription(
-            columns=[
-                ColumnDescription(
-                    name=col.name,
-                    data_type=col.type,
-                    nullable=col.nullable,
-                    pk=col.name in pk_cols,
-                    default=col.default,
-                    exclusive_indices=excl.get(col.name, []),
-                    composite_indices=comp.get(col.name, []),
-                    comment=comments.get(col.name),
-                    sample=samples.get(col.name, []),
-                    outgoing_references=refs_by_col.get(col.name, []),
-                )
-                for col in col_details
-            ]
-        )
-
-    async def _describe_column(
+    async def _describe_field(
         self, schema: str, table: str, col_name: str
-    ) -> ColumnDescription | None:
+    ) -> FieldDescription | None:
         col_details = await fetch_column_details(self._conn, schema, table)
         col = next((c for c in col_details if c.name == col_name), None)
         if col is None:
             return None
 
         pk_cols = await fetch_pk_columns(self._conn, schema, table)
-        all_indices = (
-            await self._describe_indices(schema, table, fetch_ddl=False)
-        ).indices
+        indices = await self._describe_indices(schema, table, fetch_ddl=False)
         fields_by_index = await fetch_index_fields_for_table(self._conn, schema, table)
-        excl, comp = build_column_index_lists(fields_by_index, all_indices)
+        excl, comp = build_column_index_lists(fields_by_index, indices)
         comments = await fetch_all_column_comments(self._conn, schema, table)
         sample = await self._fetch_sample(schema, table, col_name)
-        refs_by_col = group_references_by_column(
+        outgoing_by_col = group_references_by_column(
             await fetch_outgoing_references(self._conn, schema, table)
         )
+        incoming_by_col = group_references_by_ref_column(
+            await fetch_incoming_references(self._conn, schema, table)
+        )
 
-        return ColumnDescription(
+        return FieldDescription(
             name=col.name,
-            data_type=col.type,
+            types=[col.type],
             nullable=col.nullable,
             pk=col.name in pk_cols,
             default=col.default,
@@ -472,8 +435,15 @@ direction, and uniqueness.
             composite_indices=comp.get(col_name, []),
             comment=comments.get(col_name),
             sample=sample,
-            outgoing_references=refs_by_col.get(col_name, []),
+            outgoing_references=outgoing_by_col.get(col_name, []),
+            incoming_references=incoming_by_col.get(col_name, []),
         )
+
+    async def _describe_relationship(
+        self, schema: str, table: str, column: str
+    ) -> TableReference | None:
+        refs = await fetch_outgoing_references(self._conn, schema, table)
+        return find_reference(refs, column)
 
     async def _fetch_sample(self, schema: str, table: str, col_name: str) -> list[Any]:
         try:

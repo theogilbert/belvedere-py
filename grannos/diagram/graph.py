@@ -8,7 +8,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ..protocol import ColumnInfo, DescribeResult, TableDescription, TableReference
+from ..protocol import (
+    DescribeResult,
+    EntityDescription,
+    FieldDescription,
+    TableReference,
+)
 
 FkSide = Literal["source", "target"]
 """Which endpoint of a ``GraphEdge`` owns the FK column — the "many" side of
@@ -34,7 +39,7 @@ class GraphNode:
     """Display name, e.g. ``dbo.orders`` or ``orders``."""
     path: list[str]
     """Path identifying this table."""
-    columns: list[ColumnInfo] = field(default_factory=list)
+    columns: list[FieldDescription] = field(default_factory=list)
     fk_columns: set[str] = field(default_factory=set)
     """Names of columns covered by an outgoing foreign key."""
     ref_columns: set[str] = field(default_factory=set)
@@ -72,21 +77,21 @@ async def discover(
         DiagramError: If path does not resolve to a table.
     """
     desc = await describe(path)
-    if not isinstance(desc, TableDescription):
+    if not isinstance(desc, EntityDescription):
         raise DiagramError(f"Path {path!r} does not resolve to a table")
 
     nodes = [_table_node(0, path, desc)]
     edges: list[GraphEdge] = []
     seen_pairs: set[frozenset[int]] = set()
     visited: dict[tuple[str, ...], int] = {tuple(path): 0}
-    queue: deque[tuple[list[str], TableDescription, int, int]] = deque(
+    queue: deque[tuple[list[str], EntityDescription, int, int]] = deque(
         [(path, desc, 0, 0)]
     )
 
     while queue:
         cur_path, cur_desc, cur_id, depth = queue.popleft()
         for ref, fk_side in _iter_refs(cur_desc):
-            ref_path = _ref_path(cur_desc, ref)
+            ref_path = _ref_path(ref, fk_side)
             if tuple(ref_path) == tuple(cur_path):
                 continue  # self-reference — already fully described by this box
 
@@ -96,17 +101,20 @@ async def discover(
                 visited[tuple(ref_path)] = target_id
                 child_desc = await describe(ref_path)
                 child_depth = depth + 1
-                if isinstance(child_desc, TableDescription):
+                if isinstance(child_desc, EntityDescription):
                     nodes.append(_table_node(target_id, ref_path, child_desc))
                     if child_depth < MAX_DEPTH:
                         queue.append((ref_path, child_desc, target_id, child_depth))
                 else:
-                    nodes.append(_placeholder_node(target_id, ref_path, ref))
+                    nodes.append(_placeholder_node(target_id, ref_path, ref, fk_side))
 
             pair = frozenset((cur_id, target_id))
             if pair not in seen_pairs:
                 seen_pairs.add(pair)
-                fk_column = ref.column if fk_side == "source" else ref.ref_column
+                # `column` always names the FK-owning side regardless of direction,
+                # so no fk_side-conditional is needed here (unlike the pre-redesign
+                # TableReference, where `column` flipped meaning by direction).
+                fk_column = ref.column
                 owner_id = cur_id if fk_side == "source" else target_id
                 edges.append(
                     GraphEdge(
@@ -124,40 +132,50 @@ async def discover(
     return nodes, edges
 
 
-def _iter_refs(desc: TableDescription):
+def _iter_refs(desc: EntityDescription):
     """Yields every reference alongside which side ``desc``'s own table sits
-    on: it owns the FK column for its ``outgoing_references``, and is the
-    referenced ("one") side for its ``incoming_references``."""
-    for ref in desc.outgoing_references:
-        yield ref, "source"
-    for ref in desc.incoming_references:
-        yield ref, "target"
+    on: it owns the FK column for a field's ``outgoing_references``, and is
+    the referenced ("one") side for a field's ``incoming_references``."""
+    for f in desc.properties:
+        for ref in f.outgoing_references:
+            yield ref, "source"
+        for ref in f.incoming_references:
+            yield ref, "target"
 
 
-def _ref_path(desc: TableDescription, ref: TableReference) -> list[str]:
-    if desc.schema is None:
-        return [ref.table]
-    return [ref.schema or desc.schema, ref.table]
+def _ref_path(ref: TableReference, fk_side: FkSide) -> list[str]:
+    if fk_side == "source":
+        # desc owns the FK; the other side is the table it references.
+        return [ref.ref_schema, ref.ref_table] if ref.ref_schema else [ref.ref_table]
+    # desc is the referenced side; the other side is the table owning the FK.
+    return [ref.schema, ref.table] if ref.schema else [ref.table]
 
 
-def _table_node(id_: int, path: list[str], desc: TableDescription) -> GraphNode:
-    name = f"{desc.schema}.{desc.table}" if desc.schema else desc.table
+def _table_node(id_: int, path: list[str], desc: EntityDescription) -> GraphNode:
+    name = f"{desc.schema}.{desc.name}" if desc.schema else desc.name
+    fk_columns = {f.name for f in desc.properties if f.outgoing_references}
+    ref_columns = {f.name for f in desc.properties if f.incoming_references}
     return GraphNode(
         id=id_,
         name=name,
         path=path,
-        columns=desc.columns,
-        fk_columns={r.column for r in desc.outgoing_references},
-        ref_columns={r.column for r in desc.incoming_references},
+        columns=desc.properties,
+        fk_columns=fk_columns,
+        ref_columns=ref_columns,
     )
 
 
-def _placeholder_node(id_: int, path: list[str], ref: TableReference) -> GraphNode:
-    name = f"{ref.schema}.{ref.table}" if ref.schema else ref.table
+def _placeholder_node(
+    id_: int, path: list[str], ref: TableReference, fk_side: FkSide
+) -> GraphNode:
+    if fk_side == "source":
+        name = f"{ref.ref_schema}.{ref.ref_table}" if ref.ref_schema else ref.ref_table
+    else:
+        name = f"{ref.schema}.{ref.table}" if ref.schema else ref.table
     return GraphNode(id=id_, name=name, path=path, unavailable=True)
 
 
-def _column_nullable(columns: list[ColumnInfo], name: str) -> bool:
+def _column_nullable(columns: list[FieldDescription], name: str) -> bool:
     """``nullable`` defaults to ``False`` for an unresolved (placeholder) owner
     or an unknown/``None`` nullability, so the diagram only claims optionality
     when the driver actually reported it."""

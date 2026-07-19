@@ -22,13 +22,10 @@ import pytest
 from grannos.drivers.base import DriverSettings
 from grannos.drivers.oracle import OracleDriver
 from grannos.protocol import (
-    ColumnDescription,
-    ColumnsDescription,
+    EntityDescription,
+    FieldDescription,
     IndexDescription,
-    IndicesDescription,
     ReadResult,
-    RelationshipDescription,
-    TableDescription,
     TableReference,
     WriteResult,
 )
@@ -336,21 +333,22 @@ class TestExploreList:
 
 
 class TestExploreDescribe:
-    async def test_returns_column_metadata(
+    async def test_returns_field_metadata(
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
         await driver.execute(
             f"CREATE TABLE {schema}.{table} (id NUMBER NOT NULL, val VARCHAR2(50))", []
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.schema == schema
-        assert desc.table == table
-        by_name = {c.name: c for c in desc.columns}
+        assert desc.name == table
+        assert desc.kind == "table"
+        by_name = {f.name: f for f in desc.properties}
         assert list(by_name) == ["ID", "VAL"]
-        assert by_name["ID"].type == "NUMBER"
+        assert by_name["ID"].types == ["NUMBER"]
         assert by_name["ID"].nullable is False
-        assert by_name["VAL"].type == "VARCHAR2"
+        assert by_name["VAL"].types == ["VARCHAR2"]
         assert by_name["VAL"].nullable is True
 
     async def test_returns_pk_flag(
@@ -361,8 +359,8 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
         assert by_name["ID"].pk is True
         assert by_name["VAL"].pk is False
 
@@ -373,13 +371,19 @@ class TestExploreDescribe:
             f"CREATE TABLE {schema}.{table} (id NUMBER DEFAULT 0, val VARCHAR2(50))", []
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
-        by_name = {c.name: c for c in desc.columns}
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
         assert by_name["ID"].default == "0"
         assert by_name["VAL"].default is None
 
     async def test_returns_none_for_unknown_path(self, driver: OracleDriver) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_columns_group_path_no_longer_resolves(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
+        assert await driver.explore_describe([schema, table, "columns"]) is None
 
     async def test_comment(self, driver: OracleDriver, schema: str, table: str) -> None:
         await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
@@ -387,7 +391,7 @@ class TestExploreDescribe:
             f"COMMENT ON TABLE {schema}.{table} IS 'A test table comment'", []
         )
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.comment == "A test table comment"
 
     async def test_comment_defaults_to_none(
@@ -395,9 +399,89 @@ class TestExploreDescribe:
     ) -> None:
         await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.comment is None
         assert await driver.explore_describe(["SYS"]) is None
+
+    async def test_data_type(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["ID"].types == ["NUMBER"]
+        assert by_name["VAL"].types == ["VARCHAR2"]
+
+    async def test_exclusive_index(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
+        )
+        idx = "IDX_" + table
+        await driver.execute(
+            f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val)", []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert len(by_name["VAL"].exclusive_indices) == 1
+        assert by_name["VAL"].exclusive_indices[0].name == idx
+        assert by_name["ID"].exclusive_indices == []
+        assert by_name["VAL"].composite_indices == []
+
+    async def test_composite_index(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table}"
+            f" (id NUMBER, val VARCHAR2(50), other VARCHAR2(50))",
+            [],
+        )
+        idx = "IDX_" + table
+        await driver.execute(
+            f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val, other)", []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert len(by_name["VAL"].composite_indices) == 1
+        assert by_name["VAL"].exclusive_indices == []
+
+    async def test_field_comment(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
+        )
+        await driver.execute(
+            f"COMMENT ON COLUMN {schema}.{table}.val IS 'A test comment'", []
+        )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["VAL"].comment == "A test comment"
+        assert by_name["ID"].comment is None
+
+    async def test_sample_values(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(10))", []
+        )
+        for i, v in enumerate(["x", "y", "z", "x"]):
+            await driver.execute(
+                f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [i, v]
+            )
+        desc = await driver.explore_describe([schema, table])
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        sample = by_name["VAL"].sample
+        assert len(sample) <= 3
+        assert set(sample).issubset({"x", "y", "z"})
 
     async def test_returns_outgoing_references(
         self, driver: OracleDriver, schema: str, tables: tuple[str, str]
@@ -414,15 +498,21 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, child])
-        assert isinstance(desc, TableDescription)
-        ref = desc.outgoing_references[0]
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        ref = by_name["PARENT_ID"].outgoing_references[0]
         # The constraint is unnamed, so Oracle auto-generates an unpredictable
         # SYS_C* name — assert it's present without pinning its exact value.
         assert ref.constraint_name is not None
         assert dataclasses.replace(ref, constraint_name=None) == TableReference(
-            column="PARENT_ID", table=parent, ref_column="ID", schema=schema
+            table=child,
+            schema=schema,
+            column="PARENT_ID",
+            ref_table=parent,
+            ref_schema=schema,
+            ref_column="ID",
         )
-        assert desc.incoming_references == []
+        assert by_name["ID"].outgoing_references == []
 
     async def test_returns_incoming_references(
         self, driver: OracleDriver, schema: str, tables: tuple[str, str]
@@ -439,22 +529,28 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, parent])
-        assert isinstance(desc, TableDescription)
-        ref = desc.incoming_references[0]
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        ref = by_name["ID"].incoming_references[0]
         assert ref.constraint_name is not None
         assert dataclasses.replace(ref, constraint_name=None) == TableReference(
-            column="ID", table=child, ref_column="PARENT_ID", schema=schema
+            table=child,
+            schema=schema,
+            column="PARENT_ID",
+            ref_table=parent,
+            ref_schema=schema,
+            ref_column="ID",
         )
-        assert desc.outgoing_references == []
 
     async def test_references_default_to_empty(
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
         await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
         desc = await driver.explore_describe([schema, table])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == []
-        assert desc.incoming_references == []
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["ID"].outgoing_references == []
+        assert by_name["ID"].incoming_references == []
 
     async def test_outgoing_reference_is_unique_when_fk_column_has_unique_constraint(
         self, driver: OracleDriver, schema: str, tables: tuple[str, str]
@@ -471,8 +567,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["PARENT_ID"].outgoing_references[0].unique is True
 
     async def test_outgoing_reference_is_not_unique_by_default(
         self, driver: OracleDriver, schema: str, tables: tuple[str, str]
@@ -489,8 +586,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["PARENT_ID"].outgoing_references[0].unique is False
 
     async def test_incoming_reference_is_unique_when_fk_column_has_unique_constraint(
         self, driver: OracleDriver, schema: str, tables: tuple[str, str]
@@ -507,8 +605,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["ID"].incoming_references[0].unique is True
 
     async def test_incoming_reference_is_not_unique_by_default(
         self, driver: OracleDriver, schema: str, tables: tuple[str, str]
@@ -525,8 +624,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe([schema, parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        by_name = {f.name: f for f in desc.properties}
+        assert by_name["ID"].incoming_references[0].unique is False
 
     async def test_should_describe_a_relationship(
         self, driver: OracleDriver, schema: str, tables: tuple[str, str]
@@ -545,7 +645,7 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(
             [schema, child, "relationships", "parent_id"]
         )
-        assert isinstance(desc, RelationshipDescription)
+        assert isinstance(desc, TableReference)
         assert desc.table == child
         assert desc.schema == schema
         assert desc.column == "PARENT_ID"
@@ -575,7 +675,7 @@ class TestExploreDescribeIndex:
         )
         desc = await driver.explore_describe([schema, table, "indexes", idx])
         assert isinstance(desc, IndexDescription)
-        assert desc.index == idx
+        assert desc.name == idx
         assert len(desc.fields) == 1
         assert desc.fields[0].name == "VAL"
         assert desc.fields[0].direction == "asc"
@@ -649,137 +749,7 @@ class TestExploreDescribeIndex:
         )
 
 
-class TestExploreDescribeColumns:
-    async def test_returns_all_columns(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        assert [c.name for c in desc.columns] == ["ID", "VAL"]
-
-    async def test_data_type(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["ID"].data_type == "NUMBER"
-        assert by_name["VAL"].data_type == "VARCHAR2"
-
-    async def test_pk_and_nullable(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table}"
-            f" (id NUMBER PRIMARY KEY, val VARCHAR2(50) NOT NULL)",
-            [],
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["ID"].pk is True
-        assert by_name["VAL"].pk is False
-        assert by_name["ID"].nullable is False
-        assert by_name["VAL"].nullable is False
-
-    async def test_exclusive_index(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
-        )
-        idx = "IDX_" + table
-        await driver.execute(
-            f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val)", []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["VAL"].exclusive_indices) == 1
-        assert by_name["VAL"].exclusive_indices[0].index == idx
-        assert by_name["ID"].exclusive_indices == []
-        assert by_name["VAL"].composite_indices == []
-
-    async def test_composite_index(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table}"
-            f" (id NUMBER, val VARCHAR2(50), other VARCHAR2(50))",
-            [],
-        )
-        idx = "IDX_" + table
-        await driver.execute(
-            f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val, other)", []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["VAL"].composite_indices) == 1
-        assert by_name["VAL"].exclusive_indices == []
-
-    async def test_comment(self, driver: OracleDriver, schema: str, table: str) -> None:
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
-        )
-        await driver.execute(
-            f"COMMENT ON COLUMN {schema}.{table}.val IS 'A test comment'", []
-        )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["VAL"].comment == "A test comment"
-        assert by_name["ID"].comment is None
-
-    async def test_sample_values(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(10))", []
-        )
-        for i, v in enumerate(["x", "y", "z", "x"]):
-            await driver.execute(
-                f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [i, v]
-            )
-        desc = await driver.explore_describe([schema, table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        sample = by_name["VAL"].sample
-        assert len(sample) <= 3
-        assert set(sample).issubset({"x", "y", "z"})
-
-    async def test_outgoing_references(
-        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
-    ) -> None:
-        parent, child = tables
-        await driver.execute(
-            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
-        )
-        await driver.execute(
-            f"CREATE TABLE {schema}.{child} ("
-            f"  id NUMBER, parent_id NUMBER,"
-            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
-            ")",
-            [],
-        )
-        desc = await driver.explore_describe([schema, child, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        refs = by_name["PARENT_ID"].outgoing_references
-        assert len(refs) == 1
-        assert dataclasses.replace(refs[0], constraint_name=None) == TableReference(
-            column="PARENT_ID", table=parent, ref_column="ID", schema=schema
-        )
-        assert by_name["ID"].outgoing_references == []
-
-
-class TestExploreDescribeColumn:
+class TestExploreDescribeField:
     async def test_basic_fields(
         self, driver: OracleDriver, schema: str, table: str
     ) -> None:
@@ -787,9 +757,9 @@ class TestExploreDescribeColumn:
             f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50) NOT NULL)", []
         )
         desc = await driver.explore_describe([schema, table, "columns", "VAL"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.name == "VAL"
-        assert desc.data_type == "VARCHAR2"
+        assert desc.types == ["VARCHAR2"]
         assert desc.nullable is False
         assert desc.pk is False
 
@@ -801,7 +771,7 @@ class TestExploreDescribeColumn:
             [],
         )
         desc = await driver.explore_describe([schema, table, "columns", "ID"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.pk is True
 
     async def test_exclusive_index(
@@ -815,9 +785,9 @@ class TestExploreDescribeColumn:
             f"CREATE INDEX {schema}.{idx} ON {schema}.{table}(val)", []
         )
         desc = await driver.explore_describe([schema, table, "columns", "VAL"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.exclusive_indices) == 1
-        assert desc.exclusive_indices[0].index == idx
+        assert desc.exclusive_indices[0].name == idx
         assert desc.composite_indices == []
 
     async def test_comment(self, driver: OracleDriver, schema: str, table: str) -> None:
@@ -828,7 +798,7 @@ class TestExploreDescribeColumn:
             f"COMMENT ON COLUMN {schema}.{table}.val IS 'Column comment'", []
         )
         desc = await driver.explore_describe([schema, table, "columns", "VAL"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.comment == "Column comment"
 
     async def test_sample_values(
@@ -842,7 +812,7 @@ class TestExploreDescribeColumn:
                 f"INSERT INTO {schema}.{table} VALUES (:1, :2)", [i, v]
             )
         desc = await driver.explore_describe([schema, table, "columns", "VAL"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"a", "b", "c"})
 
@@ -861,11 +831,43 @@ class TestExploreDescribeColumn:
             [],
         )
         desc = await driver.explore_describe([schema, child, "columns", "PARENT_ID"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.outgoing_references) == 1
         ref = desc.outgoing_references[0]
         assert dataclasses.replace(ref, constraint_name=None) == TableReference(
-            column="PARENT_ID", table=parent, ref_column="ID", schema=schema
+            table=child,
+            schema=schema,
+            column="PARENT_ID",
+            ref_table=parent,
+            ref_schema=schema,
+            ref_column="ID",
+        )
+
+    async def test_incoming_references(
+        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE {schema}.{parent} (id NUMBER PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE {schema}.{child} ("
+            f"  id NUMBER, parent_id NUMBER,"
+            f"  FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe([schema, parent, "columns", "ID"])
+        assert isinstance(desc, FieldDescription)
+        assert len(desc.incoming_references) == 1
+        ref = desc.incoming_references[0]
+        assert dataclasses.replace(ref, constraint_name=None) == TableReference(
+            table=child,
+            schema=schema,
+            column="PARENT_ID",
+            ref_table=parent,
+            ref_schema=schema,
+            ref_column="ID",
         )
 
     async def test_empty_outgoing_references_when_not_fk(
@@ -873,7 +875,7 @@ class TestExploreDescribeColumn:
     ) -> None:
         await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
         desc = await driver.explore_describe([schema, table, "columns", "ID"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(
@@ -903,8 +905,9 @@ class TestCrossSchemaIndex:
             f"CREATE INDEX {schema2}.{idx} ON {schema}.{table}(val)", []
         )
         desc = await driver.explore_describe([schema, table, "indexes"])
-        assert isinstance(desc, IndicesDescription)
-        by_name = {i.index: i for i in desc.indices}
+        assert isinstance(desc, list)
+        indices = [i for i in desc if isinstance(i, IndexDescription)]
+        by_name = {i.name: i for i in indices}
         assert idx in by_name
         ddl = by_name[idx].ddl
         assert ddl is not None

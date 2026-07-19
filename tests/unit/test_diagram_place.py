@@ -1,11 +1,13 @@
 from grannos.diagram.graph import GraphEdge, GraphNode
 from grannos.diagram.layout import compute_layout
 from grannos.diagram.place import place
-from grannos.protocol import ColumnInfo
+from grannos.protocol import FieldDescription
 
 
 def _node(id_: int, n_columns: int = 1) -> GraphNode:
-    columns = [ColumnInfo(name=f"c{i}", type="INTEGER") for i in range(n_columns)]
+    columns = [
+        FieldDescription(name=f"c{i}", types=["INTEGER"]) for i in range(n_columns)
+    ]
     return GraphNode(id=id_, name=f"t{id_}", path=[f"t{id_}"], columns=columns)
 
 

@@ -21,12 +21,10 @@ import pytest
 from grannos.drivers.base import DriverSettings
 from grannos.drivers.sqlserver import SQLServerDriver
 from grannos.protocol import (
-    ColumnDescription,
-    ColumnsDescription,
+    EntityDescription,
+    FieldDescription,
     IndexDescription,
     ReadResult,
-    RelationshipDescription,
-    TableDescription,
     TableReference,
     WriteResult,
 )
@@ -241,27 +239,34 @@ class TestExploreList:
 
 
 class TestExploreDescribe:
-    async def test_should_return_column_metadata(
+    async def test_should_return_field_metadata(
         self, driver: SQLServerDriver, table: str
     ) -> None:
         await driver.execute(
             f"CREATE TABLE dbo.{table} (id INT NOT NULL, val VARCHAR(50) NULL)", []
         )
         desc = await driver.explore_describe(["dbo", table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.schema == "dbo"
-        assert desc.table == table
-        cols = {c.name: c for c in desc.columns}
-        assert list(cols) == ["id", "val"]
-        assert cols["id"].type == "int"
-        assert cols["id"].nullable is False
-        assert cols["val"].type == "varchar"
-        assert cols["val"].nullable is True
+        assert desc.name == table
+        assert desc.kind == "table"
+        fields = {f.name: f for f in desc.properties}
+        assert list(fields) == ["id", "val"]
+        assert fields["id"].types == ["int"]
+        assert fields["id"].nullable is False
+        assert fields["val"].types == ["varchar"]
+        assert fields["val"].nullable is True
 
     async def test_should_return_none_for_unknown_path(
         self, driver: SQLServerDriver
     ) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_columns_group_path_no_longer_resolves(
+        self, driver: SQLServerDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
+        assert await driver.explore_describe(["dbo", table, "columns"]) is None
 
     async def test_comment(self, driver: SQLServerDriver, table: str) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
@@ -273,7 +278,7 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["dbo", table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.comment == "A test table comment"
 
     async def test_comment_defaults_to_none(
@@ -281,8 +286,78 @@ class TestExploreDescribe:
     ) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
         desc = await driver.explore_describe(["dbo", table])
-        assert isinstance(desc, TableDescription)
+        assert isinstance(desc, EntityDescription)
         assert desc.comment is None
+
+    async def test_data_type(self, driver: SQLServerDriver, table: str) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["id"].types == ["int"]
+        assert fields["val"].types == ["varchar"]
+
+    async def test_pk_and_nullable(self, driver: SQLServerDriver, table: str) -> None:
+        await driver.execute(
+            f"CREATE TABLE dbo.{table} (id INT PRIMARY KEY, val VARCHAR(50) NOT NULL)",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["id"].pk is True
+        assert fields["val"].pk is False
+        assert fields["id"].nullable is False
+        assert fields["val"].nullable is False
+
+    async def test_exclusive_index(self, driver: SQLServerDriver, table: str) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
+        await driver.execute(f"CREATE INDEX ix_val ON dbo.{table}(val)", [])
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert len(fields["val"].exclusive_indices) == 1
+        assert fields["val"].exclusive_indices[0].name == "ix_val"
+        assert fields["id"].exclusive_indices == []
+        assert fields["val"].composite_indices == []
+
+    async def test_composite_index(self, driver: SQLServerDriver, table: str) -> None:
+        await driver.execute(
+            f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50), other VARCHAR(50))", []
+        )
+        await driver.execute(f"CREATE INDEX ix_vc ON dbo.{table}(val, other)", [])
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert len(fields["val"].composite_indices) == 1
+        assert fields["val"].exclusive_indices == []
+
+    async def test_field_comment(self, driver: SQLServerDriver, table: str) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
+        await driver.execute(
+            "EXEC sp_addextendedproperty"
+            " @name = N'MS_Description', @value = N'A test comment',"
+            " @level0type = N'Schema', @level0name = N'dbo',"
+            f" @level1type = N'Table', @level1name = N'{table}',"
+            " @level2type = N'Column', @level2name = N'val'",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["val"].comment == "A test comment"
+        assert fields["id"].comment is None
+
+    async def test_sample_values(self, driver: SQLServerDriver, table: str) -> None:
+        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(10))", [])
+        for i, v in enumerate(["x", "y", "z", "x"]):
+            await driver.execute(f"INSERT INTO dbo.{table} VALUES (?, ?)", [i, v])
+        desc = await driver.explore_describe(["dbo", table])
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        sample = fields["val"].sample
+        assert len(sample) <= 3
+        assert set(sample).issubset({"x", "y", "z"})
 
     async def test_returns_outgoing_references(
         self, driver: SQLServerDriver, tables: tuple[str, str]
@@ -299,17 +374,20 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["dbo", child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == [
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["parent_id"].outgoing_references == [
             TableReference(
-                column="parent_id",
-                table=parent,
-                ref_column="id",
+                table=child,
                 schema="dbo",
+                column="parent_id",
+                ref_table=parent,
+                ref_schema="dbo",
+                ref_column="id",
                 constraint_name=f"fk_{child}",
             )
         ]
-        assert desc.incoming_references == []
+        assert fields["id"].outgoing_references == []
 
     async def test_returns_incoming_references(
         self, driver: SQLServerDriver, tables: tuple[str, str]
@@ -326,26 +404,29 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["dbo", parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references == [
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["id"].incoming_references == [
             TableReference(
-                column="id",
                 table=child,
-                ref_column="parent_id",
                 schema="dbo",
+                column="parent_id",
+                ref_table=parent,
+                ref_schema="dbo",
+                ref_column="id",
                 constraint_name=f"fk_{child}",
             )
         ]
-        assert desc.outgoing_references == []
 
     async def test_references_default_to_empty(
         self, driver: SQLServerDriver, table: str
     ) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
         desc = await driver.explore_describe(["dbo", table])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references == []
-        assert desc.incoming_references == []
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["id"].outgoing_references == []
+        assert fields["id"].incoming_references == []
 
     async def test_outgoing_reference_is_unique_when_fk_column_has_unique_constraint(
         self, driver: SQLServerDriver, tables: tuple[str, str]
@@ -362,8 +443,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["dbo", child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["parent_id"].outgoing_references[0].unique is True
 
     async def test_outgoing_reference_is_not_unique_by_default(
         self, driver: SQLServerDriver, tables: tuple[str, str]
@@ -380,8 +462,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["dbo", child])
-        assert isinstance(desc, TableDescription)
-        assert desc.outgoing_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["parent_id"].outgoing_references[0].unique is False
 
     async def test_incoming_reference_is_unique_when_fk_column_has_unique_constraint(
         self, driver: SQLServerDriver, tables: tuple[str, str]
@@ -398,8 +481,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["dbo", parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is True
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["id"].incoming_references[0].unique is True
 
     async def test_incoming_reference_is_not_unique_by_default(
         self, driver: SQLServerDriver, tables: tuple[str, str]
@@ -416,8 +500,9 @@ class TestExploreDescribe:
             [],
         )
         desc = await driver.explore_describe(["dbo", parent])
-        assert isinstance(desc, TableDescription)
-        assert desc.incoming_references[0].unique is False
+        assert isinstance(desc, EntityDescription)
+        fields = {f.name: f for f in desc.properties}
+        assert fields["id"].incoming_references[0].unique is False
 
     async def test_should_describe_a_relationship(
         self, driver: SQLServerDriver, tables: tuple[str, str]
@@ -436,7 +521,7 @@ class TestExploreDescribe:
         desc = await driver.explore_describe(
             ["dbo", child, "relationships", "parent_id"]
         )
-        assert isinstance(desc, RelationshipDescription)
+        assert isinstance(desc, TableReference)
         assert desc.table == child
         assert desc.schema == "dbo"
         assert desc.column == "parent_id"
@@ -461,7 +546,7 @@ class TestExploreDescribeIndex:
         await driver.execute(f"CREATE INDEX ix_val ON dbo.{table}(val)", [])
         desc = await driver.explore_describe(["dbo", table, "indices", "ix_val"])
         assert isinstance(desc, IndexDescription)
-        assert desc.index == "ix_val"
+        assert desc.name == "ix_val"
         assert len(desc.fields) == 1
         assert desc.fields[0].name == "val"
         assert desc.fields[0].direction == "asc"
@@ -548,123 +633,15 @@ class TestExploreDescribeIndex:
         )
 
 
-class TestExploreDescribeColumns:
-    async def test_returns_all_columns(
-        self, driver: SQLServerDriver, table: str
-    ) -> None:
-        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
-        desc = await driver.explore_describe(["dbo", table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        assert [c.name for c in desc.columns] == ["id", "val"]
-
-    async def test_data_type(self, driver: SQLServerDriver, table: str) -> None:
-        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
-        desc = await driver.explore_describe(["dbo", table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["id"].data_type == "int"
-        assert by_name["val"].data_type == "varchar"
-
-    async def test_pk_and_nullable(self, driver: SQLServerDriver, table: str) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} (id INT PRIMARY KEY, val VARCHAR(50) NOT NULL)",
-            [],
-        )
-        desc = await driver.explore_describe(["dbo", table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["id"].pk is True
-        assert by_name["val"].pk is False
-        assert by_name["id"].nullable is False
-        assert by_name["val"].nullable is False
-
-    async def test_exclusive_index(self, driver: SQLServerDriver, table: str) -> None:
-        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
-        await driver.execute(f"CREATE INDEX ix_val ON dbo.{table}(val)", [])
-        desc = await driver.explore_describe(["dbo", table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["val"].exclusive_indices) == 1
-        assert by_name["val"].exclusive_indices[0].index == "ix_val"
-        assert by_name["id"].exclusive_indices == []
-        assert by_name["val"].composite_indices == []
-
-    async def test_composite_index(self, driver: SQLServerDriver, table: str) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50), other VARCHAR(50))", []
-        )
-        await driver.execute(f"CREATE INDEX ix_vc ON dbo.{table}(val, other)", [])
-        desc = await driver.explore_describe(["dbo", table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert len(by_name["val"].composite_indices) == 1
-        assert by_name["val"].exclusive_indices == []
-
-    async def test_comment(self, driver: SQLServerDriver, table: str) -> None:
-        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
-        await driver.execute(
-            "EXEC sp_addextendedproperty"
-            " @name = N'MS_Description', @value = N'A test comment',"
-            " @level0type = N'Schema', @level0name = N'dbo',"
-            f" @level1type = N'Table', @level1name = N'{table}',"
-            " @level2type = N'Column', @level2name = N'val'",
-            [],
-        )
-        desc = await driver.explore_describe(["dbo", table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["val"].comment == "A test comment"
-        assert by_name["id"].comment is None
-
-    async def test_sample_values(self, driver: SQLServerDriver, table: str) -> None:
-        await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(10))", [])
-        for i, v in enumerate(["x", "y", "z", "x"]):
-            await driver.execute(f"INSERT INTO dbo.{table} VALUES (?, ?)", [i, v])
-        desc = await driver.explore_describe(["dbo", table, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        sample = by_name["val"].sample
-        assert len(sample) <= 3
-        assert set(sample).issubset({"x", "y", "z"})
-
-    async def test_outgoing_references(
-        self, driver: SQLServerDriver, tables: tuple[str, str]
-    ) -> None:
-        parent, child = tables
-        await driver.execute(
-            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
-        )
-        await driver.execute(
-            f"CREATE TABLE dbo.{child} ("
-            f"  id INT,"
-            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
-            ")",
-            [],
-        )
-        desc = await driver.explore_describe(["dbo", child, "columns"])
-        assert isinstance(desc, ColumnsDescription)
-        by_name = {c.name: c for c in desc.columns}
-        assert by_name["parent_id"].outgoing_references == [
-            TableReference(
-                column="parent_id",
-                table=parent,
-                ref_column="id",
-                schema="dbo",
-                constraint_name=f"fk_{child}",
-            )
-        ]
-        assert by_name["id"].outgoing_references == []
-
-
-class TestExploreDescribeColumn:
+class TestExploreDescribeField:
     async def test_basic_fields(self, driver: SQLServerDriver, table: str) -> None:
         await driver.execute(
             f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50) NOT NULL)", []
         )
         desc = await driver.explore_describe(["dbo", table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.name == "val"
-        assert desc.data_type == "varchar"
+        assert desc.types == ["varchar"]
         assert desc.nullable is False
         assert desc.pk is False
 
@@ -673,16 +650,16 @@ class TestExploreDescribeColumn:
             f"CREATE TABLE dbo.{table} (id INT PRIMARY KEY, val VARCHAR(50))", []
         )
         desc = await driver.explore_describe(["dbo", table, "columns", "id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.pk is True
 
     async def test_exclusive_index(self, driver: SQLServerDriver, table: str) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT, val VARCHAR(50))", [])
         await driver.execute(f"CREATE INDEX ix_val ON dbo.{table}(val)", [])
         desc = await driver.explore_describe(["dbo", table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.exclusive_indices) == 1
-        assert desc.exclusive_indices[0].index == "ix_val"
+        assert desc.exclusive_indices[0].name == "ix_val"
         assert desc.composite_indices == []
 
     async def test_comment(self, driver: SQLServerDriver, table: str) -> None:
@@ -696,7 +673,7 @@ class TestExploreDescribeColumn:
             [],
         )
         desc = await driver.explore_describe(["dbo", table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.comment == "Column comment"
 
     async def test_sample_values(self, driver: SQLServerDriver, table: str) -> None:
@@ -704,7 +681,7 @@ class TestExploreDescribeColumn:
         for i, v in enumerate(["a", "b", "c", "a"]):
             await driver.execute(f"INSERT INTO dbo.{table} VALUES (?, ?)", [i, v])
         desc = await driver.explore_describe(["dbo", table, "columns", "val"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert len(desc.sample) <= 3
         assert set(desc.sample).issubset({"a", "b", "c"})
 
@@ -723,13 +700,43 @@ class TestExploreDescribeColumn:
             [],
         )
         desc = await driver.explore_describe(["dbo", child, "columns", "parent_id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.outgoing_references == [
             TableReference(
-                column="parent_id",
-                table=parent,
-                ref_column="id",
+                table=child,
                 schema="dbo",
+                column="parent_id",
+                ref_table=parent,
+                ref_schema="dbo",
+                ref_column="id",
+                constraint_name=f"fk_{child}",
+            )
+        ]
+
+    async def test_incoming_references(
+        self, driver: SQLServerDriver, tables: tuple[str, str]
+    ) -> None:
+        parent, child = tables
+        await driver.execute(
+            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
+        )
+        await driver.execute(
+            f"CREATE TABLE dbo.{child} ("
+            f"  id INT,"
+            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
+            ")",
+            [],
+        )
+        desc = await driver.explore_describe(["dbo", parent, "columns", "id"])
+        assert isinstance(desc, FieldDescription)
+        assert desc.incoming_references == [
+            TableReference(
+                table=child,
+                schema="dbo",
+                column="parent_id",
+                ref_table=parent,
+                ref_schema="dbo",
+                ref_column="id",
                 constraint_name=f"fk_{child}",
             )
         ]
@@ -739,7 +746,7 @@ class TestExploreDescribeColumn:
     ) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
         desc = await driver.explore_describe(["dbo", table, "columns", "id"])
-        assert isinstance(desc, ColumnDescription)
+        assert isinstance(desc, FieldDescription)
         assert desc.outgoing_references == []
 
     async def test_unknown_column_returns_none(

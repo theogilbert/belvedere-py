@@ -7,11 +7,10 @@ from grannos.dispatcher import Dispatcher
 from grannos.drivers.base import DriverSettings
 from grannos.explore_cache import cache_file
 from grannos.protocol import (
-    ColumnDescription,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     Method,
-    RelationshipDescription,
-    TableDescription,
     TableReference,
 )
 
@@ -25,7 +24,9 @@ def mock_driver() -> AsyncMock:
     d = AsyncMock()
     d.DEFAULT_IDLE_TIMEOUT = 0
     d.explore_list.return_value = [ExploreItem(name="t", type="table", expandable=True)]
-    d.explore_describe.return_value = TableDescription(table="t", columns=[])
+    d.explore_describe.return_value = EntityDescription(
+        name="t", kind="table", properties=[]
+    )
     return d
 
 
@@ -187,17 +188,34 @@ class TestDiskCache:
         assert cache_file(params_a, tmp_path) != cache_file(params_b, tmp_path)
         assert len(list(tmp_path.iterdir())) == 2
 
-    async def test_should_persist_table_references_across_reload(
+    async def test_should_persist_field_references_across_reload(
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
-        mock_driver.explore_describe.return_value = TableDescription(
-            table="t",
-            columns=[],
-            outgoing_references=[
-                TableReference(column="fk", table="other", ref_column="id")
-            ],
-            incoming_references=[
-                TableReference(column="id", table="child", ref_column="parent_fk")
+        mock_driver.explore_describe.return_value = EntityDescription(
+            name="t",
+            kind="table",
+            properties=[
+                FieldDescription(
+                    name="fk",
+                    types=["INTEGER"],
+                    outgoing_references=[
+                        TableReference(
+                            table="t", column="fk", ref_table="other", ref_column="id"
+                        )
+                    ],
+                ),
+                FieldDescription(
+                    name="id",
+                    types=["INTEGER"],
+                    incoming_references=[
+                        TableReference(
+                            table="child",
+                            column="parent_fk",
+                            ref_table="t",
+                            ref_column="id",
+                        )
+                    ],
+                ),
             ],
         )
 
@@ -223,22 +241,29 @@ class TestDiskCache:
         )
 
         mock_driver.explore_describe.assert_awaited_once()
-        details = result["details"]
-        assert details.outgoing_references == [
-            TableReference(column="fk", table="other", ref_column="id")
+        by_name = {f.name: f for f in result["details"].properties}
+        assert by_name["fk"].outgoing_references == [
+            TableReference(table="t", column="fk", ref_table="other", ref_column="id")
         ]
-        assert details.incoming_references == [
-            TableReference(column="id", table="child", ref_column="parent_fk")
+        assert by_name["id"].incoming_references == [
+            TableReference(
+                table="child", column="parent_fk", ref_table="t", ref_column="id"
+            )
         ]
 
-    async def test_should_persist_column_outgoing_references_across_reload(
+    async def test_should_persist_field_outgoing_references_across_reload(
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
-        mock_driver.explore_describe.return_value = ColumnDescription(
+        mock_driver.explore_describe.return_value = FieldDescription(
             name="parent_id",
-            data_type="INTEGER",
+            types=["INTEGER"],
             outgoing_references=[
-                TableReference(column="parent_id", table="parent", ref_column="id")
+                TableReference(
+                    table="t",
+                    column="parent_id",
+                    ref_table="parent",
+                    ref_column="id",
+                )
             ],
         )
 
@@ -266,15 +291,15 @@ class TestDiskCache:
         mock_driver.explore_describe.assert_awaited_once()
         details = result["details"]
         assert details.outgoing_references == [
-            TableReference(column="parent_id", table="parent", ref_column="id")
+            TableReference(
+                table="t", column="parent_id", ref_table="parent", ref_column="id"
+            )
         ]
 
-    async def test_should_persist_relationship_description_across_reload(
+    async def test_should_persist_relationship_reference_across_reload(
         self, mock_driver: AsyncMock, tmp_path: pathlib.Path
     ) -> None:
-        rel = RelationshipDescription(
-            table="t", column="fk", ref_table="other", ref_column="id"
-        )
+        rel = TableReference(table="t", column="fk", ref_table="other", ref_column="id")
         mock_driver.explore_describe.return_value = rel
 
         # first session: populate and persist

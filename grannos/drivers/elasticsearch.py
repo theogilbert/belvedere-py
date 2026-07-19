@@ -6,13 +6,13 @@ from typing import Any
 import elasticsearch
 
 from ..protocol import (
-    ColumnInfo,
     DriverParam,
     DriverParamChoice,
+    EntityDescription,
     ExploreItem,
+    FieldDescription,
     ParamType,
     ReadResult,
-    TableDescription,
     WriteResult,
 )
 from ..tabular import flatten_docs
@@ -297,16 +297,16 @@ Describing an index returns field metadata from its mapping (name, type).
             case _:
                 return []
 
-    async def explore_describe(self, path: list[str]) -> TableDescription | None:
+    async def explore_describe(self, path: list[str]) -> EntityDescription | None:
         match path:
             case [index]:
                 resp = await self._client.indices.get_mapping(index=index)
                 props = resp[index]["mappings"].get("properties", {})
-                return TableDescription(
-                    table=index,
-                    schema=None,
-                    columns=[
-                        ColumnInfo(name=field, type=info.get("type", "object"))
+                return EntityDescription(
+                    name=index,
+                    kind="document",
+                    properties=[
+                        FieldDescription(name=field, types=[info.get("type", "object")])
                         for field, info in props.items()
                     ],
                 )

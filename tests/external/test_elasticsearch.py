@@ -16,7 +16,7 @@ import pytest
 
 from grannos.drivers.base import DriverError, DriverSettings
 from grannos.drivers.elasticsearch import ElasticsearchDriver
-from grannos.protocol import ReadResult, TableDescription
+from grannos.protocol import EntityDescription, ReadResult
 
 pytestmark = pytest.mark.external
 
@@ -191,14 +191,14 @@ class TestExploreList:
 
 
 class TestExploreDescribe:
-    async def test_returns_table_description_for_index(
+    async def test_returns_entity_description_for_index(
         self, driver: ElasticsearchDriver
     ) -> None:
         result = await driver.explore_describe([_INDEX])
-        assert isinstance(result, TableDescription)
-        assert result.table == _INDEX
-        assert result.schema is None
-        field_names = [c.name for c in result.columns]
+        assert isinstance(result, EntityDescription)
+        assert result.name == _INDEX
+        assert result.kind == "document"
+        field_names = [f.name for f in result.properties]
         assert "name" in field_names
         assert "status" in field_names
 

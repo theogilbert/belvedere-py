@@ -102,65 +102,57 @@ class ExploreItem:
 
 
 @dataclass
-class ColumnInfo:
-    """Metadata for a single column returned by explore.describe."""
-
-    name: str
-    """Column name."""
-    type: str
-    """Data type as reported by the database."""
-    nullable: bool | None = None
-    """Whether the column allows NULL; None if unknown."""
-    pk: bool = False
-    """Whether the column is part of the primary key."""
-    default: str | None = None
-    """Default expression, or None if not set."""
-    exclusive_index: bool = False
-    """Whether this column is covered by an index that spans only this column."""
-    composite_index: bool = False
-    """Whether this column is covered by an index that also spans other columns."""
-
-
-@dataclass
 class TableReference:
-    """One column-level leg of a foreign key relating this table to another."""
+    """One foreign key, read as ``table.column -> ref_table.ref_column``: ``table``/
+    ``column`` always name the side that owns the FK constraint, ``ref_table``/
+    ``ref_column`` always name the side it points at — regardless of which
+    direction this instance was reached from.
 
-    column: str
-    """Local column participating in the relationship."""
+    Self-contained: identifies both sides explicitly, so it can be returned
+    either standalone as an explore.describe result for a path ending in
+    ``["relationships", column]`` (e.g. as emitted by explore.diagram's
+    ``regions``), or embedded in a :class:`FieldDescription`'s
+    ``outgoing_references`` (where ``table``/``schema`` restate the embedding
+    field's own entity, since it owns the FK) or ``incoming_references``
+    (where ``ref_table``/``ref_schema`` restate the embedding field's own
+    entity instead, since some other table owns the FK there)."""
+
     table: str
-    """Name of the other table."""
+    """Name of the table that owns the FK constraint."""
+    column: str
+    """The owning table's own FK column."""
+    ref_table: str
+    """Name of the referenced table."""
     ref_column: str
-    """Column on the other table."""
+    """Column on the referenced table."""
     schema: str | None = None
-    """Schema of the other table, or None for databases without schema support."""
+    """Schema of the owning table, or None for databases without schema support."""
+    ref_schema: str | None = None
+    """Schema of the referenced table, or None for databases without schema support."""
     unique: bool = False
-    """Whether the column that owns the FK constraint is itself constrained to unique
-    values (by a PK or a single-column UNIQUE index), making the relationship
-    one-to-one rather than many-to-one. For ``outgoing_references`` this checks
-    ``column``; for ``incoming_references`` it checks the other table's FK column
-    (``ref_column``), since that is the side owning the FK there."""
+    """Whether ``column`` is itself constrained to unique values on ``table`` (by a
+    PK or a single-column UNIQUE index), making the relationship one-to-one
+    rather than many-to-one."""
     constraint_name: str | None = None
     """Name of the FK constraint, or None if unnamed/unsupported by the database."""
+    type: str = "relationship"
+    """Discriminator — always ``"relationship"``."""
 
 
 @dataclass
-class TableDescription:
-    """Full column metadata for a table returned by explore.describe."""
+class Connection:
+    """One observed (relationship type, start label, end label) triple for a graph
+    database, embedded in :class:`EntityDescription`'s ``connections``. Unlike
+    :class:`TableReference`, a graph relationship isn't anchored to any field —
+    it's a free-floating typed edge between node instances — so this has no
+    per-field home and is never independently describable on its own path."""
 
-    table: str
-    """Table name."""
-    columns: list[ColumnInfo]
-    """Ordered list of column metadata."""
-    schema: str | None = None
-    """Schema name, or None for databases without schema support."""
-    comment: str | None = None
-    """Table comment as stored in the database; None if unsupported or not set."""
-    outgoing_references: list[TableReference] = field(default_factory=list)
-    """Foreign keys defined on this table that reference other tables in the same schema."""
-    incoming_references: list[TableReference] = field(default_factory=list)
-    """Foreign keys on other tables in the same schema that reference this table."""
-    type: str = "table"
-    """Discriminator — always ``"table"``."""
+    rel_type: str
+    """Relationship type name."""
+    from_label: str
+    """Label of the relationship's start node."""
+    to_label: str
+    """Label of the relationship's end node."""
 
 
 @dataclass
@@ -177,7 +169,7 @@ class IndexKeyField:
 class IndexDescription:
     """Key field metadata for an index returned by explore.describe."""
 
-    index: str
+    name: str
     """Index name."""
     fields: list[IndexKeyField]
     """Ordered list of key fields."""
@@ -201,92 +193,79 @@ class IndexDescription:
 
 
 @dataclass
-class IndicesDescription:
-    """All index metadata for a table returned by explore.describe on an indices group node."""
-
-    indices: list[IndexDescription]
-    """All indexes on this table, in driver-defined order."""
-    type: str = "indices"
-    """Discriminator — always ``"indices"``."""
-
-
-@dataclass
-class ColumnDescription:
-    """Detailed metadata for a single column returned by explore.describe."""
+class FieldDescription:
+    """Full metadata for a single field (column, property, …) returned by
+    explore.describe — either embedded in an :class:`EntityDescription`'s
+    ``properties``, or fetched standalone for a path ending in
+    ``["<fields-group>", name]``. One shape for both; no lighter variant."""
 
     name: str
-    """Column name."""
-    data_type: str
-    """Data type as reported by the database."""
+    """Field name."""
+    types: list[str]
+    """Data type(s) as reported by the database. Single-element for SQL columns;
+    schemaless stores (e.g. Neo4j properties) may report more than one when
+    the same key holds different types across instances."""
     nullable: bool | None = None
-    """Whether the column allows NULL; None if unknown."""
+    """Whether the field allows a missing/NULL value; None if unknown."""
     pk: bool = False
-    """Whether the column is part of the primary key."""
+    """Whether the field is part of the primary key. Always False where not applicable."""
     default: str | None = None
-    """Default expression, or None if not set."""
+    """Default expression, or None if not set/not applicable."""
     exclusive_indices: list[IndexDescription] = field(default_factory=list)
-    """Indices that cover only this column."""
+    """Indices that cover only this field."""
     composite_indices: list[IndexDescription] = field(default_factory=list)
-    """Indices that cover this column and at least one other column."""
+    """Indices that cover this field and at least one other field."""
     comment: str | None = None
-    """Column comment as stored in the database; None if unsupported or not set."""
+    """Field comment as stored in the database; None if unsupported or not set."""
     sample: list[Any] = field(default_factory=list)
-    """Up to 3 distinct non-null representative values sampled from the column."""
+    """Up to 3 distinct non-null representative values sampled from the field."""
     outgoing_references: list[TableReference] = field(default_factory=list)
-    """Foreign keys defined on this column that reference another table. Empty if this
-    column is not a foreign key. A column can carry more than one entry — either because
+    """Foreign keys defined on this field that reference another entity. Empty if this
+    field is not a foreign key. A field can carry more than one entry — either because
     it participates in more than one single-column FK constraint (each naming a different
     target), or because it is one leg of multiple composite FK constraints."""
-    type: str = "column"
-    """Discriminator — always ``"column"``."""
+    incoming_references: list[TableReference] = field(default_factory=list)
+    """Foreign keys on other entities that reference this field. Empty if nothing
+    references this field."""
+    type: str = "field"
+    """Discriminator — always ``"field"``."""
 
 
 @dataclass
-class ColumnsDescription:
-    """All column detail metadata for a table returned by explore.describe on a columns group node."""
+class EntityDescription:
+    """Full metadata for a table, node label, relationship type, or document
+    collection returned by explore.describe."""
 
-    columns: list[ColumnDescription]
-    """All columns in this table, in declaration order."""
-    type: str = "columns"
-    """Discriminator — always ``"columns"``."""
-
-
-@dataclass
-class RelationshipDescription:
-    """Full symmetric description of one foreign key, returned by explore.describe
-    for a path ending in ``["relationships", column]`` (e.g. as emitted by
-    explore.diagram's ``regions``). Unlike :class:`TableReference` — which only
-    describes the far side, relative to an already-known local table — this
-    names both the owning and referenced side explicitly."""
-
-    table: str
-    """Local table name (the table owning the foreign key)."""
-    column: str
-    """Local column."""
-    ref_table: str
-    """Referenced table name."""
-    ref_column: str
-    """Referenced column."""
+    name: str
+    """Entity name."""
+    kind: str
+    """Domain-specific classification (e.g. ``"table"``, ``"view"``, ``"node"``,
+    ``"relationship"``, ``"document"``), for clients that want a domain-appropriate
+    icon/label. Not a wire discriminator — use ``type`` for that."""
+    properties: list[FieldDescription]
+    """Full metadata for every field on this entity."""
     schema: str | None = None
-    """Local table's schema, or None for databases without schema support."""
-    ref_schema: str | None = None
-    """Referenced table's schema, or None for databases without schema support."""
-    constraint_name: str | None = None
-    """Foreign key constraint name, or None if unnamed/unsupported."""
-    type: str = "relationship"
-    """Discriminator — always ``"relationship"``."""
+    """Schema name, or None for databases without schema support."""
+    comment: str | None = None
+    """Entity comment as stored in the database; None if unsupported or not set."""
+    connections: list[Connection] = field(default_factory=list)
+    """Graph databases only: relationship types touching this entity and the
+    label(s) they connect to/from. Empty for non-graph entities."""
+    type: str = "entity"
+    """Discriminator — always ``"entity"``."""
 
 
 DescribeResult = (
-    TableDescription
+    EntityDescription
+    | FieldDescription
     | IndexDescription
-    | IndicesDescription
-    | ColumnDescription
-    | ColumnsDescription
-    | RelationshipDescription
+    | TableReference
+    | list[IndexDescription]
     | None
 )
-"""Return type of ``explore_describe`` across all drivers."""
+"""Return type of ``explore_describe`` across all drivers. A path resolving to a
+group of items (e.g. an indices group node) returns a bare array of the
+singular type rather than a wrapper object."""
 
 
 @dataclass

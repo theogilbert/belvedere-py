@@ -10,13 +10,6 @@ from psycopg import AsyncConnection, sql
 from ...protocol import IndexDescription, IndexKeyField, LobPlaceholder, TableReference
 from ..base import SAMPLE_SCAN_ROWS
 
-_CONSTRAINT_TYPE = {
-    "PRIMARY KEY": "primary_key",
-    "UNIQUE": "unique",
-    "CHECK": "check",
-    "FOREIGN KEY": "foreign_key",
-}
-
 # Pairs conkey[i] with confkey[i] element-wise so composite foreign keys keep
 # the correct local/referenced column ordering (unlike a name-based join
 # across information_schema views, which has no reliable ordering guarantee).
@@ -171,24 +164,6 @@ async def fetch_index_names_and_types(
         [schema, table],
     )
     return [(r[0], r[1]) for r in await cur.fetchall()]
-
-
-@_conn_cache
-async def fetch_constraint_names_and_types(
-    conn: AsyncConnection, schema: str, table: str
-) -> list[tuple[str, str]]:
-    """Return (constraint_name, mapped_type) pairs ordered by constraint name."""
-    cur = conn.cursor()
-    await cur.execute(
-        "SELECT constraint_name, constraint_type"
-        " FROM information_schema.table_constraints"
-        " WHERE table_schema = %s AND table_name = %s"
-        " ORDER BY constraint_name",
-        [schema, table],
-    )
-    return [
-        (r[0], _CONSTRAINT_TYPE.get(r[1], r[1].lower())) for r in await cur.fetchall()
-    ]
 
 
 # ---------------------------------------------------------------------------

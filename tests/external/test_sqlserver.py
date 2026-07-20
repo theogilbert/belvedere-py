@@ -140,7 +140,7 @@ class TestExploreList:
     ) -> None:
         await driver.execute(f"CREATE TABLE dbo.{table} (id INT)", [])
         items = await driver.explore_list(["dbo", table])
-        assert {i.name for i in items} == {"columns", "indices", "constraints"}
+        assert {i.name for i in items} == {"columns", "indices"}
         assert all(i.type == "group" and i.expandable for i in items)
 
     async def test_should_list_columns_in_ordinal_order(
@@ -169,65 +169,6 @@ class TestExploreList:
         await driver.execute(f"CREATE UNIQUE INDEX uix_val ON dbo.{table}(val)", [])
         items = await driver.explore_list(["dbo", table, "indices"])
         assert any(i.name == "uix_val" for i in items)
-
-    async def test_should_list_primary_key_constraint(
-        self, driver: SQLServerDriver, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} (id INT CONSTRAINT pk_{table} PRIMARY KEY)", []
-        )
-        items = await driver.explore_list(["dbo", table, "constraints"])
-        names = {i.name for i in items}
-        assert f"pk_{table}" in names
-        by_name = {i.name: i for i in items}
-        assert by_name[f"pk_{table}"].type == "primary_key"
-
-    async def test_should_list_unique_constraint(
-        self, driver: SQLServerDriver, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} ("
-            f"  id INT, val VARCHAR(50) CONSTRAINT uq_{table} UNIQUE"
-            ")",
-            [],
-        )
-        items = await driver.explore_list(["dbo", table, "constraints"])
-        by_name = {i.name: i for i in items}
-        assert f"uq_{table}" in by_name
-        assert by_name[f"uq_{table}"].type == "unique"
-
-    async def test_should_list_check_constraint(
-        self, driver: SQLServerDriver, table: str
-    ) -> None:
-        await driver.execute(
-            f"CREATE TABLE dbo.{table} ("
-            f"  id INT CONSTRAINT chk_{table} CHECK (id > 0)"
-            ")",
-            [],
-        )
-        items = await driver.explore_list(["dbo", table, "constraints"])
-        by_name = {i.name: i for i in items}
-        assert f"chk_{table}" in by_name
-        assert by_name[f"chk_{table}"].type == "check"
-
-    async def test_should_list_foreign_key_constraint(
-        self, driver: SQLServerDriver, tables: tuple[str, str]
-    ) -> None:
-        parent, child = tables
-        await driver.execute(
-            f"CREATE TABLE dbo.{parent} (id INT CONSTRAINT pk_{parent} PRIMARY KEY)", []
-        )
-        await driver.execute(
-            f"CREATE TABLE dbo.{child} ("
-            f"  id INT,"
-            f"  parent_id INT CONSTRAINT fk_{child} REFERENCES dbo.{parent}(id)"
-            ")",
-            [],
-        )
-        items = await driver.explore_list(["dbo", child, "constraints"])
-        by_name = {i.name: i for i in items}
-        assert f"fk_{child}" in by_name
-        assert by_name[f"fk_{child}"].type == "foreign_key"
 
     async def test_should_return_empty_for_unknown_path(
         self, driver: SQLServerDriver

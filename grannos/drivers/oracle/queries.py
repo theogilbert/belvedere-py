@@ -10,8 +10,6 @@ from oracledb import AsyncConnection, AsyncCursor
 from ...protocol import IndexDescription, IndexKeyField, LobPlaceholder, TableReference
 from ..base import SAMPLE_SCAN_ROWS
 
-_CONSTRAINT_TYPE = {"P": "primary_key", "U": "unique", "C": "check", "R": "foreign_key"}
-
 # Pre-12c fallback: ORACLE_MAINTAINED column doesn't exist before 12.1, so we
 # exclude known system schemas by name instead.
 _PRE12_SYSTEM_SCHEMAS_SQL = ", ".join(
@@ -208,25 +206,6 @@ async def fetch_index_names_and_types(
         [schema, table],
     )
     return [(r[0], r[1]) for r in await cur.fetchall()]
-
-
-@_conn_cache
-async def fetch_constraint_names_and_types(
-    conn: AsyncConnection, schema: str, table: str
-) -> list[tuple[str, str]]:
-    """Return (constraint_name, mapped_type) pairs for user-named enabled constraints."""
-    cur = conn.cursor()
-    await cur.execute(
-        "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE FROM ALL_CONSTRAINTS"
-        " WHERE OWNER = :1 AND TABLE_NAME = :2"
-        " AND CONSTRAINT_TYPE IN ('P', 'U', 'C', 'R')"
-        " AND STATUS = 'ENABLED' AND GENERATED = 'USER NAME'"
-        " ORDER BY CONSTRAINT_NAME",
-        [schema, table],
-    )
-    return [
-        (r[0], _CONSTRAINT_TYPE.get(r[1], r[1].lower())) for r in await cur.fetchall()
-    ]
 
 
 # ---------------------------------------------------------------------------

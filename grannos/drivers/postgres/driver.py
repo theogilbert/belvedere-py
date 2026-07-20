@@ -37,7 +37,6 @@ from .queries import (
     fetch_column_details,
     fetch_column_names_and_types,
     fetch_column_sample,
-    fetch_constraint_names_and_types,
     fetch_incoming_references,
     fetch_index_fields_for_index,
     fetch_index_fields_for_table,
@@ -113,8 +112,7 @@ https://www.postgresql.org/docs/current/sql-copy.html
 └── <schema>
     └── <table|view>
         ├── columns      → name, data type
-        ├── indexes      → name, access method (e.g. btree, gin)
-        └── constraints  → name, type (primary_key, unique, check, foreign_key)
+        └── indexes      → name, access method (e.g. btree, gin)
 ```
 
 Describing a table or view returns column metadata (name, type, nullability,
@@ -249,7 +247,6 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
                 return [
                     ExploreItem(name="columns", type="group", expandable=True),
                     ExploreItem(name="indexes", type="group", expandable=True),
-                    ExploreItem(name="constraints", type="group", expandable=True),
                 ]
 
             case [schema, table, "columns"]:
@@ -261,15 +258,6 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
 
             case [schema, table, "indexes"]:
                 pairs = await fetch_index_names_and_types(self._conn, schema, table)
-                return [
-                    ExploreItem(name=name, type=kind, expandable=False)
-                    for name, kind in pairs
-                ]
-
-            case [schema, table, "constraints"]:
-                pairs = await fetch_constraint_names_and_types(
-                    self._conn, schema, table
-                )
                 return [
                     ExploreItem(name=name, type=kind, expandable=False)
                     for name, kind in pairs

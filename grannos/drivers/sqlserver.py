@@ -93,8 +93,7 @@ INSERT INTO dbo.orders (customer_id, status) VALUES (1, 'open')
 └── <schema>
     └── <table|view>
         ├── columns      → name, data type
-        ├── indices      → name, type (e.g. CLUSTERED)
-        └── constraints  → name, type (e.g. primary_key, foreign_key)
+        └── indices      → name, type (e.g. CLUSTERED)
 ```
 
 System schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*`) are hidden.
@@ -231,7 +230,6 @@ nullability, default).
                 return [
                     ExploreItem(name="columns", type="group", expandable=True),
                     ExploreItem(name="indices", type="group", expandable=True),
-                    ExploreItem(name="constraints", type="group", expandable=True),
                 ]
 
             case [schema, table, "columns"]:
@@ -258,23 +256,6 @@ nullability, default).
                 )
                 return [
                     ExploreItem(name=r[0], type=r[1].lower(), expandable=False)
-                    for r in cur.fetchall()  # ty: ignore[missing-argument]
-                ]
-
-            case [schema, table, "constraints"]:
-                cur.execute(
-                    "SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE"
-                    " FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS"
-                    " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
-                    " ORDER BY CONSTRAINT_NAME",
-                    (schema, table),
-                )
-                return [
-                    ExploreItem(
-                        name=r[0],
-                        type=r[1].lower().replace(" ", "_"),
-                        expandable=False,
-                    )
                     for r in cur.fetchall()  # ty: ignore[missing-argument]
                 ]
 

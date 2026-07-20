@@ -298,5 +298,5 @@ class TestTableGroupListing:
     def test_returns_fixed_groups(self) -> None:
         driver, _ = _make_driver()
         items = asyncio.run(driver.explore_list(["public", "orders"]))
-        assert {i.name for i in items} == {"columns", "indexes", "constraints"}
+        assert {i.name for i in items} == {"columns", "indexes"}
         assert all(i.type == "group" and i.expandable for i in items)

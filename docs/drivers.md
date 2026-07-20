@@ -94,8 +94,7 @@ SELECT * FROM dbo.orders WHERE status = ?
 └── <schema>
     └── <table|view>
         ├── columns      → name, data type
-        ├── indices      → name, type (e.g. CLUSTERED)
-        └── constraints  → name, type (e.g. primary_key, foreign_key)
+        └── indices      → name, type (e.g. CLUSTERED)
 ```
 
 System schemas (`sys`, `INFORMATION_SCHEMA`, `guest`, `db_*`) are hidden.
@@ -130,8 +129,7 @@ SELECT * FROM employees WHERE department_id = :1 AND hire_date > :2
 └── <schema>
     └── <table|view>
         ├── columns      → name, data type
-        ├── indexes      → name, index type
-        └── constraints  → name, type (primary_key, unique, check, foreign_key)
+        └── indexes      → name, index type
 ```
 
 `explore.describe` is supported on `[schema, table]` paths and returns full

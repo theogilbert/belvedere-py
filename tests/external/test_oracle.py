@@ -215,7 +215,7 @@ class TestExploreList:
     ) -> None:
         await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
         items = await driver.explore_list([schema, table])
-        assert {i.name for i in items} == {"columns", "indexes", "constraints"}
+        assert {i.name for i in items} == {"columns", "indexes"}
         assert all(i.type == "group" and i.expandable for i in items)
 
     async def test_columns_lists_in_ordinal_order(
@@ -260,70 +260,6 @@ class TestExploreList:
         await driver.execute(f"CREATE TABLE {schema}.{table} (id NUMBER)", [])
         items = await driver.explore_list([schema, table, "indexes"])
         assert items == []
-
-    async def test_constraints_lists_primary_key(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        pk = "PK_" + table
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, CONSTRAINT {pk} PRIMARY KEY (id))",
-            [],
-        )
-        items = await driver.explore_list([schema, table, "constraints"])
-        by_name = {i.name: i for i in items}
-        assert pk in by_name
-        assert by_name[pk].type == "primary_key"
-        assert not by_name[pk].expandable
-
-    async def test_constraints_lists_unique(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        uq = "UQ_" + table
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50),"
-            f" CONSTRAINT {uq} UNIQUE (val))",
-            [],
-        )
-        items = await driver.explore_list([schema, table, "constraints"])
-        by_name = {i.name: i for i in items}
-        assert uq in by_name
-        assert by_name[uq].type == "unique"
-
-    async def test_constraints_lists_check(
-        self, driver: OracleDriver, schema: str, table: str
-    ) -> None:
-        ck = "CHK_" + table
-        await driver.execute(
-            f"CREATE TABLE {schema}.{table} (id NUMBER,"
-            f" CONSTRAINT {ck} CHECK (id > 0))",
-            [],
-        )
-        items = await driver.explore_list([schema, table, "constraints"])
-        by_name = {i.name: i for i in items}
-        assert ck in by_name
-        assert by_name[ck].type == "check"
-
-    async def test_constraints_maps_foreign_key_type(
-        self, driver: OracleDriver, schema: str, tables: tuple[str, str]
-    ) -> None:
-        parent, child = tables
-        pk = "PK_" + parent
-        fk = "FK_" + child
-        await driver.execute(
-            f"CREATE TABLE {schema}.{parent} (id NUMBER, CONSTRAINT {pk} PRIMARY KEY (id))",
-            [],
-        )
-        await driver.execute(
-            f"CREATE TABLE {schema}.{child} ("
-            f"  id NUMBER, parent_id NUMBER,"
-            f"  CONSTRAINT {fk} FOREIGN KEY (parent_id) REFERENCES {schema}.{parent}(id)"
-            ")",
-            [],
-        )
-        items = await driver.explore_list([schema, child, "constraints"])
-        by_name = {i.name: i for i in items}
-        assert fk in by_name
-        assert by_name[fk].type == "foreign_key"
 
     async def test_unknown_path_returns_empty(self, driver: OracleDriver) -> None:
         assert (

@@ -37,7 +37,6 @@ from .queries import (
     fetch_all_column_comments,
     fetch_column_details,
     fetch_column_names_and_types,
-    fetch_constraint_names_and_types,
     fetch_explain_plan,
     fetch_index_ddl,
     fetch_index_fields_for_index,
@@ -108,8 +107,7 @@ INSERT INTO employees (department_id, name) VALUES (10, 'Alice')
 └── <schema>
     └── <table|view>
         ├── columns      → name, data type
-        ├── indexes      → name, index type
-        └── constraints  → name, type (primary_key, unique, check, foreign_key)
+        └── indexes      → name, index type
 ```
 
 Describing a table or view returns column metadata (name, type, nullability,
@@ -236,7 +234,6 @@ direction, and uniqueness.
                 return [
                     ExploreItem(name="columns", type="group", expandable=True),
                     ExploreItem(name="indexes", type="group", expandable=True),
-                    ExploreItem(name="constraints", type="group", expandable=True),
                 ]
 
             case [schema, table, "columns"]:
@@ -250,15 +247,6 @@ direction, and uniqueness.
 
             case [schema, table, "indexes"]:
                 pairs = await fetch_index_names_and_types(
-                    self._conn, schema.upper(), table.upper()
-                )
-                return [
-                    ExploreItem(name=name, type=kind, expandable=False)
-                    for name, kind in pairs
-                ]
-
-            case [schema, table, "constraints"]:
-                pairs = await fetch_constraint_names_and_types(
                     self._conn, schema.upper(), table.upper()
                 )
                 return [

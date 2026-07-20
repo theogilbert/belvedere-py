@@ -161,6 +161,16 @@ class TestExploreList:
         assert "BELONGS_TO" in names
         assert all(i.expandable for i in items)
 
+    async def test_entity_lists_properties_group(self, driver: Neo4jDriver) -> None:
+        items = await driver.explore_list(["entities", "User"])
+        assert items == [ExploreItem(name="properties", type="group", expandable=True)]
+
+    async def test_relationship_lists_properties_group(
+        self, driver: Neo4jDriver
+    ) -> None:
+        items = await driver.explore_list(["relationships", "BOUGHT"])
+        assert items == [ExploreItem(name="properties", type="group", expandable=True)]
+
     async def test_entity_properties_lists_known_properties(
         self, driver: Neo4jDriver
     ) -> None:
@@ -168,7 +178,7 @@ class TestExploreList:
             "CREATE (:User {name: 'Alice', age: 30}), (:User {name: 'Bob', email: 'b@b.com'})",
             [],
         )
-        items = await driver.explore_list(["entities", "User"])
+        items = await driver.explore_list(["entities", "User", "properties"])
         names = [i.name for i in items]
         assert "name" in names
         assert "age" in names
@@ -181,7 +191,7 @@ class TestExploreList:
         await driver.execute(
             "CREATE (:User)-[:BOUGHT {price: 9.99, qty: 2}]->(:Product)", []
         )
-        items = await driver.explore_list(["relationships", "BOUGHT"])
+        items = await driver.explore_list(["relationships", "BOUGHT", "properties"])
         names = [i.name for i in items]
         assert "price" in names
         assert "qty" in names
@@ -190,12 +200,12 @@ class TestExploreList:
     async def test_entity_properties_empty_when_no_nodes(
         self, driver: Neo4jDriver
     ) -> None:
-        assert await driver.explore_list(["entities", "Ghost"]) == []
+        assert await driver.explore_list(["entities", "Ghost", "properties"]) == []
 
     async def test_relationship_properties_empty_when_no_relationships(
         self, driver: Neo4jDriver
     ) -> None:
-        assert await driver.explore_list(["relationships", "GHOST"]) == []
+        assert await driver.explore_list(["relationships", "GHOST", "properties"]) == []
 
     async def test_indexes_lists_index_names(self, driver: Neo4jDriver) -> None:
         await driver.execute("CREATE INDEX user_name_idx FOR (n:User) ON (n.name)", [])
@@ -246,9 +256,20 @@ class TestExploreDescribe:
         assert desc.properties == []
         assert desc.connections == []
 
+    async def test_describes_node_properties_group(self, driver: Neo4jDriver) -> None:
+        await driver.execute(
+            "CREATE (:User {name: 'Alice', age: 30}), (:User {name: 'Bob'})", []
+        )
+        desc = await driver.explore_describe(["entities", "User", "properties"])
+        assert isinstance(desc, list)
+        fields = [p for p in desc if isinstance(p, FieldDescription)]
+        props = {p.name: p for p in fields}
+        assert props["name"].nullable is False
+        assert props["age"].nullable is True
+
     async def test_describes_node_property_sample(self, driver: Neo4jDriver) -> None:
         await driver.execute("CREATE (:User {name: 'Alice'})", [])
-        desc = await driver.explore_describe(["entities", "User", "name"])
+        desc = await driver.explore_describe(["entities", "User", "properties", "name"])
         assert isinstance(desc, FieldDescription)
         assert desc.name == "name"
         assert desc.sample == ["Alice"]
@@ -257,7 +278,10 @@ class TestExploreDescribe:
         self, driver: Neo4jDriver
     ) -> None:
         await driver.execute("CREATE (:User {name: 'Alice'})", [])
-        assert await driver.explore_describe(["entities", "User", "ghost"]) is None
+        assert (
+            await driver.explore_describe(["entities", "User", "properties", "ghost"])
+            is None
+        )
 
     async def test_describes_relationship_type_properties(
         self, driver: Neo4jDriver
@@ -279,11 +303,24 @@ class TestExploreDescribe:
             Connection(rel_type="BOUGHT", from_label="User", to_label="Product")
         ]
 
+    async def test_describes_relationship_properties_group(
+        self, driver: Neo4jDriver
+    ) -> None:
+        await driver.execute(
+            "CREATE (:User)-[:BOUGHT {price: 9.99, qty: 2}]->(:Product)", []
+        )
+        desc = await driver.explore_describe(["relationships", "BOUGHT", "properties"])
+        assert isinstance(desc, list)
+        fields = [p for p in desc if isinstance(p, FieldDescription)]
+        assert {p.name for p in fields} == {"price", "qty"}
+
     async def test_describes_relationship_property_sample(
         self, driver: Neo4jDriver
     ) -> None:
         await driver.execute("CREATE (:User)-[:BOUGHT {price: 9.99}]->(:Product)", [])
-        desc = await driver.explore_describe(["relationships", "BOUGHT", "price"])
+        desc = await driver.explore_describe(
+            ["relationships", "BOUGHT", "properties", "price"]
+        )
         assert isinstance(desc, FieldDescription)
         assert desc.sample == [9.99]
 
@@ -292,7 +329,10 @@ class TestExploreDescribe:
     ) -> None:
         await driver.execute("CREATE (:User)-[:BOUGHT]->(:Product)", [])
         assert (
-            await driver.explore_describe(["relationships", "BOUGHT", "ghost"]) is None
+            await driver.explore_describe(
+                ["relationships", "BOUGHT", "properties", "ghost"]
+            )
+            is None
         )
 
 

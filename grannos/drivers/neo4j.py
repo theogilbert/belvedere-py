@@ -79,8 +79,8 @@ Results are serialized and flattened: nodes expand to `col._labels`, `col.prop`,
 
 ```
 (root)
-├── entities       → <label>  → property names (sampled from existing nodes)
-├── relationships  → <type>   → property names (sampled from existing relationships)
+├── entities       → <label>  → properties → property name (sampled from existing nodes)
+├── relationships  → <type>   → properties → property name (sampled from existing relationships)
 └── indexes        → index name
 ```
 
@@ -90,7 +90,8 @@ e.g. `RANGE`, `TEXT`, `POINT`) and whether it's unique.
 Describing a label or relationship type returns its properties (name,
 observed types, whether mandatory) and the relationship types connecting it
 to other labels (or, for a relationship type, the label pairs it connects).
-Describing a single property adds a value sample.
+Describing the properties group returns the same property list on its own;
+describing a single property adds a value sample.
 """
 
     def __init__(
@@ -197,13 +198,17 @@ Describing a single property adds a value sample.
                     ExploreItem(name=t, type="relationship_type", expandable=True)
                     for t in types
                 ]
-            case ["entities", label]:
+            case ["entities", _label]:
+                return [ExploreItem(name="properties", type="group", expandable=True)]
+            case ["relationships", _rel_type]:
+                return [ExploreItem(name="properties", type="group", expandable=True)]
+            case ["entities", label, "properties"]:
                 props = await self._node_properties(label)
                 return [
                     ExploreItem(name=p, type="property", expandable=False)
                     for p in props
                 ]
-            case ["relationships", rel_type]:
+            case ["relationships", rel_type, "properties"]:
                 props = await self._relationship_properties(rel_type)
                 return [
                     ExploreItem(name=p, type="property", expandable=False)
@@ -235,11 +240,15 @@ Describing a single property adds a value sample.
                 return await self._describe_index(index_name)
             case ["entities", label]:
                 return await self._describe_node_entity(label)
-            case ["entities", label, prop]:
+            case ["entities", label, "properties"]:
+                return await self._node_field_descriptions(label)
+            case ["entities", label, "properties", prop]:
                 return await self._describe_node_field(label, prop)
             case ["relationships", rel_type]:
                 return await self._describe_relationship_entity(rel_type)
-            case ["relationships", rel_type, prop]:
+            case ["relationships", rel_type, "properties"]:
+                return await self._relationship_field_descriptions(rel_type)
+            case ["relationships", rel_type, "properties", prop]:
                 return await self._describe_relationship_field(rel_type, prop)
             case _:
                 return None
@@ -271,23 +280,25 @@ Describing a single property adds a value sample.
         )
 
     async def _describe_node_entity(self, label: str) -> EntityDescription:
-        properties = await self._node_type_properties(label)
-        samples = await self._node_samples(label)
-        connections = await self._node_connections(label)
         return EntityDescription(
             name=label,
             kind="node",
-            properties=[
-                FieldDescription(
-                    name=name,
-                    types=types,
-                    nullable=not mandatory,
-                    sample=samples.get(name, []),
-                )
-                for name, types, mandatory in properties
-            ],
-            connections=connections,
+            properties=await self._node_field_descriptions(label),
+            connections=await self._node_connections(label),
         )
+
+    async def _node_field_descriptions(self, label: str) -> list[FieldDescription]:
+        properties = await self._node_type_properties(label)
+        samples = await self._node_samples(label)
+        return [
+            FieldDescription(
+                name=name,
+                types=types,
+                nullable=not mandatory,
+                sample=samples.get(name, []),
+            )
+            for name, types, mandatory in properties
+        ]
 
     async def _describe_node_field(
         self, label: str, prop: str
@@ -305,23 +316,27 @@ Describing a single property adds a value sample.
         )
 
     async def _describe_relationship_entity(self, rel_type: str) -> EntityDescription:
-        properties = await self._relationship_type_properties(rel_type)
-        samples = await self._relationship_samples(rel_type)
-        connections = await self._relationship_type_connections(rel_type)
         return EntityDescription(
             name=rel_type,
             kind="relationship",
-            properties=[
-                FieldDescription(
-                    name=name,
-                    types=types,
-                    nullable=not mandatory,
-                    sample=samples.get(name, []),
-                )
-                for name, types, mandatory in properties
-            ],
-            connections=connections,
+            properties=await self._relationship_field_descriptions(rel_type),
+            connections=await self._relationship_type_connections(rel_type),
         )
+
+    async def _relationship_field_descriptions(
+        self, rel_type: str
+    ) -> list[FieldDescription]:
+        properties = await self._relationship_type_properties(rel_type)
+        samples = await self._relationship_samples(rel_type)
+        return [
+            FieldDescription(
+                name=name,
+                types=types,
+                nullable=not mandatory,
+                sample=samples.get(name, []),
+            )
+            for name, types, mandatory in properties
+        ]
 
     async def _describe_relationship_field(
         self, rel_type: str, prop: str

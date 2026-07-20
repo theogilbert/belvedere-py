@@ -26,8 +26,11 @@ CachedDescribe = (
     EntityDescription | FieldDescription | IndexDescription | TableReference
 )
 """Non-None explore.describe results storable in the cache, at a single path.
-A group path (e.g. an indices group node) stores ``list[IndexDescription]``
-instead — see ``_describe``'s value type."""
+A group path (e.g. an indices group node, or Neo4j's per-entity properties
+group node) stores ``GroupDescribe`` instead — see ``_describe``'s value type."""
+
+GroupDescribe = list[IndexDescription] | list[FieldDescription]
+"""Describe result for a group path — a bare array of a single describable type."""
 
 
 class CachingDriver(BaseDriver):
@@ -70,9 +73,7 @@ class CachingDriver(BaseDriver):
         desc = await self._inner.explore_describe(path)
         if desc is None:
             return None
-        entries: list[tuple[list[str], CachedDescribe | list[IndexDescription]]] = [
-            (path, desc)
-        ]
+        entries: list[tuple[list[str], CachedDescribe | GroupDescribe]] = [(path, desc)]
         if isinstance(desc, EntityDescription):
             entries += [([*path, "columns", f.name], f) for f in desc.properties]
             for f in desc.properties:
@@ -83,6 +84,8 @@ class CachingDriver(BaseDriver):
         elif isinstance(desc, list):
             indices = [idx for idx in desc if isinstance(idx, IndexDescription)]
             entries += [([*path, idx.name], idx) for idx in indices]
+            fields = [f for f in desc if isinstance(f, FieldDescription)]
+            entries += [([*path, f.name], f) for f in fields]
         self._cache.set_describes(entries)
         return desc
 
@@ -125,9 +128,7 @@ class ConnectionCache:
         """Path to the backing JSON cache file."""
         self._list: dict[tuple[str, ...], list[ExploreItem]] = {}
         """In-memory cache mapping path tuples to their explore.list results."""
-        self._describe: dict[
-            tuple[str, ...], CachedDescribe | list[IndexDescription]
-        ] = {}
+        self._describe: dict[tuple[str, ...], CachedDescribe | GroupDescribe] = {}
         """In-memory cache mapping path tuples to their explore.describe results."""
         self._load()
 
@@ -191,7 +192,7 @@ class ConnectionCache:
         return self._describe.get(tuple(path))
 
     def set_describe(
-        self, path: list[str], desc: CachedDescribe | list[IndexDescription]
+        self, path: list[str], desc: CachedDescribe | GroupDescribe
     ) -> None:
         """Store explore.describe results for path and persist to disk.
 
@@ -202,7 +203,7 @@ class ConnectionCache:
         self.set_describes([(path, desc)])
 
     def set_describes(
-        self, entries: list[tuple[list[str], CachedDescribe | list[IndexDescription]]]
+        self, entries: list[tuple[list[str], CachedDescribe | GroupDescribe]]
     ) -> None:
         """Store several explore.describe results, persisting to disk once.
 
@@ -226,7 +227,10 @@ class ConnectionCache:
                 if desc is None:
                     pass  # legacy: None was cached before; skip it
                 elif isinstance(desc, list):
-                    self._describe[key] = [_deserialize_index(idx) for idx in desc]
+                    if desc and desc[0].get("type") == "field":
+                        self._describe[key] = [_deserialize_field(f) for f in desc]
+                    else:
+                        self._describe[key] = [_deserialize_index(idx) for idx in desc]
                 elif desc.get("type") == "index":
                     self._describe[key] = _deserialize_index(desc)
                 elif desc.get("type") == "field":

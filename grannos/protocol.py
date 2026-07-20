@@ -261,11 +261,13 @@ DescribeResult = (
     | IndexDescription
     | TableReference
     | list[IndexDescription]
+    | list[FieldDescription]
     | None
 )
 """Return type of ``explore_describe`` across all drivers. A path resolving to a
-group of items (e.g. an indices group node) returns a bare array of the
-singular type rather than a wrapper object."""
+group of items (e.g. an indices group node, or Neo4j's per-entity properties
+group node) returns a bare array of the singular type rather than a wrapper
+object."""
 
 
 @dataclass

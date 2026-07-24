@@ -44,6 +44,7 @@ grannos [--log] [-v] [--max-concurrency N]
 | `oracle` | `oracledb` | `pip install oracledb` |
 | `mongodb` | `pymongo` | `pip install pymongo` |
 | `elasticsearch` | `elasticsearch` | `pip install elasticsearch` |
+| `prometheus` | `aiohttp` | `pip install "grannos-py[prometheus]"` |
 
 Only drivers whose package is installed are advertised via `capabilities`. See [docs/drivers.md](docs/drivers.md) for connection parameters, query syntax, and explore tree structure for each driver.
 
@@ -81,6 +82,11 @@ Communication uses newline-delimited JSON (one message per line). See [docs/prot
   ```json
   // MongoDB
   {"find": "orders", "filter": {"status": "open"}, "limit": 100}
+  ```
+
+  ```
+  // Prometheus (PromQL)
+  rate(http_requests_total[5m])
   ```
 
 - **`explore.list`** — list child nodes in the database object tree (schemas, tables, columns, …)

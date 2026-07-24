@@ -23,6 +23,8 @@ _REGISTRY: list[RegisteredDriver] = [
     RegisteredDriver(module="duckdb", class_name="DuckDBDriver"),
     # Cypher driver.
     RegisteredDriver(module="neo4j", class_name="Neo4jDriver"),
+    # PromQL driver.
+    RegisteredDriver(module="prometheus", class_name="PrometheusDriver"),
     # Generic drivers (no filetype affinity) — appear first for unknown filetypes.
     RegisteredDriver(module="mongodb", class_name="MongoDriver"),
     RegisteredDriver(module="elasticsearch", class_name="ElasticsearchDriver"),

@@ -229,6 +229,62 @@ from the index mapping (name, type).
 
 ---
 
+## Prometheus
+
+**Install:** `pip install "grannos-py[prometheus]"` (or `pip install aiohttp`)
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `url` | yes | `http://localhost:9090` | Base URL of the Prometheus server |
+| `username` | no | — | Username (HTTP basic auth) |
+| `password` | no | — | Password (masked) |
+| `query_mode` | yes | `instant` | Query mode: `instant` or `range` |
+
+**Queries:** PromQL, evaluated via the connection's configured query mode.
+
+*Instant mode* (default) — a plain PromQL expression, evaluated at the current time:
+
+```
+rate(http_requests_total[5m])
+```
+
+```
+sum by (job) (up)
+```
+
+*Range mode* — prefix with `<start>,<end>,<step> | ` giving the evaluation window.
+`start`/`end` accept `now`, a relative offset (`-1h`, `-30m`, `-15s`), an RFC3339
+timestamp, or a raw Unix timestamp. `step` is a Prometheus duration (`15s`, `1m`).
+
+```
+-1h,now,15s | rate(http_requests_total[5m])
+```
+
+```
+2024-01-01T00:00:00Z,2024-01-01T01:00:00Z,30s | up
+```
+
+Vector/matrix results are flattened to one row per series (range queries emit one
+row per series per timestamp), with a column per label plus `timestamp` and `value`.
+Scalar/string results return a single `timestamp`/`value` row.
+
+**Explore tree:**
+
+```
+(root)
+└── <metric>
+    └── <label>
+        └── <value>
+```
+
+Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
+
+`explore.describe` is supported on `[metric]` paths and returns label metadata
+(name, up to 3 sampled values). `kind` and `comment` are populated from
+`/api/v1/metadata` (type and help text) when the server exposes it.
+
+---
+
 ## MongoDB
 
 **Install:** `pip install pymongo`

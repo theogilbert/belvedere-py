@@ -13,4 +13,5 @@ external-tests:
 	scripts/run-neo4j-tests.sh
 	scripts/run-oracle-tests.sh
 	scripts/run-postgres-tests.sh
+	scripts/run-prometheus-tests.sh
 	scripts/run-sqlserver-tests.sh

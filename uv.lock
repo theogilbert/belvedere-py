@@ -361,6 +361,79 @@ wheels = [
 ]
 
 [[package]]
+name = "grannos-py"
+version = "0.1.0"
+source = { editable = "." }
+
+[package.optional-dependencies]
+all = [
+    { name = "aiohttp" },
+    { name = "duckdb" },
+    { name = "elasticsearch" },
+    { name = "mssql-python" },
+    { name = "neo4j" },
+    { name = "oracledb" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pymongo" },
+]
+duckdb = [
+    { name = "duckdb" },
+]
+elasticsearch = [
+    { name = "aiohttp" },
+    { name = "elasticsearch" },
+]
+mongodb = [
+    { name = "pymongo" },
+]
+mssql = [
+    { name = "mssql-python" },
+]
+neo4j = [
+    { name = "neo4j" },
+]
+oracle = [
+    { name = "oracledb" },
+]
+postgres = [
+    { name = "psycopg", extra = ["binary"] },
+]
+prometheus = [
+    { name = "aiohttp" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'elasticsearch'", specifier = ">=3.0" },
+    { name = "aiohttp", marker = "extra == 'prometheus'", specifier = ">=3.0" },
+    { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
+    { name = "elasticsearch", marker = "extra == 'elasticsearch'", specifier = ">=8.0,<9.0" },
+    { name = "grannos-py", extras = ["duckdb", "mssql", "neo4j", "oracle", "postgres", "mongodb", "elasticsearch", "prometheus"], marker = "extra == 'all'" },
+    { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.8.0" },
+    { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.0" },
+    { name = "oracledb", marker = "extra == 'oracle'", specifier = ">=2.0" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.1" },
+    { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.0" },
+]
+provides-extras = ["duckdb", "mssql", "neo4j", "oracle", "postgres", "mongodb", "elasticsearch", "prometheus", "all"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+    { name = "ruff", specifier = ">=0.15.16" },
+    { name = "ty", specifier = ">=0.0.44" },
+]
+
+[[package]]
 name = "idna"
 version = "3.18"
 source = { registry = "https://pypi.org/simple" }
@@ -476,75 +549,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ce/f4/aaa4ac19adae4b01bc742b63afd2672a77e7351566f02721e713e4b863ee/neo4j-6.2.0.tar.gz", hash = "sha256:e1e246b65b572bd8ea97f9e0e721b7d40a5ce53e53d0007c29aef63e4f9124d9", size = 241459, upload-time = "2026-05-04T07:35:41.428Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/cf/1c3795866cefaac6e648d4e98c373cafd97810f6e317c307371007ab4abb/neo4j-6.2.0-py3-none-any.whl", hash = "sha256:b87abdd13a5cc2e3bd51026926c2f20ac38fa3febe98c340520dce19e97388d0", size = 327824, upload-time = "2026-05-04T07:35:39.604Z" },
-]
-
-[[package]]
-name = "grannos-py"
-version = "0.1.0"
-source = { editable = "." }
-
-[package.optional-dependencies]
-all = [
-    { name = "aiohttp" },
-    { name = "duckdb" },
-    { name = "elasticsearch" },
-    { name = "mssql-python" },
-    { name = "neo4j" },
-    { name = "oracledb" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pymongo" },
-]
-duckdb = [
-    { name = "duckdb" },
-]
-elasticsearch = [
-    { name = "aiohttp" },
-    { name = "elasticsearch" },
-]
-mongodb = [
-    { name = "pymongo" },
-]
-mssql = [
-    { name = "mssql-python" },
-]
-neo4j = [
-    { name = "neo4j" },
-]
-oracle = [
-    { name = "oracledb" },
-]
-postgres = [
-    { name = "psycopg", extra = ["binary"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-    { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", marker = "extra == 'elasticsearch'", specifier = ">=3.0" },
-    { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1.0" },
-    { name = "elasticsearch", marker = "extra == 'elasticsearch'", specifier = ">=8.0,<9.0" },
-    { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.8.0" },
-    { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.0" },
-    { name = "grannos-py", extras = ["duckdb", "mssql", "neo4j", "oracle", "postgres", "mongodb", "elasticsearch"], marker = "extra == 'all'" },
-    { name = "oracledb", marker = "extra == 'oracle'", specifier = ">=2.0" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.1" },
-    { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.0" },
-]
-provides-extras = ["duckdb", "mssql", "neo4j", "oracle", "postgres", "mongodb", "elasticsearch", "all"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-asyncio", specifier = ">=0.24" },
-    { name = "ruff", specifier = ">=0.15.16" },
-    { name = "ty", specifier = ">=0.0.44" },
 ]
 
 [[package]]

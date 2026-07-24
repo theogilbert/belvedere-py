@@ -353,6 +353,7 @@ class Language(StrEnum):
 
     SQL = "sql"
     CYPHER = "cypher"
+    PROMQL = "promql"
 
 
 class ParamType(StrEnum):

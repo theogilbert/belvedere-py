@@ -18,8 +18,9 @@ oracle = ["oracledb>=2.0"]
 postgres = ["psycopg[binary]>=3.1"]
 mongodb = ["pymongo>=4.0"]
 elasticsearch = ["elasticsearch>=8.0,<9.0", "aiohttp>=3.0"]
+prometheus = ["aiohttp>=3.0"]
 all = [
-    "grannos-py[duckdb,mssql,neo4j,oracle,postgres,mongodb,elasticsearch]",
+    "grannos-py[duckdb,mssql,neo4j,oracle,postgres,mongodb,elasticsearch,prometheus]",
 ]
 
 [project.scripts]

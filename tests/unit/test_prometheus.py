@@ -1,0 +1,285 @@
+"""Unit tests for PrometheusDriver — no live server required."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import aiohttp
+import pytest
+
+from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
+from grannos.drivers.prometheus import (
+    PrometheusDriver,
+    _data_to_result,
+    _format_error,
+    _parse_range_query,
+    _parse_value,
+    _resolve_time,
+)
+from grannos.protocol import EntityDescription, ReadResult
+
+
+class _FakeResponse:
+    def __init__(self, body: object) -> None:
+        self._body = body
+
+    async def json(self, content_type: str | None = None) -> object:
+        return self._body
+
+
+class _FakeGetCtx:
+    def __init__(self, body: object) -> None:
+        self._body = body
+
+    async def __aenter__(self) -> _FakeResponse:
+        return _FakeResponse(self._body)
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+def _driver_with_response(
+    body: object, params: dict | None = None
+) -> tuple[PrometheusDriver, MagicMock]:
+    session = MagicMock()
+    session.get = MagicMock(return_value=_FakeGetCtx(body))
+    driver = PrometheusDriver(params or {}, session, DriverSettings())
+    return driver, session
+
+
+class TestOpen:
+    def test_default_url(self) -> None:
+        driver = PrometheusDriver({}, MagicMock(), DriverSettings())
+        assert driver._url == "http://localhost:9090"
+
+    def test_custom_url_strips_trailing_slash(self) -> None:
+        driver = PrometheusDriver(
+            {"url": "http://prom.internal:9090/"}, MagicMock(), DriverSettings()
+        )
+        assert driver._url == "http://prom.internal:9090"
+
+    async def test_no_auth_without_credentials(self) -> None:
+        session = PrometheusDriver._open({})
+        try:
+            assert "Authorization" not in session.headers
+        finally:
+            await session.close()
+
+    async def test_basic_auth_with_credentials(self) -> None:
+        session = PrometheusDriver._open({"username": "user", "password": "pass"})
+        try:
+            assert session.headers["Authorization"] == "Basic dXNlcjpwYXNz"
+        finally:
+            await session.close()
+
+
+class TestParseRangeQuery:
+    def test_valid_range_query(self) -> None:
+        start, end, step, promql = _parse_range_query("-1h,now,15s | up")
+        assert (start, end, step, promql) == ("-1h", "now", "15s", "up")
+
+    def test_missing_separator_raises(self) -> None:
+        with pytest.raises(DriverError, match="format"):
+            _parse_range_query("up")
+
+    def test_wrong_field_count_raises(self) -> None:
+        with pytest.raises(DriverError, match="3 comma-separated"):
+            _parse_range_query("-1h,now | up")
+
+    def test_strips_whitespace(self) -> None:
+        start, end, step, promql = _parse_range_query(" -1h , now , 15s  |  up ")
+        assert (start, end, step, promql) == ("-1h", "now", "15s", "up")
+
+
+class TestResolveTime:
+    def test_now(self) -> None:
+        assert _resolve_time("now", 1000.0) == "1000.0"
+
+    def test_relative_duration_hours(self) -> None:
+        assert _resolve_time("-1h", 1000.0) == str(1000.0 - 3600)
+
+    def test_relative_duration_minutes(self) -> None:
+        assert _resolve_time("-30m", 1000.0) == str(1000.0 - 30 * 60)
+
+    def test_passthrough_rfc3339(self) -> None:
+        assert _resolve_time("2024-01-01T00:00:00Z", 1000.0) == "2024-01-01T00:00:00Z"
+
+    def test_passthrough_unix_timestamp(self) -> None:
+        assert _resolve_time("1700000000", 1000.0) == "1700000000"
+
+
+class TestDataToResult:
+    def test_vector_result(self) -> None:
+        data = {
+            "resultType": "vector",
+            "result": [
+                {"metric": {"__name__": "up", "job": "a"}, "value": [1700000000, "1"]}
+            ],
+        }
+        result = _data_to_result(data)
+        assert result.columns == ["__name__", "job", "timestamp", "value"]
+        assert result.rows == [["up", "a", result.rows[0][2], 1.0]]
+        assert result.rows_total == 1
+
+    def test_matrix_result_emits_one_row_per_point(self) -> None:
+        data = {
+            "resultType": "matrix",
+            "result": [
+                {
+                    "metric": {"job": "a"},
+                    "values": [[1700000000, "1"], [1700000015, "2"]],
+                }
+            ],
+        }
+        result = _data_to_result(data)
+        assert result.columns == ["job", "timestamp", "value"]
+        assert len(result.rows) == 2
+        assert [row[2] for row in result.rows] == [1.0, 2.0]
+        assert result.rows_total == 2
+
+    def test_scalar_result(self) -> None:
+        data = {"resultType": "scalar", "result": [1700000000, "42"]}
+        result = _data_to_result(data)
+        assert result.columns == ["timestamp", "value"]
+        assert result.rows[0][1] == "42"
+        assert result.rows_total == 1
+
+    def test_empty_vector_has_no_label_columns(self) -> None:
+        data = {"resultType": "vector", "result": []}
+        result = _data_to_result(data)
+        assert result.columns == ["timestamp", "value"]
+        assert result.rows == []
+
+    def test_unsupported_result_type_raises(self) -> None:
+        with pytest.raises(DriverError, match="Unsupported"):
+            _data_to_result({"resultType": "bogus", "result": []})
+
+
+class TestParseValue:
+    def test_parses_numeric_string(self) -> None:
+        assert _parse_value("1.5") == 1.5
+
+    def test_parses_special_floats(self) -> None:
+        import math
+
+        assert math.isnan(_parse_value("NaN"))
+
+    def test_non_numeric_passthrough(self) -> None:
+        assert _parse_value("some string") == "some string"
+
+
+class TestFormatError:
+    def test_dict_with_error_and_type(self) -> None:
+        msg = _format_error({"error": "bad query", "errorType": "bad_data"})
+        assert "bad_data" in msg
+        assert "bad query" in msg
+
+    def test_dict_without_error_type(self) -> None:
+        msg = _format_error({"error": "bad query"})
+        assert "bad query" in msg
+
+    def test_non_dict_body(self) -> None:
+        assert "boom" in _format_error("boom")
+
+
+class TestExecute:
+    async def test_instant_mode_queries_promql_endpoint(self) -> None:
+        driver, session = _driver_with_response(
+            {"status": "success", "data": {"resultType": "vector", "result": []}},
+            {"query_mode": "instant"},
+        )
+        result = await driver.execute("up", [])
+        assert isinstance(result, ReadResult)
+        assert result.columns == ["timestamp", "value"]
+        args, kwargs = session.get.call_args
+        assert args[0] == "http://localhost:9090/api/v1/query"
+        assert kwargs["params"] == {"query": "up"}
+
+    async def test_range_mode_queries_range_endpoint(self) -> None:
+        driver, session = _driver_with_response(
+            {"status": "success", "data": {"resultType": "matrix", "result": []}},
+            {"query_mode": "range"},
+        )
+        await driver.execute("-1h,now,15s | up", [])
+        args, kwargs = session.get.call_args
+        assert args[0] == "http://localhost:9090/api/v1/query_range"
+        assert kwargs["params"]["query"] == "up"
+        assert kwargs["params"]["step"] == "15s"
+
+    async def test_unknown_query_mode_raises(self) -> None:
+        driver, _ = _driver_with_response({}, {"query_mode": "bogus"})
+        with pytest.raises(DriverError, match="Unknown query_mode"):
+            await driver.execute("up", [])
+
+    async def test_api_error_response_raises_driver_error(self) -> None:
+        driver, _ = _driver_with_response(
+            {"status": "error", "errorType": "bad_data", "error": "parse error"}
+        )
+        with pytest.raises(DriverError, match="parse error"):
+            await driver.execute("up", [])
+
+
+class TestConnectionErrors:
+    async def test_connection_error_before_ever_connected_raises_driver_error(
+        self,
+    ) -> None:
+        session = MagicMock()
+        session.get = MagicMock(side_effect=aiohttp.ClientConnectionError("boom"))
+        driver = PrometheusDriver({}, session, DriverSettings())
+        with pytest.raises(DriverError):
+            await driver.execute("up", [])
+
+    async def test_connection_error_after_ever_connected_raises_connection_lost(
+        self,
+    ) -> None:
+        session = MagicMock()
+        session.get = MagicMock(side_effect=aiohttp.ClientConnectionError("boom"))
+        driver = PrometheusDriver({}, session, DriverSettings())
+        driver._ever_connected = True
+        with pytest.raises(ConnectionLostError):
+            await driver.execute("up", [])
+
+
+class TestExploreList:
+    async def test_root_lists_metric_names(self) -> None:
+        driver, _ = _driver_with_response(
+            {"status": "success", "data": ["up", "http_requests_total"]}
+        )
+        items = await driver.explore_list([])
+        assert sorted(i.name for i in items) == ["http_requests_total", "up"]
+        assert all(i.type == "metric" and i.expandable for i in items)
+
+    async def test_metric_lists_labels_excluding_name(self) -> None:
+        driver, _ = _driver_with_response(
+            {"status": "success", "data": ["__name__", "job", "instance"]}
+        )
+        items = await driver.explore_list(["up"])
+        assert sorted(i.name for i in items) == ["instance", "job"]
+
+    async def test_label_lists_values(self) -> None:
+        driver, _ = _driver_with_response(
+            {"status": "success", "data": ["prometheus", "node"]}
+        )
+        items = await driver.explore_list(["up", "job"])
+        assert sorted(i.name for i in items) == ["node", "prometheus"]
+        assert all(not i.expandable for i in items)
+
+    async def test_unknown_path_returns_empty(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        assert await driver.explore_list(["up", "job", "prometheus"]) == []
+
+
+class TestExploreDescribe:
+    async def test_returns_none_for_unknown_path(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        assert await driver.explore_describe([]) is None
+
+    async def test_metric_metadata_failure_degrades_gracefully(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": ["job"]})
+        with patch.object(
+            driver,
+            "_get",
+            AsyncMock(side_effect=[["job"], DriverError("no metadata"), []]),
+        ):
+            result = await driver.explore_describe(["up"])
+        assert isinstance(result, EntityDescription)
+        assert result.kind == "metric"
+        assert result.comment is None

@@ -158,14 +158,17 @@ describing a single property adds a value sample.
                 )
                 return WriteResult(rows_affected=affected)
         except Exception as exc:
-            if isinstance(
-                exc,
-                (neo4j.exceptions.ServiceUnavailable, neo4j.exceptions.SessionExpired),
-            ):
-                raise ConnectionLostError(str(exc)) from exc
+            _maybe_raise_connection_lost(exc)
             raise DriverError(str(exc)) from exc
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
+        try:
+            return await self._explore_list(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise
+
+    async def _explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
                 return [
@@ -233,6 +236,13 @@ describing a single property adds a value sample.
                 return None
 
     async def explore_describe(self, path: list[str]) -> DescribeResult:
+        try:
+            return await self._explore_describe(path)
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            raise
+
+    async def _explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
             case ["indexes"]:
                 return await self._describe_all_indices()
@@ -604,6 +614,17 @@ def _collect_plan_rows(
         out.append([op, estimated, identifiers])
     for child in plan.get("children", []):
         _collect_plan_rows(child, out, depth + 1, is_profile)
+
+
+def _maybe_raise_connection_lost(exc: Exception) -> None:
+    if isinstance(
+        exc, (neo4j.exceptions.ServiceUnavailable, neo4j.exceptions.SessionExpired)
+    ):
+        raise ConnectionLostError(str(exc)) from exc
+    # The idle timer closes the driver out-of-band; the client surfaces the
+    # next use as a plain DriverError rather than a network error.
+    if isinstance(exc, neo4j.exceptions.DriverError) and "closed" in str(exc).lower():
+        raise ConnectionLostError(str(exc)) from exc
 
 
 async def _make_neo4j_driver(params: dict[str, Any]) -> neo4j.AsyncDriver:

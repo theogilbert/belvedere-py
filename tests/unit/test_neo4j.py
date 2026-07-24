@@ -4,9 +4,13 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
-from grannos.drivers.base import DriverSettings
+import neo4j.exceptions
+import pytest
+
+from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
 from grannos.drivers.neo4j import (
     Neo4jDriver,
+    _maybe_raise_connection_lost,
     _plan_keyword,
     _plan_to_result,
     _serialize,
@@ -25,6 +29,15 @@ def _make_driver(summary: MagicMock) -> Neo4jDriver:
     @asynccontextmanager
     async def _session(**_):
         yield session
+
+    driver_mock = MagicMock()
+    driver_mock.session = _session
+    return Neo4jDriver({}, driver_mock, DriverSettings())
+
+
+def _make_erroring_driver(exc: Exception) -> Neo4jDriver:
+    def _session(**_):
+        raise exc
 
     driver_mock = MagicMock()
     driver_mock.session = _session
@@ -152,6 +165,53 @@ class TestExecuteProfile:
         result = asyncio.run(driver.execute("PROFILE MATCH (n) RETURN n", []))
         assert isinstance(result, ReadResult)
         assert result.columns == ["operator", "rows", "db_hits", "identifiers"]
+
+
+class TestMaybeRaiseConnectionLost:
+    def test_service_unavailable_raises(self) -> None:
+        with pytest.raises(ConnectionLostError):
+            _maybe_raise_connection_lost(neo4j.exceptions.ServiceUnavailable("down"))
+
+    def test_session_expired_raises(self) -> None:
+        with pytest.raises(ConnectionLostError):
+            _maybe_raise_connection_lost(neo4j.exceptions.SessionExpired("expired"))
+
+    def test_driver_closed_raises(self) -> None:
+        with pytest.raises(ConnectionLostError):
+            _maybe_raise_connection_lost(neo4j.exceptions.DriverError("Driver closed"))
+
+    def test_other_driver_error_does_not_raise(self) -> None:
+        _maybe_raise_connection_lost(neo4j.exceptions.CypherSyntaxError("bad syntax"))
+
+    def test_other_error_does_not_raise(self) -> None:
+        _maybe_raise_connection_lost(ValueError("unrelated"))
+
+
+class TestExecuteErrorPropagation:
+    def test_driver_closed_raises_connection_lost(self) -> None:
+        driver = _make_erroring_driver(neo4j.exceptions.DriverError("Driver closed"))
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.execute("MATCH (n) RETURN n", []))
+
+    def test_service_unavailable_raises_connection_lost(self) -> None:
+        driver = _make_erroring_driver(neo4j.exceptions.ServiceUnavailable("down"))
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.execute("MATCH (n) RETURN n", []))
+
+    def test_other_error_raises_driver_error(self) -> None:
+        driver = _make_erroring_driver(neo4j.exceptions.CypherSyntaxError("bad"))
+        with pytest.raises(DriverError):
+            asyncio.run(driver.execute("MATCH (n) RETURN n", []))
+
+    def test_explore_list_driver_closed_raises_connection_lost(self) -> None:
+        driver = _make_erroring_driver(neo4j.exceptions.DriverError("Driver closed"))
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.explore_list(["indexes"]))
+
+    def test_explore_describe_driver_closed_raises_connection_lost(self) -> None:
+        driver = _make_erroring_driver(neo4j.exceptions.DriverError("Driver closed"))
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.explore_describe(["indexes"]))
 
 
 class TestSerialize:

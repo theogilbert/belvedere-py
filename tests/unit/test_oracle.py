@@ -11,10 +11,15 @@ from grannos.drivers.oracle.driver import (
     OracleDriver,
     _alter_session_property,
     _format_db_error,
+    _format_type,
     _is_explain_plan,
     _offset_to_line_col,
 )
-from grannos.drivers.oracle.queries import _PRE12_SYSTEM_SCHEMAS_SQL, render_lob
+from grannos.drivers.oracle.queries import (
+    _PRE12_SYSTEM_SCHEMAS_SQL,
+    ColumnDetail,
+    render_lob,
+)
 from grannos.protocol import ExploreItem, IndexDescription, LobPlaceholder, ReadResult
 
 
@@ -109,6 +114,45 @@ class TestFormatDbError:
         exc = _make_db_error("ORA-00936: missing expression", offset=7)
         result = _format_db_error(exc, query)
         assert result == "ORA-00936: missing expression (line 2, col 1)"
+
+
+def _col(
+    type_: str, char_length: int | None = None, byte_length: int | None = None
+) -> ColumnDetail:
+    return ColumnDetail(
+        name="c",
+        type=type_,
+        nullable=True,
+        default=None,
+        char_length=char_length,
+        byte_length=byte_length,
+    )
+
+
+class TestFormatType:
+    def test_varchar2_shows_char_length(self) -> None:
+        col = _col("VARCHAR2", char_length=50, byte_length=50)
+        assert _format_type(col) == "VARCHAR2(50)"
+
+    def test_varchar_shows_char_length(self) -> None:
+        col = _col("VARCHAR", char_length=20, byte_length=20)
+        assert _format_type(col) == "VARCHAR(20)"
+
+    def test_shows_byte_length_when_it_differs(self) -> None:
+        col = _col("VARCHAR2", char_length=50, byte_length=200)
+        assert _format_type(col) == "VARCHAR2(50 CHAR, 200 BYTE)"
+
+    def test_same_char_and_byte_length_omits_byte_length(self) -> None:
+        col = _col("VARCHAR2", char_length=50, byte_length=50)
+        assert "BYTE" not in _format_type(col)
+
+    def test_non_varchar_type_is_unchanged(self) -> None:
+        col = _col("NUMBER", char_length=0, byte_length=22)
+        assert _format_type(col) == "NUMBER"
+
+    def test_missing_char_length_leaves_type_unchanged(self) -> None:
+        col = _col("VARCHAR2", char_length=None, byte_length=50)
+        assert _format_type(col) == "VARCHAR2"
 
 
 class TestRenderLob:

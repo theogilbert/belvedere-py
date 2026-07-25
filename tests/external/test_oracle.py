@@ -284,7 +284,7 @@ class TestExploreDescribe:
         assert list(by_name) == ["ID", "VAL"]
         assert by_name["ID"].types == ["NUMBER"]
         assert by_name["ID"].nullable is False
-        assert by_name["VAL"].types == ["VARCHAR2"]
+        assert by_name["VAL"].types == ["VARCHAR2(50)"]
         assert by_name["VAL"].nullable is True
 
     async def test_returns_pk_flag(
@@ -349,7 +349,7 @@ class TestExploreDescribe:
         assert isinstance(desc, EntityDescription)
         by_name = {f.name: f for f in desc.properties}
         assert by_name["ID"].types == ["NUMBER"]
-        assert by_name["VAL"].types == ["VARCHAR2"]
+        assert by_name["VAL"].types == ["VARCHAR2(50)"]
 
     async def test_exclusive_index(
         self, driver: OracleDriver, schema: str, table: str
@@ -695,7 +695,7 @@ class TestExploreDescribeField:
         desc = await driver.explore_describe([schema, table, "columns", "VAL"])
         assert isinstance(desc, FieldDescription)
         assert desc.name == "VAL"
-        assert desc.types == ["VARCHAR2"]
+        assert desc.types == ["VARCHAR2(50)"]
         assert desc.nullable is False
         assert desc.pk is False
 

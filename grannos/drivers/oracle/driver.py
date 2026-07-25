@@ -32,6 +32,7 @@ from ..base import (
     group_references_by_ref_column,
 )
 from .queries import (
+    ColumnDetail,
     apply_metadata_transform,
     build_column_index_lists,
     build_preview_query,
@@ -348,7 +349,7 @@ if the connection is silently reconnected (e.g. after an idle timeout).
             properties=[
                 FieldDescription(
                     name=col.name,
-                    types=[col.type],
+                    types=[_format_type(col)],
                     nullable=col.nullable,
                     pk=col.name in pk_cols,
                     default=col.default,
@@ -441,7 +442,7 @@ if the connection is silently reconnected (e.g. after an idle timeout).
 
         return FieldDescription(
             name=col.name,
-            types=[col.type],
+            types=[_format_type(col)],
             nullable=col.nullable,
             pk=col.name in pk_cols,
             default=col.default,
@@ -507,6 +508,21 @@ if the connection is silently reconnected (e.g. after an idle timeout).
                 exc,
             )
             return "-- DDL unavailable"
+
+
+_VARCHAR_TYPES = {"VARCHAR2", "VARCHAR"}
+
+
+def _format_type(col: ColumnDetail) -> str:
+    """Appends the max length to a VARCHAR2/VARCHAR column's type name — just
+    the char length (e.g. ``VARCHAR2(50)``), or both when byte length differs
+    (e.g. ``VARCHAR2(50 CHAR, 200 BYTE)``, which happens under BYTE semantics
+    or a multi-byte charset). Other types are returned unchanged."""
+    if col.type not in _VARCHAR_TYPES or col.char_length is None:
+        return col.type
+    if col.byte_length is not None and col.byte_length != col.char_length:
+        return f"{col.type}({col.char_length} CHAR, {col.byte_length} BYTE)"
+    return f"{col.type}({col.char_length})"
 
 
 def _is_explain_plan(query: str) -> bool:

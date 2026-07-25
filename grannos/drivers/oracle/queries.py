@@ -104,6 +104,14 @@ class ColumnDetail:
     """Whether the column allows NULL."""
     default: str | None
     """Default expression, stripped of surrounding whitespace; None if not set."""
+    char_length: int | None
+    """``ALL_TAB_COLUMNS.CHAR_LENGTH`` verbatim — meaningful only for character
+    types (VARCHAR2, VARCHAR, CHAR, ...); 0/meaningless for others."""
+    byte_length: int | None
+    """``ALL_TAB_COLUMNS.DATA_LENGTH`` verbatim — the storage size in bytes for
+    any type. For character columns, differs from ``char_length`` when the
+    column was declared with BYTE semantics (or CHAR semantics under a
+    multi-byte charset)."""
 
 
 @dataclass
@@ -220,7 +228,8 @@ async def fetch_column_details(
     """Return column metadata ordered by column position."""
     cur = conn.cursor()
     await cur.execute(
-        "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT"
+        "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT,"
+        " CHAR_LENGTH, DATA_LENGTH"
         " FROM ALL_TAB_COLUMNS"
         " WHERE OWNER = :1 AND TABLE_NAME = :2 ORDER BY COLUMN_ID",
         [schema, table],
@@ -231,6 +240,8 @@ async def fetch_column_details(
             type=r[1],
             nullable=r[2] == "Y",
             default=r[3].strip() if r[3] is not None else None,
+            char_length=r[4],
+            byte_length=r[5],
         )
         for r in await cur.fetchall()
     ]

@@ -239,11 +239,18 @@ class TestConnectionErrors:
 
 
 class TestExploreList:
-    async def test_root_lists_metric_names(self) -> None:
+    async def test_root_lists_metrics_group(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        items = await driver.explore_list([])
+        assert [i.name for i in items] == ["metrics"]
+        assert items[0].type == "group"
+        assert items[0].expandable
+
+    async def test_metrics_group_lists_metric_names(self) -> None:
         driver, _ = _driver_with_response(
             {"status": "success", "data": ["up", "http_requests_total"]}
         )
-        items = await driver.explore_list([])
+        items = await driver.explore_list(["metrics"])
         assert sorted(i.name for i in items) == ["http_requests_total", "up"]
         assert all(i.type == "metric" and i.expandable for i in items)
 
@@ -251,20 +258,17 @@ class TestExploreList:
         driver, _ = _driver_with_response(
             {"status": "success", "data": ["__name__", "job", "instance"]}
         )
-        items = await driver.explore_list(["up"])
+        items = await driver.explore_list(["metrics", "up"])
         assert sorted(i.name for i in items) == ["instance", "job"]
-
-    async def test_label_lists_values(self) -> None:
-        driver, _ = _driver_with_response(
-            {"status": "success", "data": ["prometheus", "node"]}
-        )
-        items = await driver.explore_list(["up", "job"])
-        assert sorted(i.name for i in items) == ["node", "prometheus"]
         assert all(not i.expandable for i in items)
+
+    async def test_label_path_returns_empty(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        assert await driver.explore_list(["metrics", "up", "job"]) == []
 
     async def test_unknown_path_returns_empty(self) -> None:
         driver, _ = _driver_with_response({"status": "success", "data": []})
-        assert await driver.explore_list(["up", "job", "prometheus"]) == []
+        assert await driver.explore_list(["metrics", "up", "job", "prometheus"]) == []
 
 
 class TestExploreDescribe:
@@ -279,7 +283,7 @@ class TestExploreDescribe:
             "_get",
             AsyncMock(side_effect=[["job"], DriverError("no metadata"), []]),
         ):
-            result = await driver.explore_describe(["up"])
+            result = await driver.explore_describe(["metrics", "up"])
         assert isinstance(result, EntityDescription)
         assert result.kind == "metric"
         assert result.comment is None

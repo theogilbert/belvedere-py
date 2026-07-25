@@ -82,26 +82,34 @@ class TestExecuteRange:
 
 
 class TestExploreList:
-    async def test_root_lists_metrics(self, driver: PrometheusDriver) -> None:
+    async def test_root_lists_metrics_group(self, driver: PrometheusDriver) -> None:
         items = await driver.explore_list([])
+        assert [i.name for i in items] == ["metrics"]
+        assert items[0].type == "group"
+        assert items[0].expandable
+
+    async def test_metrics_group_lists_metric_names(
+        self, driver: PrometheusDriver
+    ) -> None:
+        items = await driver.explore_list(["metrics"])
         names = [i.name for i in items]
         assert "up" in names
         assert all(i.type == "metric" and i.expandable for i in items)
 
     async def test_metric_lists_labels(self, driver: PrometheusDriver) -> None:
-        items = await driver.explore_list(["up"])
+        items = await driver.explore_list(["metrics", "up"])
         names = [i.name for i in items]
         assert "job" in names
         assert "instance" in names
         assert "__name__" not in names
+        assert all(not i.expandable for i in items)
 
-    async def test_label_lists_values(self, driver: PrometheusDriver) -> None:
-        items = await driver.explore_list(["up", "job"])
-        names = [i.name for i in items]
-        assert "prometheus" in names
+    async def test_label_path_returns_empty(self, driver: PrometheusDriver) -> None:
+        items = await driver.explore_list(["metrics", "up", "job"])
+        assert items == []
 
     async def test_unknown_path_returns_empty(self, driver: PrometheusDriver) -> None:
-        items = await driver.explore_list(["up", "job", "prometheus", "extra"])
+        items = await driver.explore_list(["metrics", "up", "job", "extra"])
         assert items == []
 
 
@@ -109,7 +117,7 @@ class TestExploreDescribe:
     async def test_returns_entity_description_for_metric(
         self, driver: PrometheusDriver
     ) -> None:
-        result = await driver.explore_describe(["up"])
+        result = await driver.explore_describe(["metrics", "up"])
         assert isinstance(result, EntityDescription)
         assert result.name == "up"
         label_names = [f.name for f in result.properties]
@@ -117,7 +125,7 @@ class TestExploreDescribe:
         assert "instance" in label_names
 
     async def test_labels_carry_sampled_values(self, driver: PrometheusDriver) -> None:
-        result = await driver.explore_describe(["up"])
+        result = await driver.explore_describe(["metrics", "up"])
         assert isinstance(result, EntityDescription)
         job_field = next(f for f in result.properties if f.name == "job")
         assert "prometheus" in job_field.sample

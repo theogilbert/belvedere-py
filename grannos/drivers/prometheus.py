@@ -111,16 +111,16 @@ Scalar/string results return a single `timestamp`/`value` row.
 
 ```
 (root)
-└── <metric>
-    └── <label>
-        └── <value>
+└── metrics
+    └── <metric>
+        └── <label>
 ```
 
 Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
 
-`explore.describe` on `[metric]` returns label metadata (name, up to 3 sampled
-values), with `kind` and `comment` populated from `/api/v1/metadata` (type and
-help text) when available.
+`explore.describe` on `["metrics", metric]` returns label metadata (name, up to
+3 sampled values), with `kind` and `comment` populated from `/api/v1/metadata`
+(type and help text) when available.
 """
 
     def __init__(
@@ -158,13 +158,19 @@ help text) when available.
     async def disconnect(self) -> None:
         await self._session.close()
 
-    async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
+    async def execute(
+        self,
+        query: str,
+        binds: list[Any],
+        diagram_captions: dict[str, str] | None = None,
+    ) -> ReadResult | WriteResult:
         """Run a PromQL query.
 
         Args:
             query: A PromQL expression (instant mode), or a range query prefixed
                 with ``<start>,<end>,<step> | `` (range mode).
             binds: Unused for Prometheus.
+            diagram_captions: Unused for Prometheus (not a graph driver).
         """
         mode = self.params.get("query_mode", "instant")
         if mode == "instant":
@@ -209,33 +215,26 @@ help text) when available.
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
+                return [ExploreItem(name="metrics", type="group", expandable=True)]
+            case ["metrics"]:
                 names = await self._get("/api/v1/label/__name__/values", {})
                 return [
                     ExploreItem(name=name, type="metric", expandable=True)
                     for name in sorted(names)
                 ]
-            case [metric]:
+            case ["metrics", metric]:
                 labels = await self._get("/api/v1/labels", {"match[]": metric})
                 return [
-                    ExploreItem(name=label, type="label", expandable=True)
+                    ExploreItem(name=label, type="label", expandable=False)
                     for label in sorted(labels)
                     if label != "__name__"
-                ]
-            case [metric, label]:
-                values = await self._get(
-                    f"/api/v1/label/{quote(label, safe='')}/values",
-                    {"match[]": metric},
-                )
-                return [
-                    ExploreItem(name=value, type="value", expandable=False)
-                    for value in sorted(values)
                 ]
             case _:
                 return []
 
     async def explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
-            case [metric]:
+            case ["metrics", metric]:
                 labels = await self._get("/api/v1/labels", {"match[]": metric})
                 label_names = sorted(label for label in labels if label != "__name__")
                 metadata = await self._metric_metadata(metric)

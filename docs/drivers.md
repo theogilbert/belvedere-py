@@ -272,15 +272,15 @@ Scalar/string results return a single `timestamp`/`value` row.
 
 ```
 (root)
-└── <metric>
-    └── <label>
-        └── <value>
+└── metrics
+    └── <metric>
+        └── <label>
 ```
 
 Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
 
-`explore.describe` is supported on `[metric]` paths and returns label metadata
-(name, up to 3 sampled values). `kind` and `comment` are populated from
+`explore.describe` is supported on `["metrics", metric]` paths and returns label
+metadata (name, up to 3 sampled values). `kind` and `comment` are populated from
 `/api/v1/metadata` (type and help text) when the server exposes it.
 
 ---

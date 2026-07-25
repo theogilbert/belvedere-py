@@ -51,6 +51,8 @@ class PrometheusDriver(BaseDriver):
 
     LANGUAGES = [Language.PROMQL]
 
+    SUPPORTS_WRITES = False
+
     PARAMS: list[DriverParam] = [
         DriverParam(
             key="url", type=ParamType.STRING, label="URL", default=_DEFAULT_URL

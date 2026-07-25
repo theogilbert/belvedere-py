@@ -164,6 +164,20 @@ class TestCapabilities:
             for p in tech.params
         )
 
+    async def test_sqlite_supports_writes(self, dispatcher: Dispatcher) -> None:
+        result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
+        sqlite = next(t for t in result["drivers"] if t.driver == "sqlite")
+        assert sqlite.supports_writes is True
+
+    async def test_prometheus_does_not_support_writes(
+        self, dispatcher: Dispatcher
+    ) -> None:
+        result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
+        drivers_by_name = {t.driver: t for t in result["drivers"]}
+        if "prometheus" not in drivers_by_name:
+            pytest.skip("prometheus driver not installed")
+        assert drivers_by_name["prometheus"].supports_writes is False
+
 
 class TestDriverHelp:
     async def test_should_return_markdown_content(self, dispatcher: Dispatcher) -> None:

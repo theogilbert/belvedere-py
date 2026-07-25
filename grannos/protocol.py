@@ -400,6 +400,11 @@ class Driver:
     """Runtime-only settings that can be changed on a live connection via
     ``session.set``/``session.get`` — never persisted to a saved connection and
     never sent as part of ``connect``. Empty for drivers with no such settings."""
+    supports_writes: bool = True
+    """Whether this driver's query language can express write operations.
+    False for a genuinely read-only driver (e.g. Prometheus/PromQL) — clients
+    should hide write-related connection settings (e.g. "always allow writes")
+    for such drivers, since they'd never apply."""
     languages: list[Language] = field(default_factory=list)
     """Query languages this driver supports, using the standard :class:`Language` enum.
 

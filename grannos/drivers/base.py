@@ -105,6 +105,15 @@ class BaseDriver(ABC):
     The value can be set to 0 to disable closing the connection when idle too long.
     """
 
+    SUPPORTS_WRITES: ClassVar[bool] = True
+    """Whether this driver's query language can express write operations.
+
+    True for nearly every driver; a genuinely read-only driver (e.g. Prometheus,
+    whose PromQL has no write syntax at all) overrides this to False so clients
+    can skip write-related connection settings (e.g. "always allow writes")
+    that would otherwise never apply.
+    """
+
     def __init__(self, params: dict[str, Any], settings: DriverSettings) -> None:
         self.params = params
         self._settings = settings

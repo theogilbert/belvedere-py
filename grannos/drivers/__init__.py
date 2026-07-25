@@ -57,6 +57,7 @@ def list_drivers() -> list[Driver]:
                 driver=entry.module,
                 label=cls.LABEL,
                 params=cls.PARAMS,
+                session_params=cls.SESSION_PARAMS,
                 languages=cls.LANGUAGES,
             )
         )

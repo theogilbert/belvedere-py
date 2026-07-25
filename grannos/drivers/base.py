@@ -83,6 +83,12 @@ class BaseDriver(ABC):
     PARAMS: list[DriverParam] = []
     """Connection parameters declared by each driver subclass."""
 
+    SESSION_PARAMS: list[DriverParam] = []
+    """Runtime-only settings declared by a driver subclass, changeable on a live
+    connection via :meth:`set_session`/:meth:`get_session` — never sent as part
+    of ``connect`` params and never persisted alongside a saved connection.
+    Empty for drivers with no such settings."""
+
     LANGUAGES: ClassVar[list[Language]] = []
     """Query languages this driver supports (see :class:`~grannos.protocol.Language`).
 
@@ -185,6 +191,25 @@ class BaseDriver(ABC):
             not resolve to a describable node.
         """
         ...
+
+    async def set_session(self, values: dict[str, Any]) -> None:
+        """Update one or more runtime session settings declared in SESSION_PARAMS.
+
+        Args:
+            values: New values for a subset of this driver's SESSION_PARAMS keys.
+
+        Raises:
+            DriverError: If this driver declares no SESSION_PARAMS.
+        """
+        raise DriverError(f"{type(self).__name__} has no session-level settings")
+
+    def get_session(self) -> dict[str, Any]:
+        """Return the current values of this driver's SESSION_PARAMS settings.
+
+        Returns:
+            A dict keyed by SESSION_PARAMS keys; empty for drivers with none.
+        """
+        return {}
 
 
 SAMPLE_SCAN_ROWS = 50

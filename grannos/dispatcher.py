@@ -174,6 +174,8 @@ class Dispatcher:
             Method.EXPLORE_DESCRIBE: self._handle_explore_describe,
             Method.EXPLORE_PREVIEW: self._handle_explore_preview,
             Method.EXPLORE_DIAGRAM: self._handle_explore_diagram,
+            Method.SESSION_SET: self._handle_session_set,
+            Method.SESSION_GET: self._handle_session_get,
         }
 
     async def _handle_capabilities(
@@ -323,6 +325,24 @@ class Dispatcher:
         except DiagramError as exc:
             raise DispatchError(str(exc)) from exc
         return {"diagram": result.diagram, "regions": result.regions}
+
+    async def _handle_session_set(
+        self,
+        conn: Connection,
+        params: dict[str, Any],
+        _send_progress: ProgressCallback,
+    ) -> dict[str, Any]:
+        values = {k: v for k, v in params.items() if k != "connection_id"}
+        await conn.driver.set_session(values)
+        return {"ok": True}
+
+    async def _handle_session_get(
+        self,
+        conn: Connection,
+        _params: dict[str, Any],
+        _send_progress: ProgressCallback,
+    ) -> dict[str, Any]:
+        return conn.driver.get_session()
 
     async def _reconnect_and_retry(
         self,

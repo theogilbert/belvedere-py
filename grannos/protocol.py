@@ -43,6 +43,8 @@ class Method(StrEnum):
     EXPLORE_DESCRIBE = "explore.describe"
     EXPLORE_PREVIEW = "explore.preview"
     EXPLORE_DIAGRAM = "explore.diagram"
+    SESSION_SET = "session.set"
+    SESSION_GET = "session.get"
 
 
 @dataclass
@@ -394,6 +396,10 @@ class Driver:
     """Human-readable display name (e.g. ``"SQLite"``)."""
     params: list[DriverParam]
     """Connection parameters in display order."""
+    session_params: list[DriverParam] = field(default_factory=list)
+    """Runtime-only settings that can be changed on a live connection via
+    ``session.set``/``session.get`` — never persisted to a saved connection and
+    never sent as part of ``connect``. Empty for drivers with no such settings."""
     languages: list[Language] = field(default_factory=list)
     """Query languages this driver supports, using the standard :class:`Language` enum.
 

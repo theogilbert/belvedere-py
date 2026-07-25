@@ -42,7 +42,8 @@ class PrometheusDriver(BaseDriver):
     """Prometheus driver backed by the HTTP query API.
 
     Args:
-        params: Connect request fields (``url``, ``username``, ``password``, ``query_mode``).
+        params: Connect request fields (``url``, ``username``, ``password``). ``query_mode``
+            is a SESSION_PARAMS setting, not a connect param — see :attr:`SESSION_PARAMS`.
         session: Open aiohttp session. Use :meth:`create` instead of constructing directly.
     """
 
@@ -64,6 +65,9 @@ class PrometheusDriver(BaseDriver):
             secret=True,
             required=False,
         ),
+    ]
+
+    SESSION_PARAMS: list[DriverParam] = [
         DriverParam(
             key="query_mode",
             type=ParamType.ENUM,
@@ -79,7 +83,8 @@ class PrometheusDriver(BaseDriver):
     HELP: str = """\
 ## Prometheus
 
-**Queries:** PromQL, evaluated via the connection's configured query mode.
+**Queries:** PromQL, evaluated via the connection's `query_mode` session setting
+(instant/range — change it any time via `session.set`, no reconnect needed).
 
 *Instant mode* (default) — a plain PromQL expression, evaluated at the current time:
 
@@ -130,9 +135,13 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
         settings: DriverSettings,
     ) -> None:
         super().__init__(params, settings)
-        self._session = session
+        self._http = session
         self._url = str(params.get("url") or _DEFAULT_URL).rstrip("/")
         self._ever_connected = False
+        self._session_values: dict[str, Any] = {
+            p.key: p.default for p in self.SESSION_PARAMS
+        }
+        """Runtime SESSION_PARAMS values, seeded from their declared defaults."""
 
     @classmethod
     async def create(
@@ -151,12 +160,12 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
         return aiohttp.ClientSession(headers=headers)
 
     async def reconnect(self) -> None:
-        await self._session.close()
-        self._session = self._open(self.params)
+        await self._http.close()
+        self._http = self._open(self.params)
         self._ever_connected = False
 
     async def disconnect(self) -> None:
-        await self._session.close()
+        await self._http.close()
 
     async def execute(
         self,
@@ -172,12 +181,22 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
             binds: Unused for Prometheus.
             diagram_captions: Unused for Prometheus (not a graph driver).
         """
-        mode = self.params.get("query_mode", "instant")
+        mode = self._session_values.get("query_mode", "instant")
         if mode == "instant":
             return await self._execute_instant(query)
         if mode == "range":
             return await self._execute_range(query)
         raise DriverError(f"Unknown query_mode: {mode!r}")
+
+    async def set_session(self, values: dict[str, Any]) -> None:
+        if "query_mode" in values:
+            mode = values["query_mode"]
+            if mode not in ("instant", "range"):
+                raise DriverError(f"Unknown query_mode: {mode!r}")
+            self._session_values["query_mode"] = mode
+
+    def get_session(self) -> dict[str, Any]:
+        return dict(self._session_values)
 
     async def _execute_instant(self, query: str) -> ReadResult:
         data = await self._get("/api/v1/query", {"query": query.strip()})
@@ -199,7 +218,7 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
 
     async def _get(self, path: str, params: dict[str, str]) -> Any:
         try:
-            async with self._session.get(f"{self._url}{path}", params=params) as resp:
+            async with self._http.get(f"{self._url}{path}", params=params) as resp:
                 body = await resp.json(content_type=None)
         except Exception as exc:
             if isinstance(exc, (aiohttp.ClientConnectionError, TimeoutError)):

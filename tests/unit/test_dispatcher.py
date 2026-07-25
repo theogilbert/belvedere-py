@@ -1,7 +1,7 @@
 import asyncio
 import pathlib
 from collections.abc import Generator
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -350,6 +350,62 @@ class TestExecute:
             Method.EXECUTE, {"connection_id": conn_id, "query": "SELECT 1"}, progress
         )
         progress.assert_any_await("reconnecting", ANY)
+
+
+class TestSessionSet:
+    async def test_forwards_values_to_driver(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        result = await disp.dispatch(
+            Method.SESSION_SET,
+            {"connection_id": conn_id, "query_mode": "range"},
+            noop_progress,
+        )
+        assert result == {"ok": True}
+        driver.set_session.assert_awaited_once_with({"query_mode": "range"})
+
+    async def test_excludes_connection_id_from_forwarded_values(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        await disp.dispatch(
+            Method.SESSION_SET,
+            {"connection_id": conn_id, "query_mode": "range"},
+            noop_progress,
+        )
+        values = driver.set_session.call_args[0][0]
+        assert "connection_id" not in values
+
+    async def test_raises_when_connection_id_is_unknown(
+        self, dispatcher: Dispatcher
+    ) -> None:
+        with pytest.raises(DispatchError):
+            await dispatcher.dispatch(
+                Method.SESSION_SET,
+                {"connection_id": "x", "query_mode": "range"},
+                noop_progress,
+            )
+
+
+class TestSessionGet:
+    async def test_returns_driver_session_values(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.get_session = MagicMock(return_value={"query_mode": "range"})
+        result = await disp.dispatch(
+            Method.SESSION_GET, {"connection_id": conn_id}, noop_progress
+        )
+        assert result == {"query_mode": "range"}
+
+    async def test_raises_when_connection_id_is_unknown(
+        self, dispatcher: Dispatcher
+    ) -> None:
+        with pytest.raises(DispatchError):
+            await dispatcher.dispatch(
+                Method.SESSION_GET, {"connection_id": "x"}, noop_progress
+            )
 
 
 class TestDisconnect:

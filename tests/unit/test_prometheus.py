@@ -184,7 +184,6 @@ class TestExecute:
     async def test_instant_mode_queries_promql_endpoint(self) -> None:
         driver, session = _driver_with_response(
             {"status": "success", "data": {"resultType": "vector", "result": []}},
-            {"query_mode": "instant"},
         )
         result = await driver.execute("up", [])
         assert isinstance(result, ReadResult)
@@ -196,18 +195,18 @@ class TestExecute:
     async def test_range_mode_queries_range_endpoint(self) -> None:
         driver, session = _driver_with_response(
             {"status": "success", "data": {"resultType": "matrix", "result": []}},
-            {"query_mode": "range"},
         )
+        await driver.set_session({"query_mode": "range"})
         await driver.execute("-1h,now,15s | up", [])
         args, kwargs = session.get.call_args
         assert args[0] == "http://localhost:9090/api/v1/query_range"
         assert kwargs["params"]["query"] == "up"
         assert kwargs["params"]["step"] == "15s"
 
-    async def test_unknown_query_mode_raises(self) -> None:
-        driver, _ = _driver_with_response({}, {"query_mode": "bogus"})
+    async def test_unknown_query_mode_rejected_by_set_session(self) -> None:
+        driver, _ = _driver_with_response({})
         with pytest.raises(DriverError, match="Unknown query_mode"):
-            await driver.execute("up", [])
+            await driver.set_session({"query_mode": "bogus"})
 
     async def test_api_error_response_raises_driver_error(self) -> None:
         driver, _ = _driver_with_response(
@@ -215,6 +214,27 @@ class TestExecute:
         )
         with pytest.raises(DriverError, match="parse error"):
             await driver.execute("up", [])
+
+
+class TestSessionParams:
+    def test_query_mode_not_in_connect_params(self) -> None:
+        assert "query_mode" not in {p.key for p in PrometheusDriver.PARAMS}
+
+    def test_query_mode_declared_as_session_param(self) -> None:
+        assert "query_mode" in {p.key for p in PrometheusDriver.SESSION_PARAMS}
+
+    def test_defaults_to_instant(self) -> None:
+        driver, _ = _driver_with_response({})
+        assert driver.get_session() == {"query_mode": "instant"}
+
+    async def test_set_session_updates_get_session(self) -> None:
+        driver, _ = _driver_with_response({})
+        await driver.set_session({"query_mode": "range"})
+        assert driver.get_session() == {"query_mode": "range"}
+
+    async def test_connect_params_do_not_seed_session(self) -> None:
+        driver, _ = _driver_with_response({}, {"query_mode": "range"})
+        assert driver.get_session() == {"query_mode": "instant"}
 
 
 class TestConnectionErrors:

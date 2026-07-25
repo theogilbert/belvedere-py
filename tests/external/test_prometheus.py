@@ -40,7 +40,8 @@ async def driver() -> AsyncGenerator[PrometheusDriver, None]:
 @pytest.fixture
 async def range_driver() -> AsyncGenerator[PrometheusDriver, None]:
     pytest.importorskip("aiohttp")
-    d = await PrometheusDriver.create(_params(query_mode="range"), DriverSettings())
+    d = await PrometheusDriver.create(_params(), DriverSettings())
+    await d.set_session({"query_mode": "range"})
     yield d
     await d.disconnect()
 

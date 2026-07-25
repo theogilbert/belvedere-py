@@ -9,6 +9,7 @@ import pytest
 from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
 from grannos.drivers.oracle.driver import (
     OracleDriver,
+    _alter_session_property,
     _format_db_error,
     _is_explain_plan,
     _offset_to_line_col,
@@ -191,6 +192,115 @@ class TestExecuteErrorPropagation:
         driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(ConnectionLostError):
             asyncio.run(driver.explore_describe(["MYSCHEMA", "MYTABLE"]))
+
+
+class TestAlterSessionProperty:
+    def test_extracts_property_name(self) -> None:
+        assert (
+            _alter_session_property("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'")
+            == "NLS_DATE_FORMAT"
+        )
+
+    def test_case_insensitive(self) -> None:
+        assert (
+            _alter_session_property("alter session set nls_date_format = 'YYYY-MM-DD'")
+            == "NLS_DATE_FORMAT"
+        )
+
+    def test_leading_whitespace(self) -> None:
+        assert _alter_session_property("   ALTER SESSION SET FOO = 1") == "FOO"
+
+    def test_non_alter_session_returns_none(self) -> None:
+        assert _alter_session_property("SELECT 1 FROM DUAL") is None
+
+    def test_alter_table_returns_none(self) -> None:
+        assert _alter_session_property("ALTER TABLE t ADD (c NUMBER)") is None
+
+
+class TestExecuteRecordsSessionStatements:
+    def test_records_on_success(self) -> None:
+        driver = _make_driver([], has_oracle_maintained=True)
+        stmt = "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'"
+        asyncio.run(driver.execute(stmt, []))
+        assert driver._session_statements == {"NLS_DATE_FORMAT": stmt}
+
+    def test_later_value_replaces_earlier(self) -> None:
+        driver = _make_driver([], has_oracle_maintained=True)
+        first = "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'"
+        second = "ALTER SESSION SET NLS_DATE_FORMAT = 'DD-MM-YYYY'"
+        asyncio.run(driver.execute(first, []))
+        asyncio.run(driver.execute(second, []))
+        assert driver._session_statements == {"NLS_DATE_FORMAT": second}
+
+    def test_does_not_record_plain_query(self) -> None:
+        driver = _make_driver([], has_oracle_maintained=True)
+        asyncio.run(driver.execute("SELECT 1 FROM DUAL", []))
+        assert driver._session_statements == {}
+
+    def test_failed_statement_not_recorded(self) -> None:
+        exc = _make_db_error("ORA-00922: missing or invalid option")
+        cur = MagicMock()
+        cur.execute = AsyncMock(side_effect=exc)
+        conn = MagicMock(spec=oracledb.AsyncConnection)
+        conn.cursor.return_value = cur
+        driver = OracleDriver({}, conn, True, DriverSettings())
+        with pytest.raises(DriverError):
+            asyncio.run(driver.execute("ALTER SESSION SET BOGUS = 1", []))
+        assert driver._session_statements == {}
+
+
+class TestReconnectReplaysSessionStatements:
+    def test_replays_recorded_statements(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver = _make_driver([], has_oracle_maintained=True)
+        stmt = "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'"
+        asyncio.run(driver.execute(stmt, []))
+
+        new_cur = MagicMock()
+        new_cur.execute = AsyncMock()
+        new_conn = MagicMock(spec=oracledb.AsyncConnection)
+        new_conn.cursor.return_value = new_cur
+
+        async def fake_open(params: dict) -> tuple:
+            return new_conn, True
+
+        monkeypatch.setattr(OracleDriver, "_open", staticmethod(fake_open))
+        asyncio.run(driver.reconnect())
+
+        new_cur.execute.assert_awaited_with(stmt)
+
+    def test_no_statements_means_no_replay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        driver = _make_driver([], has_oracle_maintained=True)
+
+        new_conn = MagicMock(spec=oracledb.AsyncConnection)
+
+        async def fake_open(params: dict) -> tuple:
+            return new_conn, True
+
+        monkeypatch.setattr(OracleDriver, "_open", staticmethod(fake_open))
+        asyncio.run(driver.reconnect())
+
+        new_conn.cursor.assert_not_called()
+
+    def test_replay_failure_raises_driver_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        driver = _make_driver([], has_oracle_maintained=True)
+        asyncio.run(driver.execute("ALTER SESSION SET FOO = 1", []))
+
+        exc = _make_db_error("ORA-02248: invalid option for ALTER SESSION")
+        new_cur = MagicMock()
+        new_cur.execute = AsyncMock(side_effect=exc)
+        new_conn = MagicMock(spec=oracledb.AsyncConnection)
+        new_conn.cursor.return_value = new_cur
+
+        async def fake_open(params: dict) -> tuple:
+            return new_conn, True
+
+        monkeypatch.setattr(OracleDriver, "_open", staticmethod(fake_open))
+        with pytest.raises(DriverError, match="ORA-02248"):
+            asyncio.run(driver.reconnect())
 
 
 class TestDisconnect:

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 import oracledb
@@ -98,6 +99,7 @@ Uses the `oracledb` driver in thin mode — no Oracle Instant Client required.
 SELECT * FROM employees WHERE department_id = 10 AND hire_date > DATE '2024-01-01'
 SELECT e.id, d.name FROM employees e JOIN departments d ON d.id = e.department_id
 INSERT INTO employees (department_id, name) VALUES (10, 'Alice')
+ALTER SESSION SET NLS_LENGTH_SEMANTICS = CHAR
 ```
 
 **Resources:**
@@ -113,6 +115,10 @@ INSERT INTO employees (department_id, name) VALUES (10, 'Alice')
 Describing a table or view returns column metadata (name, type, nullability,
 primary key flag, default). Describing an index returns its key fields,
 direction, and uniqueness.
+
+**Session properties:** run `ALTER SESSION SET <property> = <value>` like any
+other statement. It's remembered per-connection and automatically re-applied
+if the connection is silently reconnected (e.g. after an idle timeout).
 """
 
     def __init__(
@@ -129,6 +135,11 @@ direction, and uniqueness.
         self._metadata_transform_set = False
         """Set to True after DBMS_METADATA session transform params are applied.
         Cleared on reconnect so they are re-applied to the new session."""
+        self._session_statements: dict[str, str] = {}
+        """ALTER SESSION SET statements successfully run on this connection, keyed
+        by upper-cased property name (a later SET for the same property replaces
+        the earlier entry). Replayed in reconnect() since a fresh Oracle session
+        starts without them."""
 
     @classmethod
     async def create(
@@ -161,6 +172,18 @@ direction, and uniqueness.
             pass
         self._conn, self._has_oracle_maintained = await self._open(self.params)
         self._metadata_transform_set = False
+        await self._replay_session_statements()
+
+    async def _replay_session_statements(self) -> None:
+        for stmt in self._session_statements.values():
+            try:
+                cur = self._conn.cursor()
+                await cur.execute(stmt)
+            except Exception as exc:
+                _maybe_raise_connection_lost(exc)
+                if isinstance(exc, oracledb.DatabaseError):
+                    raise DriverError(_format_db_error(exc, stmt)) from exc
+                raise
 
     async def disconnect(self) -> None:
         try:
@@ -188,6 +211,9 @@ direction, and uniqueness.
         try:
             cur = self._conn.cursor()
             await cur.execute(query, binds)
+            prop = _alter_session_property(query)
+            if prop is not None:
+                self._session_statements[prop] = query
             if _is_explain_plan(query):
                 lines = await fetch_explain_plan(cur)
                 rows = [[row] for row in lines]
@@ -490,6 +516,18 @@ def _is_explain_plan(query: str) -> bool:
             continue
         return stripped.upper().startswith("EXPLAIN PLAN")
     return False
+
+
+_ALTER_SESSION_RE = re.compile(
+    r"(?is)^\s*ALTER\s+SESSION\s+SET\s+([A-Za-z_][A-Za-z0-9_]*)\s*="
+)
+
+
+def _alter_session_property(query: str) -> str | None:
+    """Return the upper-cased property name if *query* is an ``ALTER SESSION
+    SET <property> = ...`` statement, else None."""
+    match = _ALTER_SESSION_RE.match(query)
+    return match.group(1).upper() if match else None
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:

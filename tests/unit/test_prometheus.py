@@ -489,7 +489,6 @@ class TestExploreDescribe:
                                 "instance": "localhost:9090",
                             },
                             "health": "up",
-                            "globalUrl": "http://localhost:9090/metrics",
                             "scrapeInterval": "15s",
                             "scrapeTimeout": "10s",
                             "lastScrape": "2024-01-01T00:00:00Z",
@@ -520,11 +519,9 @@ class TestExploreDescribe:
         localhost = next(r for r in records if r.name == "localhost:9090")
         labels = {f.label: f.value for f in localhost.fields}
         assert labels["Status"] == "✓"
-        assert labels["URL"] == "http://localhost:9090/metrics"
         assert not any("Label: " in label for label in labels)
         assert not any("Scrape Pool" in label for label in labels)
         assert [f.label for f in localhost.fields] == [
-            "URL",
             "Interval",
             "Timeout",
             "Last Scrape",

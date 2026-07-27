@@ -152,7 +152,7 @@ time, storage stats, …), and build info as label/value fields, merged from
 is a leaf — the explore tree goes no deeper than that; describing it is the
 detailed view. Describing a job returns an array of `GenericRecordDescription`
 (`kind: "prometheus.target"`), one per target, named after its instance, in
-this field order: `URL` (the target's externally-reachable `globalUrl`),
+this field order: 
 `Interval`, `Timeout`, `Last Scrape` (a relative age — `5s ago`, `3m ago`,
 `2h ago`), `Status` (`✓`/`✗`/`?` for up/down/unknown), and `Last Scrape
 Duration` (whole milliseconds, e.g. `12ms`). `Last Error` is appended (on
@@ -542,7 +542,6 @@ def _format_duration_ms(value: Any) -> str:
 
 
 _TARGET_FIELD_LABELS: dict[str, str] = {
-    "globalUrl": "URL",
     "scrapeInterval": "Interval",
     "scrapeTimeout": "Timeout",
     "lastScrape": "Last Scrape",

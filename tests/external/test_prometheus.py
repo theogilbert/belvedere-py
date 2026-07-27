@@ -209,19 +209,17 @@ class TestExploreDescribe:
         rec = next(r for r in records if r.name == "localhost:9090")
         labels = {f.label: f.value for f in rec.fields}
         assert labels["Status"] == "✓"
-        assert labels["URL"].startswith("http")
         assert re.fullmatch(r"[0-9]+[smh] ago", labels["Last Scrape"])
         assert re.fullmatch(r"[0-9]+ms", labels["Last Scrape Duration"])
         assert not any("Label: " in label for label in labels)
         assert not any("Scrape Pool" in label for label in labels)
-        assert [f.label for f in rec.fields][:5] == [
-            "URL",
+        assert [f.label for f in rec.fields][:4] == [
             "Interval",
             "Timeout",
             "Last Scrape",
             "Status",
         ]
-        assert [f.label for f in rec.fields][5] == "Last Scrape Duration"
+        assert [f.label for f in rec.fields][4] == "Last Scrape Duration"
 
     async def test_describe_unknown_job_returns_none(
         self, driver: PrometheusDriver

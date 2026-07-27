@@ -371,13 +371,17 @@ class TestExploreDescribeIndex:
         assert [f.name for f in desc.fields] == ["last", "first"]
 
     async def test_lookup_index_has_no_fields(self, driver: Neo4jDriver) -> None:
-        items = await driver.explore_list(["indexes"])
-        lookup = next((i for i in items if "lookup" in i.name.lower()), None)
+        # LOOKUP indexes get an auto-generated name (e.g. "index_343aff4e") that
+        # doesn't contain "lookup" — only their `type`/`index_type` does, so they
+        # must be found by type, not by matching the name.
+        descriptions = await driver.explore_describe(["indexes"])
+        assert isinstance(descriptions, list)
+        indices = [d for d in descriptions if isinstance(d, IndexDescription)]
+        assert len(indices) == len(descriptions)
+        lookup = next((d for d in indices if d.index_type == "lookup"), None)
         if lookup is None:
             pytest.skip("no LOOKUP index found")
-        desc = await driver.explore_describe(["indexes", lookup.name])
-        assert isinstance(desc, IndexDescription)
-        assert desc.fields == []
+        assert lookup.fields == []
 
     async def test_unknown_index_returns_none(self, driver: Neo4jDriver) -> None:
         assert await driver.explore_describe(["indexes", "no_such_idx"]) is None

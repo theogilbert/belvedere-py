@@ -14,8 +14,11 @@ from .protocol import (
     EntityDescription,
     ExploreItem,
     FieldDescription,
+    GenericRecordDescription,
     IndexDescription,
     IndexKeyField,
+    RawDocument,
+    RecordField,
     TableReference,
     json_default,
 )
@@ -23,13 +26,20 @@ from .protocol import (
 logger = logging.getLogger(__name__)
 
 CachedDescribe = (
-    EntityDescription | FieldDescription | IndexDescription | TableReference
+    EntityDescription
+    | FieldDescription
+    | IndexDescription
+    | TableReference
+    | RawDocument
+    | GenericRecordDescription
 )
 """Non-None explore.describe results storable in the cache, at a single path.
 A group path (e.g. an indices group node, or Neo4j's per-entity properties
 group node) stores ``GroupDescribe`` instead — see ``_describe``'s value type."""
 
-GroupDescribe = list[IndexDescription] | list[FieldDescription]
+GroupDescribe = (
+    list[IndexDescription] | list[FieldDescription] | list[GenericRecordDescription]
+)
 """Describe result for a group path — a bare array of a single describable type."""
 
 
@@ -53,6 +63,12 @@ class CachingDriver(BaseDriver):
 
     async def execute(self, query: str, binds: list[Any]) -> ReadResult | WriteResult:
         return await self._inner.execute(query, binds)
+
+    async def set_session(self, values: dict[str, Any]) -> None:
+        await self._inner.set_session(values)
+
+    def get_session(self) -> dict[str, Any]:
+        return self._inner.get_session()
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         items = self._cache.get_list(path)
@@ -86,6 +102,8 @@ class CachingDriver(BaseDriver):
             entries += [([*path, idx.name], idx) for idx in indices]
             fields = [f for f in desc if isinstance(f, FieldDescription)]
             entries += [([*path, f.name], f) for f in fields]
+            records = [r for r in desc if isinstance(r, GenericRecordDescription)]
+            entries += [([*path, r.name], r) for r in records]
         self._cache.set_describes(entries)
         return desc
 
@@ -227,8 +245,11 @@ class ConnectionCache:
                 if desc is None:
                     pass  # legacy: None was cached before; skip it
                 elif isinstance(desc, list):
-                    if desc and desc[0].get("type") == "field":
+                    first_type = desc[0].get("type") if desc else None
+                    if first_type == "field":
                         self._describe[key] = [_deserialize_field(f) for f in desc]
+                    elif first_type == "generic_record":
+                        self._describe[key] = [_deserialize_record(r) for r in desc]
                     else:
                         self._describe[key] = [_deserialize_index(idx) for idx in desc]
                 elif desc.get("type") == "index":
@@ -237,6 +258,10 @@ class ConnectionCache:
                     self._describe[key] = _deserialize_field(desc)
                 elif desc.get("type") == "relationship":
                     self._describe[key] = _deserialize_reference(desc)
+                elif desc.get("type") == "document":
+                    self._describe[key] = _deserialize_document(desc)
+                elif desc.get("type") == "generic_record":
+                    self._describe[key] = _deserialize_record(desc)
                 else:
                     self._describe[key] = _deserialize_entity(desc)
         except Exception:
@@ -283,6 +308,18 @@ def _deserialize_index(d: dict[str, Any]) -> IndexDescription:
         visible=d.get("visible", True),
         included_columns=d.get("included_columns", []),
         ddl=d.get("ddl"),
+    )
+
+
+def _deserialize_document(d: dict[str, Any]) -> RawDocument:
+    return RawDocument(filetype=d["filetype"], content=d["content"])
+
+
+def _deserialize_record(d: dict[str, Any]) -> GenericRecordDescription:
+    return GenericRecordDescription(
+        kind=d["kind"],
+        name=d["name"],
+        fields=[RecordField(**f) for f in d.get("fields", [])],
     )
 
 

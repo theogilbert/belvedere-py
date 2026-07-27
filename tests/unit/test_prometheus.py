@@ -1,5 +1,7 @@
 """Unit tests for PrometheusDriver — no live server required."""
 
+import re
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -9,12 +11,21 @@ from grannos.drivers.base import ConnectionLostError, DriverError, DriverSetting
 from grannos.drivers.prometheus import (
     PrometheusDriver,
     _data_to_result,
+    _format_duration_ms,
     _format_error,
+    _format_health,
+    _format_scrape_age,
     _parse_range_query,
     _parse_value,
     _resolve_time,
 )
-from grannos.protocol import EntityDescription, ReadResult
+from grannos.protocol import (
+    EntityDescription,
+    FieldDescription,
+    GenericRecordDescription,
+    RawDocument,
+    ReadResult,
+)
 
 
 class _FakeResponse:
@@ -40,6 +51,7 @@ def _driver_with_response(
     body: object, params: dict | None = None
 ) -> tuple[PrometheusDriver, MagicMock]:
     session = MagicMock()
+    session.closed = False
     session.get = MagicMock(return_value=_FakeGetCtx(body))
     driver = PrometheusDriver(params or {}, session, DriverSettings())
     return driver, session
@@ -180,6 +192,57 @@ class TestFormatError:
         assert "boom" in _format_error("boom")
 
 
+class TestFormatHealth:
+    def test_up_is_checkmark(self) -> None:
+        assert _format_health("up") == "✓"
+
+    def test_down_is_cross(self) -> None:
+        assert _format_health("down") == "✗"
+
+    def test_unknown_is_question_mark(self) -> None:
+        assert _format_health("unknown") == "?"
+
+    def test_other_value_passthrough(self) -> None:
+        assert _format_health("bogus") == "bogus"
+
+
+class TestFormatScrapeAge:
+    def test_seconds_ago(self) -> None:
+        ts = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        assert re.fullmatch(r"[0-9]+s ago", _format_scrape_age(ts))
+
+    def test_minutes_ago(self) -> None:
+        ts = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+        assert re.fullmatch(r"[0-9]+m ago", _format_scrape_age(ts))
+
+    def test_hours_ago(self) -> None:
+        ts = (datetime.now(UTC) - timedelta(hours=5)).isoformat()
+        assert re.fullmatch(r"[0-9]+h ago", _format_scrape_age(ts))
+
+    def test_handles_z_suffix_and_nanosecond_precision(self) -> None:
+        assert re.fullmatch(
+            r"[0-9]+h ago", _format_scrape_age("2020-01-01T00:00:00.123456789Z")
+        )
+
+    def test_no_decimals(self) -> None:
+        ts = (datetime.now(UTC) - timedelta(seconds=5)).isoformat()
+        assert "." not in _format_scrape_age(ts)
+
+    def test_invalid_value_passthrough(self) -> None:
+        assert _format_scrape_age("not-a-time") == "not-a-time"
+
+
+class TestFormatDurationMs:
+    def test_converts_seconds_to_whole_milliseconds(self) -> None:
+        assert _format_duration_ms(0.012345) == "12ms"
+
+    def test_rounds_to_no_decimals(self) -> None:
+        assert _format_duration_ms(0.0126) == "13ms"
+
+    def test_non_numeric_passthrough(self) -> None:
+        assert _format_duration_ms("bogus") == "bogus"
+
+
 class TestExecute:
     async def test_instant_mode_queries_promql_endpoint(self) -> None:
         driver, session = _driver_with_response(
@@ -242,6 +305,7 @@ class TestConnectionErrors:
         self,
     ) -> None:
         session = MagicMock()
+        session.closed = False
         session.get = MagicMock(side_effect=aiohttp.ClientConnectionError("boom"))
         driver = PrometheusDriver({}, session, DriverSettings())
         with pytest.raises(DriverError):
@@ -251,20 +315,41 @@ class TestConnectionErrors:
         self,
     ) -> None:
         session = MagicMock()
+        session.closed = False
         session.get = MagicMock(side_effect=aiohttp.ClientConnectionError("boom"))
         driver = PrometheusDriver({}, session, DriverSettings())
         driver._ever_connected = True
         with pytest.raises(ConnectionLostError):
             await driver.execute("up", [])
 
+    async def test_closed_session_raises_connection_lost(self) -> None:
+        session = MagicMock()
+        session.closed = True
+        driver = PrometheusDriver({}, session, DriverSettings())
+        with pytest.raises(ConnectionLostError):
+            await driver.execute("up", [])
+        session.get.assert_not_called()
+
 
 class TestExploreList:
-    async def test_root_lists_metrics_group(self) -> None:
+    async def test_root_lists_top_level_sections(self) -> None:
         driver, _ = _driver_with_response({"status": "success", "data": []})
         items = await driver.explore_list([])
-        assert [i.name for i in items] == ["metrics"]
-        assert items[0].type == "group"
-        assert items[0].expandable
+        assert [i.name for i in items] == [
+            "metrics",
+            "jobs",
+            "configuration",
+            "runtime",
+        ]
+        by_name = {i.name: i for i in items}
+        assert by_name["metrics"].type == "group"
+        assert by_name["metrics"].expandable
+        assert by_name["configuration"].type == "configuration"
+        assert not by_name["configuration"].expandable
+        assert by_name["runtime"].type == "settings"
+        assert not by_name["runtime"].expandable
+        assert by_name["jobs"].type == "group"
+        assert by_name["jobs"].expandable
 
     async def test_metrics_group_lists_metric_names(self) -> None:
         driver, _ = _driver_with_response(
@@ -290,6 +375,35 @@ class TestExploreList:
         driver, _ = _driver_with_response({"status": "success", "data": []})
         assert await driver.explore_list(["metrics", "up", "job", "prometheus"]) == []
 
+    async def test_jobs_lists_scrape_jobs_as_leaves(self) -> None:
+        driver, _ = _driver_with_response(
+            {
+                "status": "success",
+                "data": {
+                    "activeTargets": [
+                        {
+                            "labels": {
+                                "job": "prometheus",
+                                "instance": "localhost:9090",
+                            },
+                            "health": "up",
+                        },
+                        {
+                            "labels": {"job": "node", "instance": "host1:9100"},
+                            "health": "down",
+                        },
+                    ]
+                },
+            }
+        )
+        items = await driver.explore_list(["jobs"])
+        assert sorted(i.name for i in items) == ["node", "prometheus"]
+        assert all(i.type == "job" and not i.expandable for i in items)
+
+    async def test_job_path_returns_empty(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        assert await driver.explore_list(["jobs", "prometheus"]) == []
+
 
 class TestExploreDescribe:
     async def test_returns_none_for_unknown_path(self) -> None:
@@ -307,3 +421,182 @@ class TestExploreDescribe:
         assert isinstance(result, EntityDescription)
         assert result.kind == "metric"
         assert result.comment is None
+
+    async def test_describe_single_label_returns_field_description(self) -> None:
+        driver, _ = _driver_with_response(
+            {"status": "success", "data": ["a", "b", "c", "d"]}
+        )
+        result = await driver.explore_describe(["metrics", "up", "job"])
+        assert isinstance(result, FieldDescription)
+        assert result.name == "job"
+        assert result.types == ["label"]
+        assert result.sample == ["a", "b", "c"]
+
+    async def test_describe_single_label_returns_empty_sample_on_timeout(
+        self,
+    ) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        with patch.object(
+            driver, "_fetch_label_values_sample", AsyncMock(side_effect=TimeoutError)
+        ):
+            result = await driver.explore_describe(["metrics", "up", "job"])
+        assert isinstance(result, FieldDescription)
+        assert result.sample == []
+
+    async def test_configuration_returns_raw_yaml_document(self) -> None:
+        driver, _ = _driver_with_response(
+            {
+                "status": "success",
+                "data": {"yaml": "global:\n  scrape_interval: 15s\n"},
+            }
+        )
+        result = await driver.explore_describe(["configuration"])
+        assert isinstance(result, RawDocument)
+        assert result.filetype == "yaml"
+        assert result.content == "global:\n  scrape_interval: 15s\n"
+
+    async def test_runtime_merges_flags_runtime_and_build_info(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        with patch.object(
+            driver,
+            "_get",
+            AsyncMock(
+                side_effect=[
+                    {"storage.tsdb.retention.time": "15d"},
+                    {"storageRetention": "15d", "startTime": "2024-01-01T00:00:00Z"},
+                    {"version": "2.53.0"},
+                ]
+            ),
+        ):
+            result = await driver.explore_describe(["runtime"])
+        assert isinstance(result, GenericRecordDescription)
+        assert result.kind == "prometheus.runtime"
+        assert result.name == "runtime"
+        labels = {f.label: f.value for f in result.fields}
+        assert labels["Flag: storage.tsdb.retention.time"] == "15d"
+        assert labels["Runtime: storageRetention"] == "15d"
+        assert labels["Build: version"] == "2.53.0"
+
+    async def test_describe_job_returns_one_record_per_target(self) -> None:
+        driver, _ = _driver_with_response(
+            {
+                "status": "success",
+                "data": {
+                    "activeTargets": [
+                        {
+                            "labels": {
+                                "job": "prometheus",
+                                "instance": "localhost:9090",
+                            },
+                            "health": "up",
+                            "globalUrl": "http://localhost:9090/metrics",
+                            "scrapeInterval": "15s",
+                            "scrapeTimeout": "10s",
+                            "lastScrape": "2024-01-01T00:00:00Z",
+                            "lastScrapeDuration": 0.012,
+                        },
+                        {
+                            "labels": {
+                                "job": "prometheus",
+                                "instance": "otherhost:9090",
+                            },
+                            "health": "down",
+                        },
+                        {
+                            "labels": {"job": "node", "instance": "host1:9100"},
+                            "health": "up",
+                        },
+                    ]
+                },
+            }
+        )
+        result = await driver.explore_describe(["jobs", "prometheus"])
+        assert isinstance(result, list)
+        records = [r for r in result if isinstance(r, GenericRecordDescription)]
+        assert len(records) == len(result)
+        assert all(r.kind == "prometheus.target" for r in records)
+        assert sorted(r.name for r in records) == ["localhost:9090", "otherhost:9090"]
+
+        localhost = next(r for r in records if r.name == "localhost:9090")
+        labels = {f.label: f.value for f in localhost.fields}
+        assert labels["Status"] == "✓"
+        assert labels["URL"] == "http://localhost:9090/metrics"
+        assert not any("Label: " in label for label in labels)
+        assert not any("Scrape Pool" in label for label in labels)
+        assert [f.label for f in localhost.fields] == [
+            "URL",
+            "Interval",
+            "Timeout",
+            "Last Scrape",
+            "Status",
+            "Last Scrape Duration",
+        ]
+
+        otherhost = next(r for r in records if r.name == "otherhost:9090")
+        assert {f.label: f.value for f in otherhost.fields}["Status"] == "✗"
+
+    async def test_describe_job_drops_last_error_when_empty_for_all_targets(
+        self,
+    ) -> None:
+        driver, _ = _driver_with_response(
+            {
+                "status": "success",
+                "data": {
+                    "activeTargets": [
+                        {
+                            "labels": {"job": "prometheus", "instance": "a:9090"},
+                            "health": "up",
+                            "lastError": "",
+                        },
+                        {
+                            "labels": {"job": "prometheus", "instance": "b:9090"},
+                            "health": "up",
+                            "lastError": "",
+                        },
+                    ]
+                },
+            }
+        )
+        result = await driver.explore_describe(["jobs", "prometheus"])
+        assert isinstance(result, list)
+        for rec in result:
+            assert isinstance(rec, GenericRecordDescription)
+            assert not any(f.label == "Last Error" for f in rec.fields)
+
+    async def test_describe_job_keeps_last_error_when_any_target_has_one(
+        self,
+    ) -> None:
+        driver, _ = _driver_with_response(
+            {
+                "status": "success",
+                "data": {
+                    "activeTargets": [
+                        {
+                            "labels": {"job": "prometheus", "instance": "a:9090"},
+                            "health": "up",
+                            "lastError": "",
+                        },
+                        {
+                            "labels": {"job": "prometheus", "instance": "b:9090"},
+                            "health": "down",
+                            "lastError": "connection refused",
+                        },
+                    ]
+                },
+            }
+        )
+        result = await driver.explore_describe(["jobs", "prometheus"])
+        assert isinstance(result, list)
+        by_name = {}
+        for rec in result:
+            assert isinstance(rec, GenericRecordDescription)
+            by_name[rec.name] = {f.label: f.value for f in rec.fields}
+        assert by_name["a:9090"]["Last Error"] == ""
+        assert by_name["b:9090"]["Last Error"] == "connection refused"
+
+    async def test_describe_unknown_job_returns_none(self) -> None:
+        driver, _ = _driver_with_response(
+            {"status": "success", "data": {"activeTargets": []}}
+        )
+        result = await driver.explore_describe(["jobs", "missing"])
+        assert result is None

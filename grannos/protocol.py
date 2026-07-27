@@ -257,13 +257,65 @@ class EntityDescription:
     """Discriminator — always ``"entity"``."""
 
 
+@dataclass
+class RawDocument:
+    """A node whose natural representation is a single opaque text document
+    rather than tabular metadata — e.g. a driver's running configuration file.
+    ``filetype`` lets the client pick a syntax highlighter; it is a free-form
+    hint (``"yaml"``, ``"json"``, ``"ini"``, …), not a fixed enum, since drivers
+    surface whatever format their backend natively produces."""
+
+    filetype: str
+    """Content's format, as a lowercase language/filetype hint (e.g. ``"yaml"``)."""
+    content: str
+    """The document's full text content."""
+    type: str = "document"
+    """Discriminator — always ``"document"``."""
+
+
+@dataclass
+class RecordField:
+    """One label/value pair in a :class:`GenericRecordDescription`'s ``fields``."""
+
+    label: str
+    """Display label (e.g. ``"Scrape URL"``)."""
+    value: str
+    """Display value, pre-formatted by the driver."""
+
+
+@dataclass
+class GenericRecordDescription:
+    """Escape hatch for driver-specific detail views whose natural shape is a
+    flat label/value list that doesn't fit entity/field/index/relationship/
+    document — e.g. a Prometheus scrape target. Returned as ``details`` either
+    standalone, or as an element of the bare array for a group node. Unlike the
+    other describe shapes, this makes no wire-shape guarantee beyond label/value
+    pairs, so introducing a new kind of record never requires a protocol version
+    bump."""
+
+    kind: str
+    """Namespaced, driver-owned label identifying what this record represents
+    (e.g. ``"prometheus.target"``). Clients may key an optional dedicated
+    renderer off this; unrecognized kinds should fall back to a generic
+    label/value rendering of ``fields``."""
+    name: str
+    """Display name for this record (e.g. the target's instance label)."""
+    fields: list[RecordField]
+    """Ordered list of label/value pairs."""
+    type: str = "generic_record"
+    """Discriminator — always ``"generic_record"``."""
+
+
 DescribeResult = (
     EntityDescription
     | FieldDescription
     | IndexDescription
     | TableReference
+    | RawDocument
+    | GenericRecordDescription
     | list[IndexDescription]
     | list[FieldDescription]
+    | list[GenericRecordDescription]
     | None
 )
 """Return type of ``explore_describe`` across all drivers. A path resolving to a

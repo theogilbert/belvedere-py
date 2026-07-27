@@ -11,13 +11,20 @@ is unreachable.
 """
 
 import os
+import re
 from collections.abc import AsyncGenerator
 
 import pytest
 
 from grannos.drivers.base import DriverError, DriverSettings
 from grannos.drivers.prometheus import PrometheusDriver
-from grannos.protocol import EntityDescription, ReadResult
+from grannos.protocol import (
+    EntityDescription,
+    FieldDescription,
+    GenericRecordDescription,
+    RawDocument,
+    ReadResult,
+)
 
 pytestmark = pytest.mark.external
 
@@ -83,11 +90,25 @@ class TestExecuteRange:
 
 
 class TestExploreList:
-    async def test_root_lists_metrics_group(self, driver: PrometheusDriver) -> None:
+    async def test_root_lists_top_level_sections(
+        self, driver: PrometheusDriver
+    ) -> None:
         items = await driver.explore_list([])
-        assert [i.name for i in items] == ["metrics"]
-        assert items[0].type == "group"
-        assert items[0].expandable
+        assert [i.name for i in items] == [
+            "metrics",
+            "jobs",
+            "configuration",
+            "runtime",
+        ]
+        by_name = {i.name: i for i in items}
+        assert by_name["metrics"].type == "group"
+        assert by_name["metrics"].expandable
+        assert by_name["configuration"].type == "configuration"
+        assert not by_name["configuration"].expandable
+        assert by_name["runtime"].type == "settings"
+        assert not by_name["runtime"].expandable
+        assert by_name["jobs"].type == "group"
+        assert by_name["jobs"].expandable
 
     async def test_metrics_group_lists_metric_names(
         self, driver: PrometheusDriver
@@ -113,6 +134,17 @@ class TestExploreList:
         items = await driver.explore_list(["metrics", "up", "job", "extra"])
         assert items == []
 
+    async def test_jobs_lists_scrape_jobs_as_leaves(
+        self, driver: PrometheusDriver
+    ) -> None:
+        items = await driver.explore_list(["jobs"])
+        assert "prometheus" in [i.name for i in items]
+        assert all(i.type == "job" and not i.expandable for i in items)
+
+    async def test_job_path_returns_empty(self, driver: PrometheusDriver) -> None:
+        items = await driver.explore_list(["jobs", "prometheus"])
+        assert items == []
+
 
 class TestExploreDescribe:
     async def test_returns_entity_description_for_metric(
@@ -131,7 +163,68 @@ class TestExploreDescribe:
         job_field = next(f for f in result.properties if f.name == "job")
         assert "prometheus" in job_field.sample
 
+    async def test_describe_single_label_returns_field_description(
+        self, driver: PrometheusDriver
+    ) -> None:
+        result = await driver.explore_describe(["metrics", "up", "job"])
+        assert isinstance(result, FieldDescription)
+        assert result.name == "job"
+        assert result.types == ["label"]
+        assert "prometheus" in result.sample
+
     async def test_returns_none_for_unknown_path(
         self, driver: PrometheusDriver
     ) -> None:
         assert await driver.explore_describe([]) is None
+
+    async def test_configuration_returns_raw_yaml_document(
+        self, driver: PrometheusDriver
+    ) -> None:
+        result = await driver.explore_describe(["configuration"])
+        assert isinstance(result, RawDocument)
+        assert result.filetype == "yaml"
+        assert "scrape_configs" in result.content
+
+    async def test_runtime_returns_flag_runtime_and_build_fields(
+        self, driver: PrometheusDriver
+    ) -> None:
+        result = await driver.explore_describe(["runtime"])
+        assert isinstance(result, GenericRecordDescription)
+        assert result.kind == "prometheus.runtime"
+        labels = [f.label for f in result.fields]
+        assert any(label.startswith("Flag: ") for label in labels)
+        assert any(label.startswith("Runtime: ") for label in labels)
+        assert any(label.startswith("Build: ") for label in labels)
+
+    async def test_describe_job_returns_one_record_per_target(
+        self, driver: PrometheusDriver
+    ) -> None:
+        result = await driver.explore_describe(["jobs", "prometheus"])
+        assert isinstance(result, list)
+        records = [r for r in result if isinstance(r, GenericRecordDescription)]
+        assert len(records) == len(result)
+        assert records != []
+        assert all(r.kind == "prometheus.target" for r in records)
+
+        rec = next(r for r in records if r.name == "localhost:9090")
+        labels = {f.label: f.value for f in rec.fields}
+        assert labels["Status"] == "✓"
+        assert labels["URL"].startswith("http")
+        assert re.fullmatch(r"[0-9]+[smh] ago", labels["Last Scrape"])
+        assert re.fullmatch(r"[0-9]+ms", labels["Last Scrape Duration"])
+        assert not any("Label: " in label for label in labels)
+        assert not any("Scrape Pool" in label for label in labels)
+        assert [f.label for f in rec.fields][:5] == [
+            "URL",
+            "Interval",
+            "Timeout",
+            "Last Scrape",
+            "Status",
+        ]
+        assert [f.label for f in rec.fields][5] == "Last Scrape Duration"
+
+    async def test_describe_unknown_job_returns_none(
+        self, driver: PrometheusDriver
+    ) -> None:
+        result = await driver.explore_describe(["jobs", "does-not-exist"])
+        assert result is None

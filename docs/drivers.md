@@ -272,9 +272,13 @@ Scalar/string results return a single `timestamp`/`value` row.
 
 ```
 (root)
-└── metrics
-    └── <metric>
-        └── <label>
+├── metrics
+│   └── <metric>
+│       └── <label>
+├── jobs
+│   └── <job>
+├── configuration
+└── runtime
 ```
 
 Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
@@ -282,6 +286,27 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
 `explore.describe` is supported on `["metrics", metric]` paths and returns label
 metadata (name, up to 3 sampled values). `kind` and `comment` are populated from
 `/api/v1/metadata` (type and help text) when the server exposes it.
+`["metrics", metric, label]` re-fetches a single label standalone (up to 3
+sampled values).
+
+`configuration`, `runtime`, and every node under `jobs` are leaf nodes — the
+explore tree goes no deeper than a job; describing it is the detailed view.
+- `["configuration"]` returns a `RawDocument` (`filetype: "yaml"`) holding the
+  running configuration (`/api/v1/status/config`).
+- `["runtime"]` returns a `GenericRecordDescription` (`kind: "prometheus.runtime"`)
+  with CLI flags, runtime info (retention, start time, storage stats, …), and
+  build info as label/value fields (labeled `Flag: *`, `Runtime: *`, `Build: *`),
+  merged from `/api/v1/status/flags`, `/api/v1/status/runtimeinfo`, and
+  `/api/v1/status/buildinfo`.
+- `["jobs", job]` returns an array of `GenericRecordDescription`
+  (`kind: "prometheus.target"`), one per target in the job (`/api/v1/targets`,
+  grouped by the `job` label), named after its instance, with fields in this
+  order: `URL` (the target's externally-reachable `globalUrl`), `Interval`,
+  `Timeout`, `Last Scrape` (a relative age — `5s ago`, `3m ago`, `2h ago`),
+  `Status` (`✓`/`✗`/`?` for up/down/unknown), and `Last Scrape Duration`
+  (whole milliseconds, e.g. `12ms`). `Last Error` is appended (on every
+  target's record) only when at least one target in the job has a non-empty
+  error. Target labels and the scrape pool name are not exposed.
 
 ---
 

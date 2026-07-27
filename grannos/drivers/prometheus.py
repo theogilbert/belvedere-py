@@ -4,6 +4,7 @@ import asyncio
 import base64
 import re
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
@@ -17,8 +18,11 @@ from ..protocol import (
     EntityDescription,
     ExploreItem,
     FieldDescription,
+    GenericRecordDescription,
     Language,
     ParamType,
+    RawDocument,
+    RecordField,
     ReadResult,
     WriteResult,
 )
@@ -118,16 +122,43 @@ Scalar/string results return a single `timestamp`/`value` row.
 
 ```
 (root)
-└── metrics
-    └── <metric>
-        └── <label>
+├── metrics
+│   └── <metric>
+│       └── <label>
+├── jobs
+│   └── <job>
+├── configuration
+└── runtime
 ```
 
 Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
 
 `explore.describe` on `["metrics", metric]` returns label metadata (name, up to
 3 sampled values), with `kind` and `comment` populated from `/api/v1/metadata`
-(type and help text) when available.
+(type and help text) when available. Describing a single `["metrics", metric,
+label]` re-fetches that label's metadata standalone (up to 3 sampled values).
+
+Describing `configuration` (leaf) returns a `RawDocument` (`filetype: "yaml"`)
+holding the running configuration, as reported by `/api/v1/status/config`.
+
+Describing `runtime` (leaf) returns a `GenericRecordDescription`
+(`kind: "prometheus.runtime"`) with CLI flags, runtime info (retention, start
+time, storage stats, …), and build info as label/value fields, merged from
+`/api/v1/status/flags`, `/api/v1/status/runtimeinfo`, and
+`/api/v1/status/buildinfo` — each field labeled `Flag: *`, `Runtime: *`, or
+`Build: *`.
+
+`jobs` lists scrape jobs (`/api/v1/targets`, grouped by the `job` label). A job
+is a leaf — the explore tree goes no deeper than that; describing it is the
+detailed view. Describing a job returns an array of `GenericRecordDescription`
+(`kind: "prometheus.target"`), one per target, named after its instance, in
+this field order: `URL` (the target's externally-reachable `globalUrl`),
+`Interval`, `Timeout`, `Last Scrape` (a relative age — `5s ago`, `3m ago`,
+`2h ago`), `Status` (`✓`/`✗`/`?` for up/down/unknown), and `Last Scrape
+Duration` (whole milliseconds, e.g. `12ms`). `Last Error` is appended (on
+every target's record) only when at least one target in the job has a
+non-empty error. Target labels and the scrape pool name are not exposed (the
+pool is just the job name; instance/job already group the record).
 """
 
     def __init__(
@@ -219,6 +250,8 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
         return _data_to_result(data)
 
     async def _get(self, path: str, params: dict[str, str]) -> Any:
+        if self._http.closed:
+            raise ConnectionLostError("Session is closed")
         try:
             async with self._http.get(f"{self._url}{path}", params=params) as resp:
                 body = await resp.json(content_type=None)
@@ -236,7 +269,14 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
-                return [ExploreItem(name="metrics", type="group", expandable=True)]
+                return [
+                    ExploreItem(name="metrics", type="group", expandable=True),
+                    ExploreItem(name="jobs", type="group", expandable=True),
+                    ExploreItem(
+                        name="configuration", type="configuration", expandable=False
+                    ),
+                    ExploreItem(name="runtime", type="settings", expandable=False),
+                ]
             case ["metrics"]:
                 names = await self._get("/api/v1/label/__name__/values", {})
                 return [
@@ -249,6 +289,12 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
                     ExploreItem(name=label, type="label", expandable=False)
                     for label in sorted(labels)
                     if label != "__name__"
+                ]
+            case ["jobs"]:
+                data = await self._get("/api/v1/targets", {})
+                jobs = sorted({_target_job(t) for t in data.get("activeTargets", [])})
+                return [
+                    ExploreItem(name=job, type="job", expandable=False) for job in jobs
                 ]
             case _:
                 return []
@@ -273,8 +319,70 @@ Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
                     properties=properties,
                     comment=metadata.get("help"),
                 )
+            case ["metrics", metric, label]:
+                return FieldDescription(
+                    name=label,
+                    types=["label"],
+                    sample=await self._label_values_sample(metric, label),
+                )
+            case ["configuration"]:
+                data = await self._get("/api/v1/status/config", {})
+                return RawDocument(filetype="yaml", content=data.get("yaml", ""))
+            case ["runtime"]:
+                return await self._describe_runtime()
+            case ["jobs", job]:
+                return await self._describe_job(job)
             case _:
                 return None
+
+    async def _describe_runtime(self) -> GenericRecordDescription:
+        flags = await self._get("/api/v1/status/flags", {})
+        runtime_info = await self._get("/api/v1/status/runtimeinfo", {})
+        build_info = await self._get("/api/v1/status/buildinfo", {})
+        fields = [
+            RecordField(label=f"Flag: {key}", value=str(value))
+            for key, value in sorted(flags.items())
+        ]
+        fields += [
+            RecordField(label=f"Runtime: {key}", value=str(value))
+            for key, value in sorted(runtime_info.items())
+        ]
+        fields += [
+            RecordField(label=f"Build: {key}", value=str(value))
+            for key, value in sorted(build_info.items())
+        ]
+        return GenericRecordDescription(
+            kind="prometheus.runtime", name="runtime", fields=fields
+        )
+
+    async def _describe_job(self, job: str) -> list[GenericRecordDescription] | None:
+        data = await self._get("/api/v1/targets", {})
+        targets = [t for t in data.get("activeTargets", []) if _target_job(t) == job]
+        if not targets:
+            return None
+        records = [
+            _target_record(t, _target_instance(t))
+            for t in sorted(targets, key=_target_instance)
+        ]
+        any_errors = any(
+            f.label == _TARGET_FIELD_LABELS["lastError"] and f.value
+            for rec in records
+            for f in rec.fields
+        )
+        if any_errors:
+            return records
+        return [
+            GenericRecordDescription(
+                kind=rec.kind,
+                name=rec.name,
+                fields=[
+                    f
+                    for f in rec.fields
+                    if f.label != _TARGET_FIELD_LABELS["lastError"]
+                ],
+            )
+            for rec in records
+        ]
 
     async def _metric_metadata(self, metric: str) -> dict[str, str]:
         try:
@@ -389,3 +497,77 @@ def _parse_value(value: str) -> Any:
         return float(value)
     except TypeError, ValueError:
         return value
+
+
+def _target_job(target: dict[str, Any]) -> str:
+    return target.get("labels", {}).get("job", target.get("scrapePool", "unknown"))
+
+
+def _target_instance(target: dict[str, Any]) -> str:
+    return target.get("labels", {}).get("instance", "unknown")
+
+
+def _format_health(value: str) -> str:
+    if value == "up":
+        return "✓"
+    if value == "down":
+        return "✗"
+    if value == "unknown":
+        return "?"
+    return value
+
+
+def _format_scrape_age(value: str) -> str:
+    try:
+        scraped_at = datetime.fromisoformat(value)
+    except TypeError, ValueError:
+        return value
+    if scraped_at.tzinfo is None:
+        scraped_at = scraped_at.replace(tzinfo=UTC)
+    seconds = max(0, int((datetime.now(UTC) - scraped_at).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    return f"{hours}h ago"
+
+
+def _format_duration_ms(value: Any) -> str:
+    try:
+        return f"{round(float(value) * 1000)}ms"
+    except TypeError, ValueError:
+        return str(value)
+
+
+_TARGET_FIELD_LABELS: dict[str, str] = {
+    "globalUrl": "URL",
+    "scrapeInterval": "Interval",
+    "scrapeTimeout": "Timeout",
+    "lastScrape": "Last Scrape",
+    "health": "Status",
+    "lastScrapeDuration": "Last Scrape Duration",
+    "lastError": "Last Error",
+}
+"""Target dict keys exposed on a target's record, mapped to their display label.
+``scrapePool`` (redundant with the job grouping) and raw ``labels`` are
+deliberately omitted — see :func:`_target_job`/:func:`_target_instance` for the
+only label values actually surfaced (as the record's grouping key)."""
+
+_TARGET_FIELD_FORMATTERS: dict[str, Callable[[Any], str]] = {
+    "health": _format_health,
+    "lastScrape": _format_scrape_age,
+    "lastScrapeDuration": _format_duration_ms,
+}
+
+
+def _target_record(target: dict[str, Any], name: str) -> GenericRecordDescription:
+    fields = [
+        RecordField(
+            label=label, value=_TARGET_FIELD_FORMATTERS.get(key, str)(target[key])
+        )
+        for key, label in _TARGET_FIELD_LABELS.items()
+        if key in target
+    ]
+    return GenericRecordDescription(kind="prometheus.target", name=name, fields=fields)

@@ -1,7 +1,7 @@
 import pathlib
 from datetime import datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,6 +12,7 @@ from grannos.protocol import (
     FieldDescription,
     IndexDescription,
     IndexKeyField,
+    RawDocument,
     TableReference,
 )
 
@@ -228,6 +229,13 @@ class TestDescribeDiskRoundTrip:
         reloaded = ConnectionCache(PARAMS, path)
         assert reloaded.get_describe(["s", "t"]) == desc
 
+    def test_raw_document_round_trips(self, tmp_path: pathlib.Path) -> None:
+        path = tmp_path / "c.json"
+        doc = RawDocument(filetype="yaml", content="global:\n  scrape_interval: 15s\n")
+        ConnectionCache(PARAMS, path).set_describe(["configuration"], doc)
+        reloaded = ConnectionCache(PARAMS, path)
+        assert reloaded.get_describe(["configuration"]) == doc
+
 
 class TestResetCache:
     async def test_reset_clears_list_cache(
@@ -296,3 +304,15 @@ class TestDelegation:
     ) -> None:
         await driver.disconnect()
         inner.disconnect.assert_awaited_once()
+
+    async def test_set_session_delegates(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        await driver.set_session({"query_mode": "range"})
+        inner.set_session.assert_awaited_once_with({"query_mode": "range"})
+
+    def test_get_session_delegates(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.get_session = MagicMock(return_value={"query_mode": "range"})
+        assert driver.get_session() == {"query_mode": "range"}

@@ -25,6 +25,7 @@ from grannos.protocol import (
     GenericRecordDescription,
     RawDocument,
     ReadResult,
+    SpecialFloat,
 )
 
 
@@ -169,10 +170,14 @@ class TestParseValue:
     def test_parses_numeric_string(self) -> None:
         assert _parse_value("1.5") == 1.5
 
-    def test_parses_special_floats(self) -> None:
-        import math
+    def test_nan_becomes_special_float(self) -> None:
+        assert _parse_value("NaN") == SpecialFloat(text="NaN")
 
-        assert math.isnan(_parse_value("NaN"))
+    def test_positive_infinity_becomes_special_float(self) -> None:
+        assert _parse_value("+Inf") == SpecialFloat(text="+Inf")
+
+    def test_negative_infinity_becomes_special_float(self) -> None:
+        assert _parse_value("-Inf") == SpecialFloat(text="-Inf")
 
     def test_non_numeric_passthrough(self) -> None:
         assert _parse_value("some string") == "some string"

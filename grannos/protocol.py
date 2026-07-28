@@ -340,6 +340,23 @@ class LobPlaceholder:
 
 
 @dataclass
+class SpecialFloat:
+    """Stands in for a non-finite float value (NaN, +Inf, -Inf) inside a ``rows`` cell.
+
+    Plain JSON has no way to represent these (``json.dumps`` would emit the
+    non-standard ``NaN``/``Infinity``/``-Infinity`` tokens, which strict decoders
+    reject). Tagging the value with an object — rather than a bare string like
+    ``"NaN"`` — also lets clients distinguish it from a real string cell without
+    pattern-matching cell contents.
+    """
+
+    text: str
+    """Display text, e.g. ``"NaN"``, ``"+Inf"``, ``"-Inf"``."""
+    type: str = "special_float"
+    """Discriminator — always ``"special_float"``."""
+
+
+@dataclass
 class DiagramRegion:
     """One span in the ``diagram`` string returned by explore.diagram that names a
     table, column, or relationship, letting a client resolve a cursor position to
@@ -375,7 +392,8 @@ class ReadResult:
     columns: list[str]
     """Column names in order."""
     rows: list[list[Any]]
-    """Each row as a list of values; a value may be a :class:`LobPlaceholder`."""
+    """Each row as a list of values; a value may be a :class:`LobPlaceholder` or a
+    :class:`SpecialFloat`."""
     rows_total: int
     """Total number of rows matching the query (may exceed len(rows) when the driver applies a default limit)."""
 

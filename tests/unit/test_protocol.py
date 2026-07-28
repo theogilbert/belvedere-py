@@ -13,6 +13,7 @@ from grannos.protocol import (
     ProgressDetail,
     Request,
     Result,
+    SpecialFloat,
     decode,
     encode,
 )
@@ -112,3 +113,12 @@ class TestEncode:
     def test_should_raise_for_unhandled_type(self) -> None:
         with pytest.raises(TypeError, match="not JSON serializable"):
             encode(Result(id=1, result={"v": object()}, error=None))
+
+    def test_should_serialise_special_float_as_tagged_object(self) -> None:
+        data = encode(Result(id=1, result={"v": SpecialFloat(text="NaN")}, error=None))
+
+        def reject_constant(name: str) -> float:
+            raise AssertionError(f"encoded non-standard JSON constant: {name}")
+
+        parsed = json.loads(data, parse_constant=reject_constant)
+        assert parsed["result"]["v"] == {"text": "NaN", "type": "special_float"}

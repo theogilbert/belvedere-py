@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import math
 import re
 import time
 from collections.abc import Callable
@@ -24,6 +25,7 @@ from ..protocol import (
     RawDocument,
     RecordField,
     ReadResult,
+    SpecialFloat,
     WriteResult,
 )
 from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
@@ -116,7 +118,9 @@ timestamp, or a raw Unix timestamp. `step` is a Prometheus duration (`15s`, `1m`
 
 Vector/matrix results are flattened to one row per series (range queries emit one
 row per series per timestamp), with a column per label plus `timestamp` and `value`.
-Scalar/string results return a single `timestamp`/`value` row.
+Scalar/string results return a single `timestamp`/`value` row. A `value` of `NaN`,
+`+Inf`, or `-Inf` (e.g. from a division in the expression) is returned as a
+`SpecialFloat` — plain JSON cannot represent these — rather than a numeric `value`.
 
 **Resources:**
 
@@ -494,9 +498,12 @@ def _series_to_result(series: list[dict[str, Any]], ranged: bool) -> ReadResult:
 
 def _parse_value(value: str) -> Any:
     try:
-        return float(value)
+        parsed = float(value)
     except TypeError, ValueError:
         return value
+    if math.isnan(parsed) or math.isinf(parsed):
+        return SpecialFloat(text=value)
+    return parsed
 
 
 def _target_job(target: dict[str, Any]) -> str:

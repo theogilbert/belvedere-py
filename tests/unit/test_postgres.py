@@ -17,6 +17,7 @@ from grannos.drivers.postgres.copy import (
 from grannos.drivers.postgres.driver import (
     PostgresDriver,
     _maybe_raise_connection_lost,
+    _set_property,
 )
 from grannos.drivers.postgres.queries import render_lob
 from grannos.protocol import ExploreItem, LobPlaceholder, ReadResult, WriteResult
@@ -182,6 +183,114 @@ class TestMaybeRaiseConnectionLost:
 
     def test_other_error_does_not_raise(self) -> None:
         _maybe_raise_connection_lost(psycopg.errors.SyntaxError("bad syntax"))
+
+
+class TestSetProperty:
+    def test_extracts_property_name_with_equals(self) -> None:
+        assert _set_property("SET search_path = 'public'") == "search_path"
+
+    def test_extracts_property_name_with_to(self) -> None:
+        assert _set_property("SET search_path TO public") == "search_path"
+
+    def test_case_insensitive(self) -> None:
+        assert _set_property("set SEARCH_PATH = public") == "search_path"
+
+    def test_leading_whitespace(self) -> None:
+        assert _set_property("   SET foo = 1") == "foo"
+
+    def test_session_keyword(self) -> None:
+        assert _set_property("SET SESSION search_path = public") == "search_path"
+
+    def test_set_local_returns_none(self) -> None:
+        assert _set_property("SET LOCAL statement_timeout = 5000") is None
+
+    def test_non_set_returns_none(self) -> None:
+        assert _set_property("SELECT 1") is None
+
+    def test_set_time_zone_returns_none(self) -> None:
+        assert _set_property("SET TIME ZONE 'UTC'") is None
+
+
+class TestExecuteRecordsSessionStatements:
+    def test_records_on_success(self) -> None:
+        driver, _ = _make_driver()
+        stmt = "SET search_path = 'public'"
+        asyncio.run(driver.execute(stmt))
+        assert driver._session_statements == {"search_path": stmt}
+
+    def test_later_value_replaces_earlier(self) -> None:
+        driver, _ = _make_driver()
+        first = "SET search_path = 'public'"
+        second = "SET search_path = 'other'"
+        asyncio.run(driver.execute(first))
+        asyncio.run(driver.execute(second))
+        assert driver._session_statements == {"search_path": second}
+
+    def test_does_not_record_plain_query(self) -> None:
+        driver, _ = _make_driver()
+        asyncio.run(driver.execute("SELECT 1"))
+        assert driver._session_statements == {}
+
+    def test_failed_statement_not_recorded(self) -> None:
+        exc = psycopg.errors.SyntaxError("syntax error at or near")
+        driver, _ = _make_driver(execute_side_effect=exc)
+        with pytest.raises(DriverError):
+            asyncio.run(driver.execute("SET bogus = 1"))
+        assert driver._session_statements == {}
+
+
+class TestReconnectReplaysSessionStatements:
+    def test_replays_recorded_statements(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, _ = _make_driver()
+        stmt = "SET search_path = 'public'"
+        asyncio.run(driver.execute(stmt))
+
+        new_cur = MagicMock()
+        new_cur.execute = AsyncMock()
+        new_conn = MagicMock(spec=psycopg.AsyncConnection)
+        new_conn.cursor.return_value = new_cur
+
+        async def fake_open(params: dict) -> MagicMock:
+            return new_conn
+
+        monkeypatch.setattr(PostgresDriver, "_open", staticmethod(fake_open))
+        asyncio.run(driver.reconnect())
+
+        new_cur.execute.assert_awaited_with(sql.SQL(stmt))
+
+    def test_no_statements_means_no_replay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        driver, _ = _make_driver()
+
+        new_conn = MagicMock(spec=psycopg.AsyncConnection)
+
+        async def fake_open(params: dict) -> MagicMock:
+            return new_conn
+
+        monkeypatch.setattr(PostgresDriver, "_open", staticmethod(fake_open))
+        asyncio.run(driver.reconnect())
+
+        new_conn.cursor.assert_not_called()
+
+    def test_replay_failure_raises_driver_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        driver, _ = _make_driver()
+        asyncio.run(driver.execute("SET foo = 1"))
+
+        exc = psycopg.errors.SyntaxError("syntax error at or near")
+        new_cur = MagicMock()
+        new_cur.execute = AsyncMock(side_effect=exc)
+        new_conn = MagicMock(spec=psycopg.AsyncConnection)
+        new_conn.cursor.return_value = new_cur
+
+        async def fake_open(params: dict) -> MagicMock:
+            return new_conn
+
+        monkeypatch.setattr(PostgresDriver, "_open", staticmethod(fake_open))
+        with pytest.raises(DriverError, match="syntax error"):
+            asyncio.run(driver.reconnect())
 
 
 class TestRootListing:

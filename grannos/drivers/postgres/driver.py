@@ -1,6 +1,7 @@
 """PostgreSQL driver — requires: pip install psycopg[binary]"""
 
 import asyncio
+import re
 from typing import Any
 
 import psycopg
@@ -118,6 +119,11 @@ https://www.postgresql.org/docs/current/sql-copy.html
 Describing a table or view returns column metadata (name, type, nullability,
 primary key flag, default). Describing an index returns its key fields,
 direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
+
+**Session properties:** run `SET <parameter> = <value>` (or `SET <parameter>
+TO <value>`) like any other statement. It's remembered per-connection and
+automatically re-applied if the connection is silently reconnected (e.g.
+after an idle timeout).
 """
 
     def __init__(
@@ -128,6 +134,11 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
     ) -> None:
         super().__init__(params, settings)
         self._conn = conn
+        self._session_statements: dict[str, str] = {}
+        """SET statements successfully run on this connection, keyed by
+        lower-cased parameter name (a later SET for the same parameter
+        replaces the earlier entry). Replayed in reconnect() since a fresh
+        Postgres session starts without them."""
 
     @classmethod
     async def create(
@@ -155,6 +166,18 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
         except psycopg.Error:
             pass
         self._conn = await self._open(self.params)
+        await self._replay_session_statements()
+
+    async def _replay_session_statements(self) -> None:
+        for stmt in self._session_statements.values():
+            try:
+                cur = self._conn.cursor()
+                await cur.execute(sql.SQL(stmt))  # ty: ignore[invalid-argument-type]
+            except Exception as exc:
+                _maybe_raise_connection_lost(exc)
+                if isinstance(exc, psycopg.Error):
+                    raise DriverError(str(exc).strip()) from exc
+                raise
 
     async def disconnect(self) -> None:
         await self._conn.close()
@@ -186,6 +209,9 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
         try:
             cur = self._conn.cursor()
             await cur.execute(sql.SQL(query), params)  # ty: ignore[invalid-argument-type]
+            prop = _set_property(query)
+            if prop is not None:
+                self._session_statements[prop] = query
             if cur.description is not None:
                 columns = [d.name for d in cur.description]
                 rows = [[render_lob(v) for v in r] for r in await cur.fetchall()]
@@ -449,6 +475,21 @@ direction, uniqueness, INCLUDE columns, and DDL (as reported by `pg_indexes`).
         except asyncio.TimeoutError:
             return {}
         return build_column_samples(columns, rows, self._settings.column_sample_size)
+
+
+_SET_RE = re.compile(
+    r"(?is)^\s*SET\s+(?:SESSION\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|\bTO\b)\s*"
+)
+
+
+def _set_property(query: str) -> str | None:
+    """Return the lower-cased parameter name if *query* is a ``SET
+    <parameter> = ...`` / ``SET <parameter> TO ...`` statement, else None.
+
+    ``SET LOCAL ...`` deliberately doesn't match: it's transaction-scoped and
+    resets on its own, so replaying it on reconnect would be wrong."""
+    match = _SET_RE.match(query)
+    return match.group(1).lower() if match else None
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:

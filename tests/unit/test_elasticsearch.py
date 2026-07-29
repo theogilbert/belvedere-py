@@ -7,6 +7,7 @@ import pytest
 
 from grannos.drivers.base import DriverError, DriverSettings
 from grannos.drivers.elasticsearch import ElasticsearchDriver
+from grannos.protocol import ReadResult
 
 
 async def _hosts(params: dict) -> list[str]:
@@ -72,6 +73,44 @@ class TestParseBody:
     def test_invalid_json_raises(self) -> None:
         with pytest.raises(DriverError, match="Invalid request body"):
             ElasticsearchDriver._parse_body("not valid json")
+
+
+class TestExecuteEsql:
+    async def test_returns_columns_and_rows(self) -> None:
+        client = MagicMock()
+        client.esql.query = AsyncMock(
+            return_value={
+                "columns": [
+                    {"name": "status", "type": "keyword"},
+                    {"name": "total", "type": "long"},
+                ],
+                "values": [["open", 50], ["closed", 30]],
+            }
+        )
+        driver = ElasticsearchDriver({"query_mode": "esql"}, client, DriverSettings())
+        result = await driver.execute('FROM orders | WHERE status == "open"', [])
+        assert isinstance(result, ReadResult)
+        assert result.columns == ["status", "total"]
+        assert result.rows == [["open", 50], ["closed", 30]]
+        assert result.rows_total == 2
+        client.esql.query.assert_awaited_once_with(
+            query='FROM orders | WHERE status == "open"', format="json"
+        )
+
+    async def test_empty_result(self) -> None:
+        client = MagicMock()
+        client.esql.query = AsyncMock(
+            return_value={
+                "columns": [{"name": "status", "type": "keyword"}],
+                "values": [],
+            }
+        )
+        driver = ElasticsearchDriver({"query_mode": "esql"}, client, DriverSettings())
+        result = await driver.execute("FROM orders | LIMIT 0", [])
+        assert isinstance(result, ReadResult)
+        assert result.columns == ["status"]
+        assert result.rows == []
+        assert result.rows_total == 0
 
 
 class TestExecuteDevToolsErrors:

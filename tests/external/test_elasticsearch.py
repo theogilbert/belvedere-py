@@ -55,6 +55,19 @@ async def dev_tools_driver() -> AsyncGenerator[ElasticsearchDriver, None]:
     await d.disconnect()
 
 
+@pytest.fixture
+async def esql_driver() -> AsyncGenerator[ElasticsearchDriver, None]:
+    pytest.importorskip("elasticsearch")
+    try:
+        d = await ElasticsearchDriver.create(
+            {**_params(), "query_mode": "esql"}, DriverSettings()
+        )
+    except Exception as exc:
+        pytest.skip(f"Elasticsearch not available: {exc}")
+    yield d
+    await d.disconnect()
+
+
 @pytest.fixture(autouse=True)
 async def clean_index(driver: ElasticsearchDriver) -> AsyncGenerator[None, None]:
     await driver._client.indices.delete(index=_INDEX, ignore_unavailable=True)
@@ -158,6 +171,39 @@ class TestExecuteDSL:
     ) -> None:
         with pytest.raises(DriverError, match="Kibana Dev Tools"):
             await dev_tools_driver.execute("just a query with no method", [])
+
+
+class TestExecuteEsql:
+    async def test_returns_columns_and_rows(
+        self, esql_driver: ElasticsearchDriver
+    ) -> None:
+        await _index_docs(esql_driver, [{"name": "Alice", "status": "active"}])
+        result = await esql_driver.execute(f"FROM {_INDEX}", [])
+        assert isinstance(result, ReadResult)
+        assert "name" in result.columns
+        names = [row[result.columns.index("name")] for row in result.rows]
+        assert names == ["Alice"]
+
+    async def test_filters_by_field(self, esql_driver: ElasticsearchDriver) -> None:
+        await _index_docs(
+            esql_driver,
+            [
+                {"name": "Alice", "status": "active"},
+                {"name": "Bob", "status": "inactive"},
+            ],
+        )
+        result = await esql_driver.execute(
+            f'FROM {_INDEX} | WHERE status == "active"', []
+        )
+        assert isinstance(result, ReadResult)
+        names = [row[result.columns.index("name")] for row in result.rows]
+        assert names == ["Alice"]
+
+    async def test_raises_for_invalid_query(
+        self, esql_driver: ElasticsearchDriver
+    ) -> None:
+        with pytest.raises(DriverError):
+            await esql_driver.execute("NOT A VALID ESQL QUERY", [])
 
 
 class TestExploreList:

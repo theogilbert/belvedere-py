@@ -183,9 +183,11 @@ holds the Neo4j index type (`RANGE`, `TEXT`, `POINT`, …).
 | `port` | yes | `9200` | HTTP port |
 | `username` | no | — | Username |
 | `password` | no | — | Password (masked) |
-| `query_mode` | yes | `lucene` | Query language: `lucene` or `dev_tools` |
+| `query_mode` | yes | `lucene` | Query language: `lucene`, `dev_tools`, or `esql` |
 
 **Queries:** Prefix with the target index name (pattern or alias) and ` | `.
+This prefix is not needed in `esql` mode, where the target index is named
+in the query itself (`FROM <index>`).
 
 *Lucene mode:*
 
@@ -207,6 +209,16 @@ GET /orders/_search
 ```
 GET /orders,products/_search
 {"query": {"match_all": {}}, "sort": [{"total": "desc"}]}
+```
+
+*ES|QL mode:*
+
+```
+FROM orders | WHERE status == "open" AND total > 50 | LIMIT 100
+```
+
+```
+FROM orders, products | STATS count = COUNT(*) BY status
 ```
 
 Any Elasticsearch REST endpoint is accepted — the response is returned as a

@@ -62,6 +62,7 @@ class ElasticsearchDriver(BaseDriver):
             choices=[
                 DriverParamChoice(value="lucene", label="Lucene"),
                 DriverParamChoice(value="dev_tools", label="Dev Tools"),
+                DriverParamChoice(value="esql", label="ES|QL"),
             ],
             default="lucene",
         ),
@@ -71,7 +72,9 @@ class ElasticsearchDriver(BaseDriver):
 ## Elasticsearch
 
 **Queries:** Prefix with the target index name (pattern or alias) and ` | `.
-The connection is configured for either Lucene or Dev Tools query syntax.
+The connection is configured for Lucene, Dev Tools, or ES|QL query syntax.
+The index prefix is not used in ES|QL mode, where the source index is named
+in the query itself (`FROM <index>`).
 
 *Lucene mode:*
 
@@ -93,6 +96,16 @@ GET /orders/_search
 ```
 GET /orders,products/_search
 {"query": {"match_all": {}}, "sort": [{"total": "desc"}]}
+```
+
+*ES|QL mode:*
+
+```
+FROM orders | WHERE status == "open" AND total > 50 | LIMIT 100
+```
+
+```
+FROM orders, products | STATS count = COUNT(*) BY status
 ```
 
 Any Elasticsearch REST endpoint is accepted — the response is returned as a
@@ -167,6 +180,8 @@ Describing an index returns field metadata from its mapping (name, type).
             return await self._execute_lucene(query)
         elif mode == "dev_tools":
             return await self._execute_dev_tools(query)
+        elif mode == "esql":
+            return await self._execute_esql(query)
         else:
             raise DriverError(f"Unknown query_mode: {mode!r}")
 
@@ -217,6 +232,12 @@ Describing an index returns field metadata from its mapping (name, type).
         if isinstance(resp, dict):
             return flatten_docs(list(resp.keys()), [[resp[k] for k in resp]])  # ty: ignore[invalid-argument-type]
         return ReadResult(columns=["response"], rows=[[str(resp)]], rows_total=1)
+
+    async def _execute_esql(self, query: str) -> ReadResult:
+        resp = await self._client.esql.query(query=query, format="json")
+        columns = [col["name"] for col in resp["columns"]]
+        rows = resp["values"]
+        return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
 
     @staticmethod
     def _parse_body(

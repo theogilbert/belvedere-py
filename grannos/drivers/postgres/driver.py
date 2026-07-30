@@ -30,7 +30,14 @@ from ..base import (
     group_references_by_column,
     group_references_by_ref_column,
 )
-from .copy import CopyToCommand, build_copy_to_statement, parse_copy_to
+from .copy import (
+    CopyFromCommand,
+    CopyToCommand,
+    build_copy_from_statement,
+    build_copy_to_statement,
+    parse_copy_from,
+    parse_copy_to,
+)
 from .queries import (
     build_column_index_lists,
     build_preview_query,
@@ -55,6 +62,8 @@ from .queries import (
     invalidate_cache,
     render_lob,
 )
+
+_COPY_FROM_CHUNK_SIZE = 1024 * 1024
 
 
 class PostgresDriver(BaseDriver):
@@ -104,6 +113,16 @@ https://www.postgresql.org/docs/current/sql-copy.html
 ```sql
 \\copy orders TO '/tmp/orders.csv' (FORMAT csv, HEADER)
 \\copy (SELECT * FROM orders WHERE status = 'open') TO '/tmp/open_orders.csv' (FORMAT csv, HEADER)
+```
+
+**Importing from a file:** `\\copy table [(column_list)] FROM '/local/path'
+[(options)]`, same syntax as psql's `\\copy`. The file is streamed straight
+from the machine running grannos-py into the table. `(options)` is passed
+straight through to Postgres's `COPY` command, same options as above.
+
+```sql
+\\copy orders FROM '/tmp/orders.csv' (FORMAT csv, HEADER)
+\\copy orders (id, status) FROM '/tmp/orders_partial.csv' (FORMAT csv, HEADER)
 ```
 
 **Resources:**
@@ -201,6 +220,10 @@ after an idle timeout).
         if copy_cmd is not None:
             return await self._execute_copy_to(copy_cmd)
 
+        copy_from_cmd = parse_copy_from(query)
+        if copy_from_cmd is not None:
+            return await self._execute_copy_from(copy_from_cmd)
+
         # psycopg only applies %-style substitution when params is not None, so
         # an empty/absent bind list must be sent as None — otherwise a literal
         # "%" in the query (e.g. a LIKE pattern) is misparsed as a placeholder.
@@ -241,6 +264,31 @@ after an idle timeout).
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
         except OSError as exc:
             raise DriverError(f"could not write to {cmd.path!r}: {exc}") from exc
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            if isinstance(exc, psycopg.Error):
+                raise DriverError(str(exc).strip()) from exc
+            raise
+
+    async def _execute_copy_from(self, cmd: CopyFromCommand) -> WriteResult:
+        """Stream a local file into Postgres via ``COPY ... FROM STDIN``.
+
+        Mirrors what psql does for ``\\copy``: Postgres has no such command
+        itself, so it's rewritten to the real ``COPY FROM STDIN`` and the
+        client (grannos-py, here) reads the local file and writes it to the
+        wire in chunks.
+        """
+        stmt = build_copy_from_statement(cmd)
+        try:
+            with open(cmd.path, "rb") as f:
+                cur = self._conn.cursor()
+                async with cur.copy(sql.SQL(stmt)) as copy:  # ty: ignore[invalid-argument-type]
+                    while chunk := f.read(_COPY_FROM_CHUNK_SIZE):
+                        await copy.write(chunk)
+            invalidate_cache(self._conn)
+            return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
+        except OSError as exc:
+            raise DriverError(f"could not read {cmd.path!r}: {exc}") from exc
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             if isinstance(exc, psycopg.Error):

@@ -11,6 +11,7 @@ from .drivers.base import BaseDriver, DriverSettings, ReadResult, WriteResult
 from .protocol import (
     Connection,
     DescribeResult,
+    DownloadResult,
     EntityDescription,
     ExploreItem,
     FieldDescription,
@@ -81,6 +82,9 @@ class CachingDriver(BaseDriver):
 
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         return await self._inner.explore_preview(path)
+
+    async def explore_download(self, path: list[str]) -> DownloadResult:
+        return await self._inner.explore_download(path)
 
     async def explore_describe(self, path: list[str]) -> DescribeResult:
         if self._cache.has_describe(path):

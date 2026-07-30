@@ -6,6 +6,7 @@ from typing import Any, ClassVar, Self
 
 from ..protocol import (
     DescribeResult,
+    DownloadResult,
     DriverParam,
     ExploreItem,
     Language,
@@ -200,6 +201,21 @@ class BaseDriver(ABC):
             not resolve to a describable node.
         """
         ...
+
+    async def explore_download(self, path: list[str]) -> DownloadResult:
+        """Fetch the full content of the node at the given path (e.g. an S3 object).
+
+        Args:
+            path: Ordered path segments identifying a downloadable node.
+
+        Returns:
+            The node's full content.
+
+        Raises:
+            DriverError: If this driver has no downloadable content, or path
+                does not resolve to a downloadable node.
+        """
+        raise DriverError(f"{type(self).__name__} does not support explore.download")
 
     async def set_session(self, values: dict[str, Any]) -> None:
         """Update one or more runtime session settings declared in SESSION_PARAMS.

@@ -174,6 +174,7 @@ class Dispatcher:
             Method.EXPLORE_DESCRIBE: self._handle_explore_describe,
             Method.EXPLORE_PREVIEW: self._handle_explore_preview,
             Method.EXPLORE_DIAGRAM: self._handle_explore_diagram,
+            Method.EXPLORE_DOWNLOAD: self._handle_explore_download,
             Method.SESSION_SET: self._handle_session_set,
             Method.SESSION_GET: self._handle_session_get,
         }
@@ -325,6 +326,23 @@ class Dispatcher:
         except DiagramError as exc:
             raise DispatchError(str(exc)) from exc
         return {"diagram": result.diagram, "regions": result.regions}
+
+    async def _handle_explore_download(
+        self,
+        conn: Connection,
+        params: dict[str, Any],
+        send_progress: ProgressCallback,
+    ) -> dict[str, Any]:
+        path: list[str] = params.get("path") or []
+        result = await self._reconnect_and_retry(
+            conn, lambda: conn.driver.explore_download(path), send_progress
+        )
+        return {
+            "content_base64": result.content_base64,
+            "filename": result.filename,
+            "content_type": result.content_type,
+            "size": result.size,
+        }
 
     async def _handle_session_set(
         self,

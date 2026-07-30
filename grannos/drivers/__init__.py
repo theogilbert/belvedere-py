@@ -28,6 +28,7 @@ _REGISTRY: list[RegisteredDriver] = [
     # Generic drivers (no filetype affinity) — appear first for unknown filetypes.
     RegisteredDriver(module="mongodb", class_name="MongoDriver"),
     RegisteredDriver(module="elasticsearch", class_name="ElasticsearchDriver"),
+    RegisteredDriver(module="s3", class_name="S3Driver"),
 ]
 
 

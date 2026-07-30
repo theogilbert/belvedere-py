@@ -43,6 +43,7 @@ class Method(StrEnum):
     EXPLORE_DESCRIBE = "explore.describe"
     EXPLORE_PREVIEW = "explore.preview"
     EXPLORE_DIAGRAM = "explore.diagram"
+    EXPLORE_DOWNLOAD = "explore.download"
     SESSION_SET = "session.set"
     SESSION_GET = "session.get"
 
@@ -322,6 +323,22 @@ DescribeResult = (
 group of items (e.g. an indices group node, or Neo4j's per-entity properties
 group node) returns a bare array of the singular type rather than a wrapper
 object."""
+
+
+@dataclass
+class DownloadResult:
+    """Full content of a node fetched via explore.download, for a client to load
+    into a buffer (e.g. an S3 object). Not cached — unlike explore.list/describe,
+    a download always re-fetches from the driver."""
+
+    content_base64: str
+    """Full content, base64-encoded (content may be binary)."""
+    filename: str
+    """Suggested filename, e.g. the S3 object's key basename."""
+    content_type: str
+    """MIME type as reported by the driver, e.g. ``"text/plain"``, ``"application/octet-stream"``."""
+    size: int
+    """Size of the decoded content in bytes."""
 
 
 @dataclass

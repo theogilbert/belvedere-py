@@ -1,14 +1,28 @@
 """Unit tests for MongoDriver — no live database required."""
 
+import json
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pymongo.errors
 import pytest
 
 from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
-from grannos.drivers.mongodb import MongoDriver, _make_mongo_client, _serialize
-from grannos.protocol import LobPlaceholder, WriteResult
+from grannos.drivers.mongodb import (
+    MongoDriver,
+    _gridfs_buckets,
+    _is_gridfs_internal,
+    _make_mongo_client,
+    _serialize,
+)
+from grannos.protocol import (
+    DownloadResult,
+    ExploreItem,
+    GenericRecordDescription,
+    LobPlaceholder,
+    ReadResult,
+    WriteResult,
+)
 
 _CLOSED_EXC = pymongo.errors.InvalidOperation("Cannot use AsyncMongoClient after close")
 
@@ -148,19 +162,23 @@ class TestExecuteExtendedJson:
         assert occurred_at.year == 2024
 
 
+def _null_register_lob(value: object, text: str) -> LobPlaceholder:
+    return LobPlaceholder(text=text)
+
+
 class TestSerialize:
     def test_passes_through_plain_values(self) -> None:
-        assert _serialize("hello") == "hello"
-        assert _serialize(42) == 42
-        assert _serialize(None) is None
+        assert _serialize(_null_register_lob, "hello") == "hello"
+        assert _serialize(_null_register_lob, 42) == 42
+        assert _serialize(_null_register_lob, None) is None
 
     def test_renders_binary_as_byte_count(self) -> None:
-        assert _serialize(b"\x01\x02\x03") == LobPlaceholder(
+        assert _serialize(_null_register_lob, b"\x01\x02\x03") == LobPlaceholder(
             text="BSON Binary (3 bytes)"
         )
 
     def test_renders_binary_nested_in_dict(self) -> None:
-        result = _serialize({"blob": b"\x00\x01"})
+        result = _serialize(_null_register_lob, {"blob": b"\x00\x01"})
         assert result == {"blob": LobPlaceholder(text="BSON Binary (2 bytes)")}
 
 
@@ -177,3 +195,156 @@ class TestExecuteMalformedCommand:
                 '{"find": "users", "db": "mydb", "filter": {"_id": {"$oid": "bad"}}}',
                 [],
             )
+
+
+class TestGridfsBucketDetection:
+    def test_buckets_inferred_from_files_collections(self) -> None:
+        names = ["fs.files", "fs.chunks", "users", "images.files", "images.chunks"]
+        assert _gridfs_buckets(names) == {"fs", "images"}
+
+    def test_no_buckets_when_no_files_collection(self) -> None:
+        assert _gridfs_buckets(["users", "orders"]) == set()
+
+    def test_internal_collections_hidden_for_known_buckets(self) -> None:
+        buckets = {"fs"}
+        assert _is_gridfs_internal("fs.files", buckets)
+        assert _is_gridfs_internal("fs.chunks", buckets)
+        assert not _is_gridfs_internal("users", buckets)
+
+    def test_files_like_name_not_hidden_unless_bucket_known(self) -> None:
+        # "other.files" only hidden if "other" was actually detected as a bucket
+        assert not _is_gridfs_internal("other.files", {"fs"})
+
+
+class TestExploreListGridfs:
+    async def test_gridfs_group_shown_only_when_bucket_exists(self) -> None:
+        client = MagicMock()
+        client[  # ty: ignore[unsupported-operator]
+            "mydb"
+        ].list_collection_names = AsyncMock(return_value=["users", "fs.files", "fs.chunks"])
+        driver = _make_driver(client)
+        items = await driver.explore_list(["mydb"])
+        assert items == [
+            ExploreItem(name="users", type="collection", expandable=True),
+            ExploreItem(name="gridfs", type="group", expandable=True),
+        ]
+
+    async def test_no_gridfs_group_when_no_bucket(self) -> None:
+        client = MagicMock()
+        client["mydb"].list_collection_names = AsyncMock(return_value=["users", "orders"])
+        driver = _make_driver(client)
+        items = await driver.explore_list(["mydb"])
+        assert items == [
+            ExploreItem(name="orders", type="collection", expandable=True),
+            ExploreItem(name="users", type="collection", expandable=True),
+        ]
+
+    async def test_gridfs_lists_bucket_names_as_leaves(self) -> None:
+        client = MagicMock()
+        client["mydb"].list_collection_names = AsyncMock(
+            return_value=["fs.files", "fs.chunks", "images.files", "images.chunks"]
+        )
+        driver = _make_driver(client)
+        items = await driver.explore_list(["mydb", "gridfs"])
+        assert items == [
+            ExploreItem(name="fs", type="gridfs_bucket", expandable=False),
+            ExploreItem(name="images", type="gridfs_bucket", expandable=False),
+        ]
+
+
+class TestDescribeGridfsBucket:
+    async def test_returns_stats_not_a_file_listing(self) -> None:
+        client = MagicMock()
+        cursor = MagicMock()
+        cursor.to_list = AsyncMock(return_value=[{"count": 12345, "total_size": 999}])
+        client["mydb"]["fs.files"].aggregate = AsyncMock(return_value=cursor)
+        driver = _make_driver(client)
+        result = await driver.explore_describe(["mydb", "gridfs", "fs"])
+        assert isinstance(result, GenericRecordDescription)
+        assert result.kind == "mongodb.gridfs_bucket"
+        labels = {f.label: f.value for f in result.fields}
+        assert labels["Files"] == "12,345"
+        assert labels["Total Size"] == "999 bytes"
+        assert "gridfs.fs" in labels["Query"]
+
+    async def test_empty_bucket_reports_zero(self) -> None:
+        client = MagicMock()
+        cursor = MagicMock()
+        cursor.to_list = AsyncMock(return_value=[])
+        client["mydb"]["fs.files"].aggregate = AsyncMock(return_value=cursor)
+        driver = _make_driver(client)
+        result = await driver.explore_describe(["mydb", "gridfs", "fs"])
+        labels = {f.label: f.value for f in result.fields}
+        assert labels["Files"] == "0"
+
+
+class TestFindGridfs:
+    async def test_find_routes_to_gridfs_files_collection(self) -> None:
+        client = MagicMock()
+        cursor = MagicMock()
+        cursor.to_list = AsyncMock(
+            return_value=[
+                {
+                    "filename": "report.pdf",
+                    "length": 4096,
+                    "uploadDate": datetime(2026, 1, 1),
+                    "contentType": "application/pdf",
+                    "metadata": {"owner": "alice"},
+                }
+            ]
+        )
+        db = client["mydb"]
+        db.name = "mydb"
+        db["fs.files"].find.return_value.limit.return_value.sort.return_value = cursor
+        driver = _make_driver(client)
+        result = await driver.execute(
+            '{"find": "gridfs.fs", "db": "mydb", "filter": {}, "limit": 50}', []
+        )
+        assert isinstance(result, ReadResult)
+        assert "filename" in result.columns
+        assert "content" in result.columns
+        row = dict(zip(result.columns, result.rows[0]))
+        assert row["filename"] == "report.pdf"
+        assert row["length"] == "4096"  # flatten_docs stringifies scalar values
+        lob = row["content"]
+        assert isinstance(lob, LobPlaceholder)
+        assert lob.ref is not None
+        assert lob.ref.startswith("gridfs:")
+        db_name, bucket, filename = json.loads(lob.ref[len("gridfs:") :])
+        assert (db_name, bucket, filename) == ("mydb", "fs", "report.pdf")
+
+    async def test_aggregate_on_gridfs_collection_raises_driver_error(self) -> None:
+        driver = _make_driver(_open_client()[0])
+        with pytest.raises(DriverError, match="only support"):
+            await driver.execute(
+                '{"aggregate": "gridfs.fs", "db": "mydb", "pipeline": []}', []
+            )
+
+
+class TestExploreDownloadRefGridfs:
+    async def test_gridfs_ref_delegates_to_gridfs_download(self) -> None:
+        client = MagicMock()
+        driver = _make_driver(client)
+        ref = "gridfs:" + json.dumps(["mydb", "fs", "report.pdf"])
+        with patch("grannos.drivers.mongodb.AsyncGridFSBucket") as bucket_cls:
+            grid_out = MagicMock()
+            grid_out.content_type = "application/pdf"
+            grid_out.read = AsyncMock(return_value=b"%PDF-1.4")
+            grid_out.close = AsyncMock()
+            bucket_cls.return_value.open_download_stream_by_name = AsyncMock(
+                return_value=grid_out
+            )
+            result = await driver.explore_download_ref(ref, None)
+        assert isinstance(result, DownloadResult)
+        assert result.filename == "report.pdf"
+        assert result.content_type == "application/pdf"
+        bucket_cls.assert_called_once()
+        _, kwargs = bucket_cls.call_args
+        assert kwargs["bucket_name"] == "fs"
+
+    async def test_non_gridfs_ref_falls_back_to_cache_lookup(self) -> None:
+        driver = _make_driver(_open_client()[0])
+        with pytest.raises(DriverError):
+            # Not a "gridfs:" ref and not in the base cache -> base class's
+            # "no longer available" error, proving the fallback ran.
+            await driver.explore_download_ref("some-uuid-ref", None)

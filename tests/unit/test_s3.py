@@ -218,8 +218,9 @@ class TestExploreDownload:
         body.read.return_value = b"hello"
         client.get_object.return_value = {"Body": body, "ContentType": "text/plain"}
         driver = _make_driver(client)
-        result = await driver.explore_download(["my-bucket", "a.txt"])
+        result = await driver.explore_download(["my-bucket", "a.txt"], None)
         assert result.content_base64 == "aGVsbG8="
+        assert result.written_to is None
         assert result.filename == "a.txt"
         assert result.content_type == "text/plain"
         assert result.size == 5
@@ -229,7 +230,23 @@ class TestExploreDownload:
         client.head_object.return_value = {"ContentLength": 100 * 1024 * 1024}
         driver = _make_driver(client)
         with pytest.raises(DriverError):
-            await driver.explore_download(["my-bucket", "huge.bin"])
+            await driver.explore_download(["my-bucket", "huge.bin"], None)
+        client.get_object.assert_not_called()
+
+    async def test_downloads_directly_to_dest_path_bypassing_size_limit(self) -> None:
+        client = MagicMock()
+        client.head_object.return_value = {
+            "ContentLength": 100 * 1024 * 1024,
+            "ContentType": "application/zip",
+        }
+        driver = _make_driver(client)
+        result = await driver.explore_download(["my-bucket", "huge.zip"], "/tmp/out.zip")
+        assert result.written_to == "/tmp/out.zip"
+        assert result.content_base64 is None
+        assert result.size == 100 * 1024 * 1024
+        client.download_file.assert_called_once_with(
+            "my-bucket", "huge.zip", "/tmp/out.zip"
+        )
         client.get_object.assert_not_called()
 
 

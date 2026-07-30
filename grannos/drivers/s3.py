@@ -413,20 +413,40 @@ objects larger than 25 MB are refused.
 
     # -- download ---------------------------------------------------------
 
-    async def explore_download(self, path: list[str]) -> DownloadResult:
+    async def explore_download(
+        self, path: list[str], dest_path: str | None
+    ) -> DownloadResult:
         if len(path) < 2:
             raise DriverError("explore.download requires a path to an object")
         bucket, *segments = path
         key = "/".join(segments)
-        return await self._run(self._download_object_sync, bucket, key)
+        if dest_path is not None:
+            return await self._run(self._download_to_file_sync, bucket, key, dest_path)
+        return await self._run(self._download_inline_sync, bucket, key)
 
-    def _download_object_sync(self, bucket: str, key: str) -> DownloadResult:
+    def _download_to_file_sync(
+        self, bucket: str, key: str, dest_path: str
+    ) -> DownloadResult:
+        # Streams straight to disk via boto3's managed transfer (same call the
+        # `cp` DSL command uses) — no size cap, since content never touches
+        # Python-process memory as a whole blob the way the inline path does.
+        head = self._client.head_object(Bucket=bucket, Key=key)
+        self._client.download_file(bucket, key, dest_path)
+        return DownloadResult(
+            filename=key.rsplit("/", 1)[-1],
+            content_type=head.get("ContentType", "application/octet-stream"),
+            size=head.get("ContentLength", 0),
+            written_to=dest_path,
+        )
+
+    def _download_inline_sync(self, bucket: str, key: str) -> DownloadResult:
         head = self._client.head_object(Bucket=bucket, Key=key)
         size = head.get("ContentLength", 0)
         if size > _MAX_DOWNLOAD_BYTES:
             raise DriverError(
                 f"Object is {_format_size(size)}, larger than the "
-                f"{_format_size(_MAX_DOWNLOAD_BYTES)} explore.download limit"
+                f"{_format_size(_MAX_DOWNLOAD_BYTES)} explore.download limit "
+                "— use the save-to-disk download instead"
             )
         obj = self._client.get_object(Bucket=bucket, Key=key)
         body = obj["Body"].read()

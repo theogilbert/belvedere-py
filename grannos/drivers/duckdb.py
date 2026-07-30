@@ -133,7 +133,9 @@ SELECT * FROM 'glob/**/*.parquet'
             row = cur.fetchone() if desc is not None else None
             return WriteResult(rows_affected=int(row[0]) if row else 0)
         columns = [d[0] for d in desc]
-        rows: list[list[Any]] = [[_render_lob(v) for v in r] for r in cur.fetchall()]
+        rows: list[list[Any]] = [
+            [_render_lob(self._register_lob, v) for v in r] for r in cur.fetchall()
+        ]
         return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
@@ -542,16 +544,19 @@ SELECT * FROM 'glob/**/*.parquet'
             raise DriverError(str(exc)) from exc
 
 
-def _render_lob(value: Any) -> Any:
+def _render_lob(
+    register_lob: Callable[[bytes | str, str], LobPlaceholder], value: Any
+) -> Any:
     """Render a BLOB value as a :class:`LobPlaceholder` instead of inlining it in the row.
 
     DuckDB fully materializes BLOB columns as plain ``bytes``, but ``bytes``
     still isn't JSON-serialisable and can be arbitrarily large, so it's
-    swapped for a placeholder like Oracle's CLOB/BLOB handling.
+    swapped for a placeholder like Oracle's CLOB/BLOB handling. Already fully
+    in memory, so it's registered for later explore.download(ref=...) retrieval.
     """
     if not isinstance(value, (bytes, bytearray)):
         return value
-    return LobPlaceholder(text=f"BLOB ({len(value)} bytes)")
+    return register_lob(bytes(value), f"BLOB ({len(value)} bytes)")
 
 
 def _parse_index_columns(sql: str) -> list[IndexKeyField]:

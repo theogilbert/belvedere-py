@@ -13,17 +13,25 @@ def _make_driver() -> DuckDBDriver:
     return DuckDBDriver({}, duckdb.connect(":memory:"), DriverSettings())
 
 
+def _null_register_lob(value: object, text: str) -> LobPlaceholder:
+    return LobPlaceholder(text=text)
+
+
 class TestRenderLob:
     def test_passes_through_non_binary_values(self) -> None:
-        assert _render_lob("hello") == "hello"
-        assert _render_lob(42) == 42
-        assert _render_lob(None) is None
+        assert _render_lob(_null_register_lob, "hello") == "hello"
+        assert _render_lob(_null_register_lob, 42) == 42
+        assert _render_lob(_null_register_lob, None) is None
 
     def test_renders_bytes_as_byte_count(self) -> None:
-        assert _render_lob(b"\x01\x02\x03") == LobPlaceholder(text="BLOB (3 bytes)")
+        assert _render_lob(_null_register_lob, b"\x01\x02\x03") == LobPlaceholder(
+            text="BLOB (3 bytes)"
+        )
 
     def test_renders_bytearray_as_byte_count(self) -> None:
-        assert _render_lob(bytearray(5)) == LobPlaceholder(text="BLOB (5 bytes)")
+        assert _render_lob(_null_register_lob, bytearray(5)) == LobPlaceholder(
+            text="BLOB (5 bytes)"
+        )
 
 
 class TestExecuteRendersLobs:
@@ -33,4 +41,7 @@ class TestExecuteRendersLobs:
         asyncio.run(driver.execute("INSERT INTO t VALUES (?, ?)", [1, b"\x00\x01"]))
         result = asyncio.run(driver.execute("SELECT id, data FROM t", []))
         assert isinstance(result, ReadResult)
-        assert result.rows == [[1, LobPlaceholder(text="BLOB (2 bytes)")]]
+        [[_, lob]] = result.rows
+        assert isinstance(lob, LobPlaceholder)
+        assert lob.text == "BLOB (2 bytes)"
+        assert lob.ref is not None

@@ -1,6 +1,7 @@
 """Neo4j driver — requires: pip install neo4j"""
 
 import asyncio
+from collections.abc import Callable
 from typing import Any, LiteralString
 
 import neo4j
@@ -145,7 +146,9 @@ describing a single property adds a value sample.
                 if keys:
                     rows = []
                     async for record in result:
-                        rows.append([_serialize(record[k]) for k in keys])
+                        rows.append(
+                            [_serialize(self._register_lob, record[k]) for k in keys]
+                        )
                     return flatten_docs(list(keys), rows)
                 summary = await result.consume()
                 c = summary.counters
@@ -557,20 +560,22 @@ def _strip_rel_type(rel_type: str) -> str:
     return rel_type.removeprefix(":").strip("`")
 
 
-def _serialize(value: Any) -> Any:
+def _serialize(
+    register_lob: Callable[[bytes | str, str], LobPlaceholder], value: Any
+) -> Any:
     """Recursively convert neo4j graph objects to plain Python values."""
     if isinstance(value, neo4j.graph.Node):
         return {"_labels": sorted(value.labels), **dict(value)}
     if isinstance(value, neo4j.graph.Relationship):
         return {"_type": value.type, **dict(value)}
     if isinstance(value, neo4j.graph.Path):
-        return [_serialize(n) for n in value.nodes]
+        return [_serialize(register_lob, n) for n in value.nodes]
     if isinstance(value, list):
-        return [_serialize(v) for v in value]
+        return [_serialize(register_lob, v) for v in value]
     if isinstance(value, dict):
-        return {k: _serialize(v) for k, v in value.items()}
+        return {k: _serialize(register_lob, v) for k, v in value.items()}
     if isinstance(value, (bytes, bytearray)):
-        return LobPlaceholder(text=f"ByteArray ({len(value)} bytes)")
+        return register_lob(bytes(value), f"ByteArray ({len(value)} bytes)")
     return value
 
 

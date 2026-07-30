@@ -327,18 +327,27 @@ object."""
 
 @dataclass
 class DownloadResult:
-    """Full content of a node fetched via explore.download, for a client to load
-    into a buffer (e.g. an S3 object). Not cached — unlike explore.list/describe,
-    a download always re-fetches from the driver."""
+    """Content of a node fetched via explore.download, for a client to either load
+    into a buffer or have written straight to a local file. Not cached — unlike
+    explore.list/describe, a download always re-fetches from the driver.
 
-    content_base64: str
-    """Full content, base64-encoded (content may be binary)."""
+    Exactly one of ``content_base64``/``written_to`` is set, depending on
+    whether the request carried a ``dest_path``: with one, the driver writes
+    bytes directly to that local path server-side (the backend is always a
+    local subprocess, so this needs no network hop) and reports back
+    ``written_to`` instead of inlining content into the response; without one,
+    ``content_base64`` carries the full content for the client to decode."""
+
     filename: str
     """Suggested filename, e.g. the S3 object's key basename."""
     content_type: str
     """MIME type as reported by the driver, e.g. ``"text/plain"``, ``"application/octet-stream"``."""
     size: int
-    """Size of the decoded content in bytes."""
+    """Size of the content in bytes."""
+    content_base64: str | None = None
+    """Full content, base64-encoded (content may be binary). Set when the request had no ``dest_path``."""
+    written_to: str | None = None
+    """Local path the driver wrote the content to. Set when the request had a ``dest_path``."""
 
 
 @dataclass
@@ -352,6 +361,11 @@ class LobPlaceholder:
 
     text: str
     """Server-formatted placeholder text to display, e.g. ``"CLOB (3423 chars)"``."""
+    ref: str | None = None
+    """Opaque token a client can pass as explore.download's ``ref`` param to fetch
+    this specific cell's full content later. None when the driver can't support
+    re-fetching it (e.g. Oracle's LOB locator, which crashes the process if read
+    after its cursor closes) — the cell just stays inert in that case."""
     type: str = "lob"
     """Discriminator — always ``"lob"``."""
 

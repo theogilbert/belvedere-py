@@ -176,7 +176,7 @@ nullability, default).
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
             rows: list[list[Any]] = [
-                [_render_lob(v) for v in r]
+                [_render_lob(self._register_lob, v) for v in r]
                 for r in cur.fetchall()  # ty: ignore[missing-argument]
             ]
             return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
@@ -783,17 +783,20 @@ def _maybe_raise_connection_lost(exc: Exception) -> None:
         raise ConnectionLostError(str(exc)) from exc
 
 
-def _render_lob(value: Any) -> Any:
+def _render_lob(
+    register_lob: Callable[[bytes | str, str], LobPlaceholder], value: Any
+) -> Any:
     """Render a binary value as a :class:`LobPlaceholder` instead of inlining it in the row.
 
     mssql-python fully materializes BINARY/VARBINARY/IMAGE columns as plain
     ``bytes`` — unlike Oracle's streaming LOB locators — but ``bytes`` still
     isn't JSON-serialisable and can be arbitrarily large, so it's swapped for
-    a placeholder like Oracle's CLOB/BLOB handling.
+    a placeholder like Oracle's CLOB/BLOB handling. Already fully in memory, so
+    it's registered for later explore.download(ref=...) retrieval.
     """
     if not isinstance(value, (bytes, bytearray)):
         return value
-    return LobPlaceholder(text=f"VARBINARY ({len(value)} bytes)")
+    return register_lob(bytes(value), f"VARBINARY ({len(value)} bytes)")
 
 
 def _build_sqlserver_ddl(

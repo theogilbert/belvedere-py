@@ -333,12 +333,20 @@ class Dispatcher:
         params: dict[str, Any],
         send_progress: ProgressCallback,
     ) -> dict[str, Any]:
-        path: list[str] = params.get("path") or []
-        result = await self._reconnect_and_retry(
-            conn, lambda: conn.driver.explore_download(path), send_progress
-        )
+        ref: str | None = params.get("ref")
+        dest_path: str | None = params.get("dest_path")
+        if ref is not None:
+            result = await self._reconnect_and_retry(
+                conn, lambda: conn.driver.explore_download_ref(ref, dest_path), send_progress
+            )
+        else:
+            path: list[str] = params.get("path") or []
+            result = await self._reconnect_and_retry(
+                conn, lambda: conn.driver.explore_download(path, dest_path), send_progress
+            )
         return {
             "content_base64": result.content_base64,
+            "written_to": result.written_to,
             "filename": result.filename,
             "content_type": result.content_type,
             "size": result.size,

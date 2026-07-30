@@ -83,8 +83,15 @@ class CachingDriver(BaseDriver):
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         return await self._inner.explore_preview(path)
 
-    async def explore_download(self, path: list[str]) -> DownloadResult:
-        return await self._inner.explore_download(path)
+    async def explore_download(
+        self, path: list[str], dest_path: str | None
+    ) -> DownloadResult:
+        return await self._inner.explore_download(path, dest_path)
+
+    async def explore_download_ref(
+        self, ref: str, dest_path: str | None
+    ) -> DownloadResult:
+        return await self._inner.explore_download_ref(ref, dest_path)
 
     async def explore_describe(self, path: list[str]) -> DescribeResult:
         if self._cache.has_describe(path):

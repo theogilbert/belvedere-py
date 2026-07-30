@@ -1,5 +1,6 @@
 """PostgreSQL query functions — one per SQL query, with typed return values."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any
@@ -592,13 +593,16 @@ async def fetch_table_sample_rows(
         return [], []
 
 
-def render_lob(value: Any) -> Any:
+def render_lob(
+    register_lob: Callable[[bytes | str, str], LobPlaceholder], value: Any
+) -> Any:
     """Render a BYTEA value as a :class:`LobPlaceholder` instead of inlining it in the row.
 
     psycopg fully materializes BYTEA columns as plain ``bytes``, but ``bytes``
     still isn't JSON-serialisable and can be arbitrarily large, so it's
-    swapped for a placeholder like Oracle's CLOB/BLOB handling.
+    swapped for a placeholder like Oracle's CLOB/BLOB handling. Already fully
+    in memory, so it's registered for later explore.download(ref=...) retrieval.
     """
     if not isinstance(value, (bytes, bytearray)):
         return value
-    return LobPlaceholder(text=f"BYTEA ({len(value)} bytes)")
+    return register_lob(bytes(value), f"BYTEA ({len(value)} bytes)")

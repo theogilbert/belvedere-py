@@ -1,28 +1,43 @@
 """MongoDB driver — requires: pip install pymongo"""
 
+import base64
 import json
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Any
 
+import gridfs
 import pymongo
 import pymongo.errors
 from bson import json_util
+from gridfs import AsyncGridFSBucket
 
 from ..protocol import (
     DescribeResult,
+    DownloadResult,
     DriverParam,
     ExploreItem,
+    GenericRecordDescription,
     IndexDescription,
     IndexKeyField,
     LobPlaceholder,
     ParamType,
     ReadResult,
+    RecordField,
     WriteResult,
 )
 from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
 
 _DEFAULT_FIND_LIMIT = 1000
+_GRIDFS_PREFIX = "gridfs."
+"""Collection-name prefix that routes a find to a GridFS bucket's file
+metadata instead of a real collection — e.g. `"gridfs.fs"` for the default
+bucket. See MongoDriver._find_gridfs."""
+
+_GRIDFS_REF_PREFIX = "gridfs:"
+"""LobPlaceholder.ref prefix identifying a GridFS file cell (as opposed to an
+ordinary in-memory-cached LOB ref) — see MongoDriver.explore_download_ref."""
 
 
 class _Op(StrEnum):
@@ -126,17 +141,44 @@ passed through to the underlying pymongo call.
 
 Results are flattened with dot-notation column names (`address.city`, `address.zip`).
 
+**GridFS:**
+
+A bucket named `<bucket>` (backed by `<bucket>.files`/`<bucket>.chunks`) is
+queried with `find` on a synthetic collection name `"gridfs.<bucket>"` —
+`filter`/`sort`/`limit` apply to the bucket's file metadata, not raw chunks
+(`aggregate` isn't supported for it, only `find`):
+
+```json
+{"find": "gridfs.fs", "db": "mydb", "filter": {"filename": {"$regex": "^report-2026"}}, "limit": 50}
+```
+
+Each row is one file: `filename`, `length`, `uploadDate`, `contentType`, `md5`,
+`metadata.*`, and a `content` cell — a LOB placeholder, not the actual bytes.
+A bucket can hold tens of thousands of files, so nothing here ever reads file
+content up front; `content` is fetched lazily via `explore.download`'s `ref`
+param once you actually want it.
+
 **Resources:**
 
 ```
 (root)
 └── <database>
-    └── <collection>
-        ├── fields   → top-level field names (sampled from up to 10 documents)
-        └── indexes  → index names
+    ├── <collection>
+    │   ├── fields   → top-level field names (sampled from up to 10 documents)
+    │   └── indexes  → index names
+    └── gridfs                    (only shown when the database has any)
+        └── <bucket>              (leaf — query it, see GridFS above)
 ```
 
 Describing an index returns its key fields with their sort direction (`asc` / `desc`).
+A GridFS bucket is inferred from a `<bucket>.files` collection; its backing
+`.files`/`.chunks` collections are hidden from the plain collection list once
+represented under `gridfs`. Describing a bucket returns file count, total
+size, and example query syntax — not a file listing.
+
+Any LOB cell in a result row (a GridFS `content` cell, or an ordinary BSON
+Binary value) carries a `ref` — pass that to `explore.download`'s `ref` param
+to fetch its full content later without re-running the query.
 """
 
     def __init__(
@@ -228,20 +270,52 @@ Describing an index returns its key fields with their sort direction (`asc` / `d
             raise DriverError(str(exc)) from exc
 
     async def _find(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
-        col = db[cmd.pop(_Op.FIND)]
+        collection_name = cmd.pop(_Op.FIND)
         filter_ = cmd.pop("filter", {})
         projection = cmd.pop("projection", None)
         sort = cmd.pop("sort", None)
         limit = cmd.pop("limit", _DEFAULT_FIND_LIMIT)
-        cursor = col.find(filter_, projection).limit(limit)
+        if collection_name.startswith(_GRIDFS_PREFIX):
+            bucket = collection_name[len(_GRIDFS_PREFIX) :]
+            return await self._find_gridfs(db, bucket, filter_, sort, limit)
+        cursor = db[collection_name].find(filter_, projection).limit(limit)
         if sort:
             cursor = cursor.sort(list(sort.items()))
-        return _docs_to_result(await cursor.to_list())
+        return _docs_to_result(self._register_lob, await cursor.to_list())
 
     async def _aggregate(self, db: Any, cmd: dict[str, Any]) -> ReadResult:
-        col = db[cmd.pop(_Op.AGGREGATE)]
-        cursor = await col.aggregate(cmd.pop("pipeline", []))
-        return _docs_to_result(await cursor.to_list())
+        collection_name = cmd.pop(_Op.AGGREGATE)
+        if collection_name.startswith(_GRIDFS_PREFIX):
+            raise DriverError(
+                f'GridFS collections only support "find", not "aggregate" — query '
+                f'{collection_name!r} with {{"find": {collection_name!r}, "filter": {{...}}}}'
+            )
+        cursor = await db[collection_name].aggregate(cmd.pop("pipeline", []))
+        return _docs_to_result(self._register_lob, await cursor.to_list())
+
+    async def _find_gridfs(
+        self,
+        db: Any,
+        bucket: str,
+        filter_: dict[str, Any],
+        sort: dict[str, Any] | None,
+        limit: int,
+    ) -> ReadResult:
+        """Query a GridFS bucket's `.files` metadata collection, one row per
+        matching file: filename, size, upload date, content-type, MD5, custom
+        metadata, and a `content` LOB cell (fetched lazily via its `ref`, never
+        eagerly read here — a bucket can hold tens of thousands of files, so
+        this leans on the same filter/sort/limit machinery as a normal `find`
+        instead of an unbounded tree listing).
+
+        `projection` isn't supported here since the row shape is synthesized,
+        not passed through — a projection would apply to the wrong doc shape.
+        """
+        cursor = db[f"{bucket}.files"].find(filter_).limit(limit)
+        cursor = cursor.sort(list(sort.items())) if sort else cursor.sort([("filename", 1)])
+        docs = await cursor.to_list()
+        rows = [_gridfs_file_row(db.name, bucket, doc) for doc in docs]
+        return _docs_to_result(self._register_lob, rows)
 
     async def _insert_one(self, db: Any, cmd: dict[str, Any]) -> WriteResult:
         col = db[cmd.pop(_Op.INSERT_ONE)]
@@ -312,9 +386,25 @@ Describing an index returns its key fields with their sort direction (`asc` / `d
                     for n in sorted(await self._client.list_database_names())
                 ]
             case [db_name]:
-                return [
+                names = sorted(await self._client[db_name].list_collection_names())
+                buckets = _gridfs_buckets(names)
+                items = [
                     ExploreItem(name=n, type="collection", expandable=True)
-                    for n in sorted(await self._client[db_name].list_collection_names())
+                    for n in names
+                    if not _is_gridfs_internal(n, buckets)
+                ]
+                if buckets:
+                    items.append(ExploreItem(name="gridfs", type="group", expandable=True))
+                return items
+            case [db_name, "gridfs"]:
+                # Buckets are a leaf, not expandable — a bucket can hold tens
+                # of thousands of files, so individual files aren't tree-listed
+                # at all; describing the bucket gives stats + example query
+                # syntax, and files are reached via a "gridfs.<bucket>" find.
+                names = await self._client[db_name].list_collection_names()
+                return [
+                    ExploreItem(name=b, type="gridfs_bucket", expandable=False)
+                    for b in sorted(_gridfs_buckets(names))
                 ]
             case [_, _]:
                 return [
@@ -370,8 +460,88 @@ Describing an index returns its key fields with their sort direction (`asc` / `d
                 if spec is None:
                     return None
                 return _spec_to_index_description(index_name, spec, collection_name)
+            case [db_name, "gridfs", bucket]:
+                return await self._describe_gridfs_bucket(db_name, bucket)
             case _:
                 return None
+
+    async def explore_download_ref(
+        self, ref: str, dest_path: str | None
+    ) -> DownloadResult:
+        """GridFS file cells (from a "gridfs.<bucket>" find) carry a ref
+        encoding (db, bucket, filename) rather than a cached in-memory value —
+        unlike an ordinary BSON Binary cell, the content was deliberately never
+        read up front (that's the whole point of GridFS: values too large for
+        a normal document). Falls back to BaseDriver's cache-based lookup for
+        ordinary LOB refs.
+        """
+        if ref.startswith(_GRIDFS_REF_PREFIX):
+            try:
+                db_name, bucket, filename = json.loads(ref[len(_GRIDFS_REF_PREFIX) :])
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise DriverError("Malformed GridFS ref") from exc
+            try:
+                return await self._download_gridfs_file(
+                    db_name, bucket, filename, dest_path
+                )
+            except gridfs.NoFile as exc:
+                raise DriverError(f"No such GridFS file: {filename!r}") from exc
+        return await super().explore_download_ref(ref, dest_path)
+
+    async def _describe_gridfs_bucket(
+        self, db_name: str, bucket_name: str
+    ) -> GenericRecordDescription:
+        """Cheap aggregate stats (count + total size), not a file listing —
+        a bucket can hold tens of thousands of files. Includes example query
+        syntax, since that's now the only way to reach individual files."""
+        cursor = await self._client[db_name][f"{bucket_name}.files"].aggregate(
+            [{"$group": {"_id": None, "count": {"$sum": 1}, "total_size": {"$sum": "$length"}}}]
+        )
+        docs = await cursor.to_list()
+        count = docs[0]["count"] if docs else 0
+        total_size = docs[0]["total_size"] if docs else 0
+        example = json.dumps(
+            {"find": f"{_GRIDFS_PREFIX}{bucket_name}", "db": db_name, "filter": {}, "limit": 50}
+        )
+        return GenericRecordDescription(
+            kind="mongodb.gridfs_bucket",
+            name=bucket_name,
+            fields=[
+                RecordField(label="Files", value=f"{count:,}"),
+                RecordField(label="Total Size", value=f"{total_size:,} bytes"),
+                RecordField(label="Query", value=example),
+            ],
+        )
+
+    async def _download_gridfs_file(
+        self, db_name: str, bucket_name: str, filename: str, dest_path: str | None
+    ) -> DownloadResult:
+        grid_bucket = AsyncGridFSBucket(self._client[db_name], bucket_name=bucket_name)
+        grid_out = await grid_bucket.open_download_stream_by_name(filename)
+        try:
+            content_type = grid_out.content_type or "application/octet-stream"
+            if dest_path is not None:
+                with open(dest_path, "wb") as f:
+                    while True:
+                        chunk = await grid_out.readchunk()
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                return DownloadResult(
+                    filename=filename,
+                    content_type=content_type,
+                    size=grid_out.length,
+                    written_to=dest_path,
+                )
+            content = await grid_out.read()
+            return DownloadResult(
+                filename=filename,
+                content_type=content_type,
+                size=len(content),
+                content_base64=base64.b64encode(content).decode(),
+            )
+        finally:
+            await grid_out.close()
 
     async def _sample_fields(self, db_name: str, collection_name: str) -> list[str]:
         cursor = await self._client[db_name][collection_name].aggregate(
@@ -386,6 +556,39 @@ Describing an index returns its key fields with their sort direction (`asc` / `d
 
     async def _list_indexes(self, db_name: str, collection_name: str) -> list[str]:
         return sorted(await self._client[db_name][collection_name].index_information())
+
+
+def _gridfs_file_row(db_name: str, bucket: str, doc: dict[str, Any]) -> dict[str, Any]:
+    """Build a synthetic row for one `<bucket>.files` document: filename,
+    size, metadata, and a `content` LOB cell carrying a ref the client can
+    pass to explore.download later — never reads the actual file content."""
+    filename = doc.get("filename", "")
+    length = doc.get("length", 0)
+    ref = _GRIDFS_REF_PREFIX + json.dumps([db_name, bucket, filename])
+    return {
+        "filename": filename,
+        "length": length,
+        "uploadDate": doc.get("uploadDate"),
+        "contentType": doc.get("contentType"),
+        "md5": doc.get("md5"),
+        "metadata": doc.get("metadata"),
+        "content": LobPlaceholder(text=f"GridFS file ({length:,} bytes)", ref=ref),
+    }
+
+
+def _gridfs_buckets(collection_names: list[str]) -> set[str]:
+    """Bucket names inferred from `<bucket>.files` collections."""
+    return {n[: -len(".files")] for n in collection_names if n.endswith(".files")}
+
+
+def _is_gridfs_internal(name: str, buckets: set[str]) -> bool:
+    """Whether `name` is a `.files`/`.chunks` collection backing a GridFS
+    bucket already represented under the "gridfs" tree branch — hidden from
+    the plain collection list to avoid showing it twice."""
+    for suffix in (".files", ".chunks"):
+        if name.endswith(suffix) and name[: -len(suffix)] in buckets:
+            return True
+    return False
 
 
 def _index_direction(direction: Any) -> str:
@@ -420,17 +623,24 @@ def _spec_to_index_description(
     )
 
 
-def _docs_to_result(docs: list[dict[str, Any]]) -> ReadResult:
+def _docs_to_result(
+    register_lob: Callable[[bytes | str, str], LobPlaceholder],
+    docs: list[dict[str, Any]],
+) -> ReadResult:
     if not docs:
         return ReadResult(columns=[], rows=[], rows_total=0)
-    serialized = [{k: _serialize(v) for k, v in doc.items()} for doc in docs]
+    serialized = [
+        {k: _serialize(register_lob, v) for k, v in doc.items()} for doc in docs
+    ]
     # dict.fromkeys deduplicates while preserving first-seen order (set would not)
     columns: list[str] = list(dict.fromkeys(k for doc in serialized for k in doc))
     rows = [[doc.get(col) for col in columns] for doc in serialized]
     return flatten_docs(columns, rows, rows_total=len(docs))
 
 
-def _serialize(value: Any) -> Any:
+def _serialize(
+    register_lob: Callable[[bytes | str, str], LobPlaceholder], value: Any
+) -> Any:
     """Recursively convert BSON types to plain Python values."""
     try:
         from bson import Decimal128, ObjectId
@@ -444,11 +654,11 @@ def _serialize(value: Any) -> Any:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     if isinstance(value, (bytes, bytearray)):
-        return LobPlaceholder(text=f"BSON Binary ({len(value)} bytes)")
+        return register_lob(bytes(value), f"BSON Binary ({len(value)} bytes)")
     if isinstance(value, dict):
-        return {k: _serialize(v) for k, v in value.items()}
+        return {k: _serialize(register_lob, v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_serialize(v) for v in value]
+        return [_serialize(register_lob, v) for v in value]
     return value
 
 

@@ -1,6 +1,6 @@
 from typing import Any
 
-from .protocol import ReadResult
+from .protocol import LobPlaceholder, ReadResult, SpecialFloat
 
 
 def flatten_docs(
@@ -46,9 +46,14 @@ def flatten_docs(
     )
 
 
-def _to_str(value: Any) -> str | None:
+def _to_str(value: Any) -> Any:
     if value is None:
         return None
+    # These are structured wire-protocol markers, not display strings — must
+    # survive intact rather than being stringified into their Python repr, or
+    # a client can no longer distinguish e.g. a LOB cell from a plain string.
+    if isinstance(value, (LobPlaceholder, SpecialFloat)):
+        return value
     if isinstance(value, list):
         return "{" + ", ".join(str(v) for v in value) + "}"
     return str(value)

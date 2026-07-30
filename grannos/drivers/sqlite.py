@@ -132,7 +132,7 @@ nullability, primary key flag).
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
             rows: list[list[Any]] = [
-                [_render_lob(v) for v in r] for r in cur.fetchall()
+                [_render_lob(self._register_lob, v) for v in r] for r in cur.fetchall()
             ]
             return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
         return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
@@ -441,13 +441,17 @@ nullability, primary key flag).
             raise DriverError(str(exc)) from exc
 
 
-def _render_lob(value: Any) -> Any:
+def _render_lob(
+    register_lob: Callable[[bytes | str, str], LobPlaceholder], value: Any
+) -> Any:
     """Render a BLOB value as a :class:`LobPlaceholder` instead of inlining it in the row.
 
     sqlite3 fully materializes BLOB columns as plain ``bytes``, but ``bytes``
     still isn't JSON-serialisable and can be arbitrarily large, so it's
-    swapped for a placeholder like Oracle's CLOB/BLOB handling.
+    swapped for a placeholder like Oracle's CLOB/BLOB handling. Unlike Oracle's
+    lazy locator, the value is already fully in memory here, so it's registered
+    for later explore.download(ref=...) retrieval via `register_lob`.
     """
     if not isinstance(value, (bytes, bytearray)):
         return value
-    return LobPlaceholder(text=f"BLOB ({len(value)} bytes)")
+    return register_lob(bytes(value), f"BLOB ({len(value)} bytes)")

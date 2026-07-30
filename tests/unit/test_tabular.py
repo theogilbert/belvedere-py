@@ -1,4 +1,4 @@
-from grannos.protocol import ReadResult
+from grannos.protocol import LobPlaceholder, ReadResult, SpecialFloat
 from grannos.tabular import flatten_docs
 
 
@@ -10,6 +10,25 @@ def test_empty_rows_preserves_columns() -> None:
 def test_scalar_values_stringified() -> None:
     result = flatten_docs(["x", "y"], [[1, "hello"]])
     assert result == ReadResult(columns=["x", "y"], rows=[["1", "hello"]], rows_total=1)
+
+
+def test_lob_placeholder_survives_unstringified() -> None:
+    lob = LobPlaceholder(text="BLOB (3 bytes)", ref="abc123")
+    result = flatten_docs(["data"], [[lob]])
+    assert result.rows == [[lob]]
+
+
+def test_lob_placeholder_nested_in_dict_survives_unstringified() -> None:
+    lob = LobPlaceholder(text="BSON Binary (2 bytes)")
+    result = flatten_docs(["doc"], [[{"blob": lob}]])
+    assert result.columns == ["doc.blob"]
+    assert result.rows == [[lob]]
+
+
+def test_special_float_survives_unstringified() -> None:
+    nan = SpecialFloat(text="NaN")
+    result = flatten_docs(["value"], [[nan]])
+    assert result.rows == [[nan]]
 
 
 def test_top_level_dict_flattened() -> None:

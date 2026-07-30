@@ -1,3 +1,6 @@
+import asyncio
+import base64
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, time
@@ -10,6 +13,7 @@ from ..protocol import (
     DriverParam,
     ExploreItem,
     Language,
+    LobPlaceholder,
     ReadResult,
     TableReference,
     WriteResult,
@@ -115,9 +119,17 @@ class BaseDriver(ABC):
     that would otherwise never apply.
     """
 
+    _LOB_CACHE_MAX: ClassVar[int] = 200
+    """Bound on the number of LobPlaceholder values kept in memory for later
+    explore.download(ref=...) retrieval; oldest entries are evicted first."""
+
     def __init__(self, params: dict[str, Any], settings: DriverSettings) -> None:
         self.params = params
         self._settings = settings
+        self._lob_cache: dict[str, bytes | str] = {}
+        """ref -> raw value, populated by _register_lob."""
+        self._lob_cache_order: list[str] = []
+        """Insertion order of _lob_cache keys, for FIFO eviction."""
 
     @classmethod
     @abstractmethod
@@ -202,11 +214,43 @@ class BaseDriver(ABC):
         """
         ...
 
-    async def explore_download(self, path: list[str]) -> DownloadResult:
+    def _register_lob(self, value: bytes | str, text: str) -> LobPlaceholder:
+        """Build a LobPlaceholder for `value`, caching it under a fresh ref so
+        explore_download_ref can retrieve the full value later.
+
+        Only safe for values already fully materialized in memory (e.g. a
+        `bytes` column value already fetched from the driver) — never for a
+        lazy handle whose later use could fail or crash (e.g. Oracle's LOB
+        locator, which crashes the process if read after its cursor closes).
+        Drivers with such a handle should keep constructing a plain
+        `LobPlaceholder(text=...)` with no ref instead of calling this.
+
+        Args:
+            value: The raw cell value (already fetched, not a lazy handle).
+            text: Server-formatted placeholder text to display.
+
+        Returns:
+            A LobPlaceholder carrying a ref to `value`.
+        """
+        ref = uuid.uuid4().hex
+        self._lob_cache[ref] = value
+        self._lob_cache_order.append(ref)
+        if len(self._lob_cache_order) > self._LOB_CACHE_MAX:
+            oldest = self._lob_cache_order.pop(0)
+            self._lob_cache.pop(oldest, None)
+        return LobPlaceholder(text=text, ref=ref)
+
+    async def explore_download(
+        self, path: list[str], dest_path: str | None
+    ) -> DownloadResult:
         """Fetch the full content of the node at the given path (e.g. an S3 object).
 
         Args:
             path: Ordered path segments identifying a downloadable node.
+            dest_path: When given, write content directly to this local path
+                instead of returning it inline (the backend is always a local
+                subprocess, so this needs no network hop) — the result then
+                carries `written_to` instead of `content_base64`.
 
         Returns:
             The node's full content.
@@ -216,6 +260,44 @@ class BaseDriver(ABC):
                 does not resolve to a downloadable node.
         """
         raise DriverError(f"{type(self).__name__} does not support explore.download")
+
+    async def explore_download_ref(
+        self, ref: str, dest_path: str | None
+    ) -> DownloadResult:
+        """Fetch the full content of a previously-registered LobPlaceholder value.
+
+        Concrete (not per-driver): every driver that registers LOB values via
+        `_register_lob` gets this for free.
+
+        Args:
+            ref: A `LobPlaceholder.ref` value from an earlier result row.
+            dest_path: When given, write content directly to this local path
+                instead of returning it inline.
+
+        Returns:
+            The cell's full content.
+
+        Raises:
+            DriverError: If `ref` is unknown or has been evicted from the
+                cache (e.g. the query was re-run, or the cache filled up) —
+                the client should re-run the query to get a fresh ref.
+        """
+        value = self._lob_cache.get(ref)
+        if value is None:
+            raise DriverError(
+                "This value is no longer available for download — re-run the query to fetch it again"
+            )
+        if isinstance(value, str):
+            data = value.encode("utf-8")
+            content_type = "text/plain"
+            filename = "lob.txt"
+        else:
+            data = bytes(value)
+            content_type = "application/octet-stream"
+            filename = "lob.bin"
+        return await asyncio.get_running_loop().run_in_executor(
+            None, _write_or_encode, data, filename, content_type, dest_path
+        )
 
     async def set_session(self, values: dict[str, Any]) -> None:
         """Update one or more runtime session settings declared in SESSION_PARAMS.
@@ -235,6 +317,30 @@ class BaseDriver(ABC):
             A dict keyed by SESSION_PARAMS keys; empty for drivers with none.
         """
         return {}
+
+
+def _write_or_encode(
+    data: bytes, filename: str, content_type: str, dest_path: str | None
+) -> DownloadResult:
+    """Blocking helper for explore_download/explore_download_ref: write `data`
+    to `dest_path` if given, else base64-encode it inline. Run via
+    run_in_executor since both branches do blocking work.
+    """
+    if dest_path is not None:
+        with open(dest_path, "wb") as f:
+            f.write(data)
+        return DownloadResult(
+            filename=filename,
+            content_type=content_type,
+            size=len(data),
+            written_to=dest_path,
+        )
+    return DownloadResult(
+        filename=filename,
+        content_type=content_type,
+        size=len(data),
+        content_base64=base64.b64encode(data).decode(),
+    )
 
 
 SAMPLE_SCAN_ROWS = 50

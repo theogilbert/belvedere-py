@@ -237,7 +237,10 @@ after an idle timeout).
                 self._session_statements[prop] = query
             if cur.description is not None:
                 columns = [d.name for d in cur.description]
-                rows = [[render_lob(v) for v in r] for r in await cur.fetchall()]
+                rows = [
+                    [render_lob(self._register_lob, v) for v in r]
+                    for r in await cur.fetchall()
+                ]
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
             invalidate_cache(self._conn)
             return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)

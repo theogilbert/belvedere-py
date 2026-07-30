@@ -163,17 +163,26 @@ class TestExecuteResults:
         )
         result = asyncio.run(driver.execute("SELECT id, data FROM t"))
         assert isinstance(result, ReadResult)
-        assert result.rows == [[1, LobPlaceholder(text="BYTEA (2 bytes)")]]
+        [[_, lob]] = result.rows
+        assert isinstance(lob, LobPlaceholder)
+        assert lob.text == "BYTEA (2 bytes)"
+        assert lob.ref is not None
+
+
+def _null_register_lob(value: object, text: str) -> LobPlaceholder:
+    return LobPlaceholder(text=text)
 
 
 class TestRenderLob:
     def test_passes_through_non_binary_values(self) -> None:
-        assert render_lob("hello") == "hello"
-        assert render_lob(42) == 42
-        assert render_lob(None) is None
+        assert render_lob(_null_register_lob, "hello") == "hello"
+        assert render_lob(_null_register_lob, 42) == 42
+        assert render_lob(_null_register_lob, None) is None
 
     def test_renders_bytes_as_byte_count(self) -> None:
-        assert render_lob(b"\x01\x02\x03") == LobPlaceholder(text="BYTEA (3 bytes)")
+        assert render_lob(_null_register_lob, b"\x01\x02\x03") == LobPlaceholder(
+            text="BYTEA (3 bytes)"
+        )
 
 
 class TestExecuteErrorPropagation:

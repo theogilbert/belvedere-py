@@ -214,17 +214,21 @@ class TestExecuteErrorPropagation:
             asyncio.run(driver.explore_describe(["indexes"]))
 
 
+def _null_register_lob(value: object, text: str) -> LobPlaceholder:
+    return LobPlaceholder(text=text)
+
+
 class TestSerialize:
     def test_passes_through_plain_values(self) -> None:
-        assert _serialize("hello") == "hello"
-        assert _serialize(42) == 42
-        assert _serialize(None) is None
+        assert _serialize(_null_register_lob, "hello") == "hello"
+        assert _serialize(_null_register_lob, 42) == 42
+        assert _serialize(_null_register_lob, None) is None
 
     def test_renders_byte_array_as_byte_count(self) -> None:
-        assert _serialize(bytearray(b"\x01\x02\x03")) == LobPlaceholder(
+        assert _serialize(_null_register_lob, bytearray(b"\x01\x02\x03")) == LobPlaceholder(
             text="ByteArray (3 bytes)"
         )
 
     def test_renders_byte_array_nested_in_list(self) -> None:
-        result = _serialize([bytearray(b"\x00\x01")])
+        result = _serialize(_null_register_lob, [bytearray(b"\x00\x01")])
         assert result == [LobPlaceholder(text="ByteArray (2 bytes)")]

@@ -365,6 +365,20 @@ class TestExecute:
         )
         progress.assert_any_await("reconnecting", ANY)
 
+    async def test_sends_executing_progress_after_successful_reconnect(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.execute.side_effect = [
+            ConnectionLostError(),
+            ReadResult(columns=[], rows=[], rows_total=0),
+        ]
+        progress = AsyncMock()
+        await disp.dispatch(
+            Method.EXECUTE, {"connection_id": conn_id, "query": "SELECT 1"}, progress
+        )
+        progress.assert_any_await("executing", ANY)
+
 
 class TestSessionSet:
     async def test_forwards_values_to_driver(

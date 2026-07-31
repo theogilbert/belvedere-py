@@ -337,12 +337,16 @@ class Dispatcher:
         dest_path: str | None = params.get("dest_path")
         if ref is not None:
             result = await self._reconnect_and_retry(
-                conn, lambda: conn.driver.explore_download_ref(ref, dest_path), send_progress
+                conn,
+                lambda: conn.driver.explore_download_ref(ref, dest_path),
+                send_progress,
             )
         else:
             path: list[str] = params.get("path") or []
             result = await self._reconnect_and_retry(
-                conn, lambda: conn.driver.explore_download(path, dest_path), send_progress
+                conn,
+                lambda: conn.driver.explore_download(path, dest_path),
+                send_progress,
             )
         return {
             "content_base64": result.content_base64,
@@ -381,6 +385,7 @@ class Dispatcher:
         except ConnectionLostError:
             await send_progress("reconnecting", "Connection lost — reconnecting…")
             await conn.driver.reconnect()
+            await send_progress("executing", "Reconnected — executing request…")
             return await coro_fn()
 
     def _require_conn(self, params: dict[str, Any]) -> Connection:

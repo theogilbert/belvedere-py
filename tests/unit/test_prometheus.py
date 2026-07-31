@@ -11,10 +11,12 @@ from grannos.drivers.base import ConnectionLostError, DriverError, DriverSetting
 from grannos.drivers.prometheus import (
     PrometheusDriver,
     _data_to_result,
+    _escape_label_value,
     _format_duration_ms,
     _format_error,
     _format_health,
     _format_scrape_age,
+    _job_selector,
     _parse_range_query,
     _parse_value,
     _resolve_time,
@@ -248,6 +250,14 @@ class TestFormatDurationMs:
         assert _format_duration_ms("bogus") == "bogus"
 
 
+class TestJobSelector:
+    def test_plain_job_name(self) -> None:
+        assert _job_selector("prometheus") == '{job="prometheus"}'
+
+    def test_escapes_quotes_and_backslashes(self) -> None:
+        assert _escape_label_value('a"b\\c') == 'a\\"b\\\\c'
+
+
 class TestExecute:
     async def test_instant_mode_queries_promql_endpoint(self) -> None:
         driver, session = _driver_with_response(
@@ -380,7 +390,7 @@ class TestExploreList:
         driver, _ = _driver_with_response({"status": "success", "data": []})
         assert await driver.explore_list(["metrics", "up", "job", "prometheus"]) == []
 
-    async def test_jobs_lists_scrape_jobs_as_leaves(self) -> None:
+    async def test_jobs_lists_scrape_jobs_as_expandable(self) -> None:
         driver, _ = _driver_with_response(
             {
                 "status": "success",
@@ -403,11 +413,48 @@ class TestExploreList:
         )
         items = await driver.explore_list(["jobs"])
         assert sorted(i.name for i in items) == ["node", "prometheus"]
-        assert all(i.type == "job" and not i.expandable for i in items)
+        assert all(i.type == "job" and i.expandable for i in items)
 
-    async def test_job_path_returns_empty(self) -> None:
+    async def test_job_path_lists_metric_names_scoped_to_job(self) -> None:
+        driver, session = _driver_with_response(
+            {"status": "success", "data": ["up", "http_requests_total"]}
+        )
+        items = await driver.explore_list(["jobs", "prometheus"])
+        assert sorted(i.name for i in items) == ["http_requests_total", "up"]
+        assert all(i.type == "metric" and i.expandable for i in items)
+        args, kwargs = session.get.call_args
+        assert args[0] == "http://localhost:9090/api/v1/label/__name__/values"
+        assert kwargs["params"] == {"match[]": '{job="prometheus"}'}
+
+
+class TestExplorePreview:
+    async def test_metric_preview_runs_metric_name_as_query(self) -> None:
+        driver, session = _driver_with_response(
+            {"status": "success", "data": {"resultType": "vector", "result": []}}
+        )
+        result = await driver.explore_preview(["metrics", "up"])
+        assert isinstance(result, ReadResult)
+        args, kwargs = session.get.call_args
+        assert args[0] == "http://localhost:9090/api/v1/query"
+        assert kwargs["params"] == {"query": "up"}
+
+    async def test_job_metric_preview_runs_metric_name_as_query(self) -> None:
+        driver, session = _driver_with_response(
+            {"status": "success", "data": {"resultType": "vector", "result": []}}
+        )
+        result = await driver.explore_preview(["jobs", "prometheus", "up"])
+        assert isinstance(result, ReadResult)
+        args, kwargs = session.get.call_args
+        assert args[0] == "http://localhost:9090/api/v1/query"
+        assert kwargs["params"] == {"query": "up"}
+
+    async def test_job_path_returns_none(self) -> None:
         driver, _ = _driver_with_response({"status": "success", "data": []})
-        assert await driver.explore_list(["jobs", "prometheus"]) == []
+        assert await driver.explore_preview(["jobs", "prometheus"]) is None
+
+    async def test_root_returns_none(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        assert await driver.explore_preview([]) is None
 
 
 class TestExploreDescribe:
@@ -426,6 +473,18 @@ class TestExploreDescribe:
         assert isinstance(result, EntityDescription)
         assert result.kind == "metric"
         assert result.comment is None
+
+    async def test_job_metric_path_describes_same_as_top_level_metric(self) -> None:
+        driver, _ = _driver_with_response({"status": "success", "data": ["job"]})
+        with patch.object(
+            driver,
+            "_get",
+            AsyncMock(side_effect=[["job"], DriverError("no metadata"), []]),
+        ):
+            result = await driver.explore_describe(["jobs", "prometheus", "up"])
+        assert isinstance(result, EntityDescription)
+        assert result.name == "up"
+        assert result.kind == "metric"
 
     async def test_describe_single_label_returns_field_description(self) -> None:
         driver, _ = _driver_with_response(
@@ -483,38 +542,49 @@ class TestExploreDescribe:
         assert labels["Build: version"] == "2.53.0"
 
     async def test_describe_job_returns_one_record_per_target(self) -> None:
-        driver, _ = _driver_with_response(
-            {
-                "status": "success",
-                "data": {
-                    "activeTargets": [
-                        {
-                            "labels": {
-                                "job": "prometheus",
-                                "instance": "localhost:9090",
-                            },
-                            "health": "up",
-                            "scrapeInterval": "15s",
-                            "scrapeTimeout": "10s",
-                            "lastScrape": "2024-01-01T00:00:00Z",
-                            "lastScrapeDuration": 0.012,
-                        },
-                        {
-                            "labels": {
-                                "job": "prometheus",
-                                "instance": "otherhost:9090",
-                            },
-                            "health": "down",
-                        },
-                        {
-                            "labels": {"job": "node", "instance": "host1:9100"},
-                            "health": "up",
-                        },
-                    ]
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        targets_data = {
+            "activeTargets": [
+                {
+                    "labels": {
+                        "job": "prometheus",
+                        "instance": "localhost:9090",
+                    },
+                    "health": "up",
+                    "scrapeInterval": "15s",
+                    "scrapeTimeout": "10s",
+                    "lastScrape": "2024-01-01T00:00:00Z",
+                    "lastScrapeDuration": 0.012,
                 },
-            }
-        )
-        result = await driver.explore_describe(["jobs", "prometheus"])
+                {
+                    "labels": {
+                        "job": "prometheus",
+                        "instance": "otherhost:9090",
+                    },
+                    "health": "down",
+                },
+                {
+                    "labels": {"job": "node", "instance": "host1:9100"},
+                    "health": "up",
+                },
+            ]
+        }
+        metadata = [
+            {"target": {"instance": "localhost:9090"}, "metric": "up"},
+            {"target": {"instance": "localhost:9090"}, "metric": "go_goroutines"},
+        ]
+        scrape_samples = {
+            "resultType": "vector",
+            "result": [
+                {"metric": {"instance": "localhost:9090"}, "value": [0, "5"]},
+            ],
+        }
+        with patch.object(
+            driver,
+            "_get",
+            AsyncMock(side_effect=[targets_data, metadata, scrape_samples]),
+        ):
+            result = await driver.explore_describe(["jobs", "prometheus"])
         assert isinstance(result, list)
         records = [r for r in result if isinstance(r, GenericRecordDescription)]
         assert len(records) == len(result)
@@ -524,6 +594,8 @@ class TestExploreDescribe:
         localhost = next(r for r in records if r.name == "localhost:9090")
         labels = {f.label: f.value for f in localhost.fields}
         assert labels["Status"] == "✓"
+        assert labels["Scraped Metrics"] == "2"
+        assert labels["Timeseries"] == "5"
         assert not any("Label: " in label for label in labels)
         assert not any("Scrape Pool" in label for label in labels)
         assert [f.label for f in localhost.fields] == [
@@ -532,34 +604,38 @@ class TestExploreDescribe:
             "Last Scrape",
             "Status",
             "Last Scrape Duration",
+            "Scraped Metrics",
+            "Timeseries",
         ]
 
         otherhost = next(r for r in records if r.name == "otherhost:9090")
-        assert {f.label: f.value for f in otherhost.fields}["Status"] == "✗"
+        otherhost_labels = {f.label: f.value for f in otherhost.fields}
+        assert otherhost_labels["Status"] == "✗"
+        assert otherhost_labels["Scraped Metrics"] == "0"
+        assert otherhost_labels["Timeseries"] == "0"
 
     async def test_describe_job_drops_last_error_when_empty_for_all_targets(
         self,
     ) -> None:
-        driver, _ = _driver_with_response(
-            {
-                "status": "success",
-                "data": {
-                    "activeTargets": [
-                        {
-                            "labels": {"job": "prometheus", "instance": "a:9090"},
-                            "health": "up",
-                            "lastError": "",
-                        },
-                        {
-                            "labels": {"job": "prometheus", "instance": "b:9090"},
-                            "health": "up",
-                            "lastError": "",
-                        },
-                    ]
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        targets_data = {
+            "activeTargets": [
+                {
+                    "labels": {"job": "prometheus", "instance": "a:9090"},
+                    "health": "up",
+                    "lastError": "",
                 },
-            }
-        )
-        result = await driver.explore_describe(["jobs", "prometheus"])
+                {
+                    "labels": {"job": "prometheus", "instance": "b:9090"},
+                    "health": "up",
+                    "lastError": "",
+                },
+            ]
+        }
+        with patch.object(
+            driver, "_get", AsyncMock(side_effect=[targets_data, [], {}])
+        ):
+            result = await driver.explore_describe(["jobs", "prometheus"])
         assert isinstance(result, list)
         for rec in result:
             assert isinstance(rec, GenericRecordDescription)
@@ -568,26 +644,25 @@ class TestExploreDescribe:
     async def test_describe_job_keeps_last_error_when_any_target_has_one(
         self,
     ) -> None:
-        driver, _ = _driver_with_response(
-            {
-                "status": "success",
-                "data": {
-                    "activeTargets": [
-                        {
-                            "labels": {"job": "prometheus", "instance": "a:9090"},
-                            "health": "up",
-                            "lastError": "",
-                        },
-                        {
-                            "labels": {"job": "prometheus", "instance": "b:9090"},
-                            "health": "down",
-                            "lastError": "connection refused",
-                        },
-                    ]
+        driver, _ = _driver_with_response({"status": "success", "data": []})
+        targets_data = {
+            "activeTargets": [
+                {
+                    "labels": {"job": "prometheus", "instance": "a:9090"},
+                    "health": "up",
+                    "lastError": "",
                 },
-            }
-        )
-        result = await driver.explore_describe(["jobs", "prometheus"])
+                {
+                    "labels": {"job": "prometheus", "instance": "b:9090"},
+                    "health": "down",
+                    "lastError": "connection refused",
+                },
+            ]
+        }
+        with patch.object(
+            driver, "_get", AsyncMock(side_effect=[targets_data, [], {}])
+        ):
+            result = await driver.explore_describe(["jobs", "prometheus"])
         assert isinstance(result, list)
         by_name = {}
         for rec in result:

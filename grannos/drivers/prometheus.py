@@ -131,16 +131,21 @@ Scalar/string results return a single `timestamp`/`value` row. A `value` of `NaN
 │       └── <label>
 ├── jobs
 │   └── <job>
+│       └── <metric>
 ├── configuration
 └── runtime
 ```
 
 Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
 
-`explore.describe` on `["metrics", metric]` returns label metadata (name, up to
+`explore.describe` on `["metrics", metric]` (or the equivalent `["jobs", job,
+metric]` reached by drilling into a job) returns label metadata (name, up to
 3 sampled values), with `kind` and `comment` populated from `/api/v1/metadata`
 (type and help text) when available. Describing a single `["metrics", metric,
 label]` re-fetches that label's metadata standalone (up to 3 sampled values).
+`explore.preview` on either metric path runs the metric's bare name as a
+PromQL query (subject to the connection's `query_mode`), same as typing it in
+the query bar.
 
 Describing `configuration` (leaf) returns a `RawDocument` (`filetype: "yaml"`)
 holding the running configuration, as reported by `/api/v1/status/config`.
@@ -152,17 +157,22 @@ time, storage stats, …), and build info as label/value fields, merged from
 `/api/v1/status/buildinfo` — each field labeled `Flag: *`, `Runtime: *`, or
 `Build: *`.
 
-`jobs` lists scrape jobs (`/api/v1/targets`, grouped by the `job` label). A job
-is a leaf — the explore tree goes no deeper than that; describing it is the
-detailed view. Describing a job returns an array of `GenericRecordDescription`
+`jobs` lists scrape jobs (`/api/v1/targets`, grouped by the `job` label).
+Expanding a job lists the distinct metric names scraped from it
+(`/api/v1/label/__name__/values`, scoped with `match[]={job="<job>"}`).
+Describing a job returns an array of `GenericRecordDescription`
 (`kind: "prometheus.target"`), one per target, named after its instance, in
-this field order: 
+this field order:
 `Interval`, `Timeout`, `Last Scrape` (a relative age — `5s ago`, `3m ago`,
-`2h ago`), `Status` (`✓`/`✗`/`?` for up/down/unknown), and `Last Scrape
-Duration` (whole milliseconds, e.g. `12ms`). `Last Error` is appended (on
-every target's record) only when at least one target in the job has a
-non-empty error. Target labels and the scrape pool name are not exposed (the
-pool is just the job name; instance/job already group the record).
+`2h ago`), `Status` (`✓`/`✗`/`?` for up/down/unknown), `Last Scrape
+Duration` (whole milliseconds, e.g. `12ms`), `Scraped Metrics` (distinct
+metric names last scraped from the target, via
+`/api/v1/targets/metadata`), and `Timeseries` (the target's last
+`scrape_samples_scraped` value — its series count, assuming the normal one
+sample per series per scrape). `Last Error` is appended (on every target's
+record) only when at least one target in the job has a non-empty error.
+Target labels and the scrape pool name are not exposed (the pool is just the
+job name; instance/job already group the record).
 """
 
     def __init__(
@@ -298,31 +308,35 @@ pool is just the job name; instance/job already group the record).
                 data = await self._get("/api/v1/targets", {})
                 jobs = sorted({_target_job(t) for t in data.get("activeTargets", [])})
                 return [
-                    ExploreItem(name=job, type="job", expandable=False) for job in jobs
+                    ExploreItem(name=job, type="job", expandable=True) for job in jobs
+                ]
+            case ["jobs", job]:
+                names = await self._get(
+                    "/api/v1/label/__name__/values",
+                    {"match[]": _job_selector(job)},
+                )
+                return [
+                    ExploreItem(name=name, type="metric", expandable=True)
+                    for name in sorted(names)
                 ]
             case _:
                 return []
 
+    async def explore_preview(self, path: list[str]) -> ReadResult | None:
+        # Previewing a metric — reached either via the top-level metrics list or
+        # by drilling into a job's scraped metrics — is just running its name as
+        # a PromQL instant/range query, same as the query bar would.
+        match path:
+            case ["metrics", metric] | ["jobs", _, metric]:
+                result = await self.execute(metric, [])
+                return result if isinstance(result, ReadResult) else None
+            case _:
+                return None
+
     async def explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
-            case ["metrics", metric]:
-                labels = await self._get("/api/v1/labels", {"match[]": metric})
-                label_names = sorted(label for label in labels if label != "__name__")
-                metadata = await self._metric_metadata(metric)
-                properties = [
-                    FieldDescription(
-                        name=label,
-                        types=["label"],
-                        sample=await self._label_values_sample(metric, label),
-                    )
-                    for label in label_names
-                ]
-                return EntityDescription(
-                    name=metric,
-                    kind=metadata.get("type", "metric"),
-                    properties=properties,
-                    comment=metadata.get("help"),
-                )
+            case ["metrics", metric] | ["jobs", _, metric]:
+                return await self._describe_metric(metric)
             case ["metrics", metric, label]:
                 return FieldDescription(
                     name=label,
@@ -338,6 +352,25 @@ pool is just the job name; instance/job already group the record).
                 return await self._describe_job(job)
             case _:
                 return None
+
+    async def _describe_metric(self, metric: str) -> EntityDescription:
+        labels = await self._get("/api/v1/labels", {"match[]": metric})
+        label_names = sorted(label for label in labels if label != "__name__")
+        metadata = await self._metric_metadata(metric)
+        properties = [
+            FieldDescription(
+                name=label,
+                types=["label"],
+                sample=await self._label_values_sample(metric, label),
+            )
+            for label in label_names
+        ]
+        return EntityDescription(
+            name=metric,
+            kind=metadata.get("type", "metric"),
+            properties=properties,
+            comment=metadata.get("help"),
+        )
 
     async def _describe_runtime(self) -> GenericRecordDescription:
         flags = await self._get("/api/v1/status/flags", {})
@@ -364,8 +397,14 @@ pool is just the job name; instance/job already group the record).
         targets = [t for t in data.get("activeTargets", []) if _target_job(t) == job]
         if not targets:
             return None
+        metric_counts, series_counts = await self._job_scrape_stats(job)
         records = [
-            _target_record(t, _target_instance(t))
+            _target_record(
+                t,
+                _target_instance(t),
+                metric_counts.get(_target_instance(t), 0),
+                series_counts.get(_target_instance(t), 0),
+            )
             for t in sorted(targets, key=_target_instance)
         ]
         any_errors = any(
@@ -387,6 +426,55 @@ pool is just the job name; instance/job already group the record).
             )
             for rec in records
         ]
+
+    async def _job_scrape_stats(
+        self, job: str
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """Per-instance (distinct metric name count, timeseries count) for `job`'s
+        targets, in a single round trip each rather than one per target.
+
+        Metric names come from `/api/v1/targets/metadata` (one entry per
+        target/metric pair). Timeseries counts come from the `scrape_samples_scraped`
+        metric Prometheus attaches to every scrape — the number of samples in a
+        target's last scrape, which is its series count assuming (as is normal)
+        one sample per series per scrape.
+        """
+        selector = _job_selector(job)
+
+        metric_names: dict[str, set[str]] = {}
+        try:
+            metadata = await self._get(
+                "/api/v1/targets/metadata",
+                {"match_target": selector, "metric": "", "limit": "0"},
+            )
+        except DriverError:
+            metadata = []
+        for entry in metadata:
+            instance = entry.get("target", {}).get("instance")
+            if not instance:
+                continue
+            metric_names.setdefault(instance, set()).add(entry.get("metric", ""))
+        metric_counts = {
+            instance: len(names) for instance, names in metric_names.items()
+        }
+
+        series_counts: dict[str, int] = {}
+        try:
+            data = await self._get(
+                "/api/v1/query", {"query": f"scrape_samples_scraped{selector}"}
+            )
+        except DriverError:
+            data = {}
+        for s in data.get("result", []):
+            instance = s.get("metric", {}).get("instance")
+            if not instance:
+                continue
+            try:
+                series_counts[instance] = int(float(s["value"][1]))
+            except TypeError, ValueError, KeyError, IndexError:
+                continue
+
+        return metric_counts, series_counts
 
     async def _metric_metadata(self, metric: str) -> dict[str, str]:
         try:
@@ -506,6 +594,14 @@ def _parse_value(value: str) -> Any:
     return parsed
 
 
+def _escape_label_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _job_selector(job: str) -> str:
+    return f'{{job="{_escape_label_value(job)}"}}'
+
+
 def _target_job(target: dict[str, Any]) -> str:
     return target.get("labels", {}).get("job", target.get("scrapePool", "unknown"))
 
@@ -568,12 +664,23 @@ _TARGET_FIELD_FORMATTERS: dict[str, Callable[[Any], str]] = {
 }
 
 
-def _target_record(target: dict[str, Any], name: str) -> GenericRecordDescription:
+def _target_record(
+    target: dict[str, Any], name: str, metric_count: int, series_count: int
+) -> GenericRecordDescription:
     fields = [
         RecordField(
             label=label, value=_TARGET_FIELD_FORMATTERS.get(key, str)(target[key])
         )
         for key, label in _TARGET_FIELD_LABELS.items()
-        if key in target
+        if key in target and key != "lastError"
     ]
+    fields.append(RecordField(label="Scraped Metrics", value=str(metric_count)))
+    fields.append(RecordField(label="Timeseries", value=str(series_count)))
+    if "lastError" in target:
+        fields.append(
+            RecordField(
+                label=_TARGET_FIELD_LABELS["lastError"],
+                value=str(target["lastError"]),
+            )
+        )
     return GenericRecordDescription(kind="prometheus.target", name=name, fields=fields)

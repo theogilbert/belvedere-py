@@ -421,7 +421,7 @@ class TestExploreList:
         )
         items = await driver.explore_list(["jobs", "prometheus"])
         assert sorted(i.name for i in items) == ["http_requests_total", "up"]
-        assert all(i.type == "metric" and i.expandable for i in items)
+        assert all(i.type == "metric" and not i.expandable for i in items)
         args, kwargs = session.get.call_args
         assert args[0] == "http://localhost:9090/api/v1/label/__name__/values"
         assert kwargs["params"] == {"match[]": '{job="prometheus"}'}
@@ -583,8 +583,14 @@ class TestExploreDescribe:
             driver,
             "_get",
             AsyncMock(side_effect=[targets_data, metadata, scrape_samples]),
-        ):
+        ) as get_mock:
             result = await driver.explore_describe(["jobs", "prometheus"])
+        # Regression: passing metric="" or limit="0" makes Prometheus match
+        # nothing (an empty metric name, or a hard cap of zero results) —
+        # only match_target should be sent.
+        metadata_call = get_mock.call_args_list[1]
+        assert metadata_call.args[0] == "/api/v1/targets/metadata"
+        assert metadata_call.args[1] == {"match_target": '{job="prometheus"}'}
         assert isinstance(result, list)
         records = [r for r in result if isinstance(r, GenericRecordDescription)]
         assert len(records) == len(result)
@@ -594,8 +600,7 @@ class TestExploreDescribe:
         localhost = next(r for r in records if r.name == "localhost:9090")
         labels = {f.label: f.value for f in localhost.fields}
         assert labels["Status"] == "✓"
-        assert labels["Scraped Metrics"] == "2"
-        assert labels["Timeseries"] == "5"
+        assert labels["Scraped metrics (series)"] == "2 (5)"
         assert not any("Label: " in label for label in labels)
         assert not any("Scrape Pool" in label for label in labels)
         assert [f.label for f in localhost.fields] == [
@@ -604,15 +609,13 @@ class TestExploreDescribe:
             "Last Scrape",
             "Status",
             "Last Scrape Duration",
-            "Scraped Metrics",
-            "Timeseries",
+            "Scraped metrics (series)",
         ]
 
         otherhost = next(r for r in records if r.name == "otherhost:9090")
         otherhost_labels = {f.label: f.value for f in otherhost.fields}
         assert otherhost_labels["Status"] == "✗"
-        assert otherhost_labels["Scraped Metrics"] == "0"
-        assert otherhost_labels["Timeseries"] == "0"
+        assert otherhost_labels["Scraped metrics (series)"] == "0 (0)"
 
     async def test_describe_job_drops_last_error_when_empty_for_all_targets(
         self,

@@ -145,7 +145,9 @@ metric]` reached by drilling into a job) returns label metadata (name, up to
 label]` re-fetches that label's metadata standalone (up to 3 sampled values).
 `explore.preview` on either metric path runs the metric's bare name as a
 PromQL query (subject to the connection's `query_mode`), same as typing it in
-the query bar.
+the query bar — this works for a job's metrics too even though they're
+leaves (unlike the top-level `metrics` list, a job's own metric nodes don't
+expand further; drill into `["metrics", metric]` instead to see labels).
 
 Describing `configuration` (leaf) returns a `RawDocument` (`filetype: "yaml"`)
 holding the running configuration, as reported by `/api/v1/status/config`.
@@ -158,20 +160,21 @@ time, storage stats, …), and build info as label/value fields, merged from
 `Build: *`.
 
 `jobs` lists scrape jobs (`/api/v1/targets`, grouped by the `job` label).
-Expanding a job lists the distinct metric names scraped from it
-(`/api/v1/label/__name__/values`, scoped with `match[]={job="<job>"}`).
+Expanding a job lists the distinct metric names scraped from it as leaves
+(`/api/v1/label/__name__/values`, scoped with `match[]={job="<job>"}`) —
+previewable (`explore.preview`) but not expandable further.
 Describing a job returns an array of `GenericRecordDescription`
 (`kind: "prometheus.target"`), one per target, named after its instance, in
 this field order:
 `Interval`, `Timeout`, `Last Scrape` (a relative age — `5s ago`, `3m ago`,
 `2h ago`), `Status` (`✓`/`✗`/`?` for up/down/unknown), `Last Scrape
-Duration` (whole milliseconds, e.g. `12ms`), `Scraped Metrics` (distinct
-metric names last scraped from the target, via
-`/api/v1/targets/metadata`), and `Timeseries` (the target's last
-`scrape_samples_scraped` value — its series count, assuming the normal one
-sample per series per scrape). `Last Error` is appended (on every target's
-record) only when at least one target in the job has a non-empty error.
-Target labels and the scrape pool name are not exposed (the pool is just the
+Duration` (whole milliseconds, e.g. `12ms`), and `Scraped metrics (series)` —
+`"<n> (<m>)"`, where `<n>` is the count of distinct metric names last
+scraped from the target (via `/api/v1/targets/metadata`) and `<m>` is its
+last `scrape_samples_scraped` value (its series count, assuming the normal
+one sample per series per scrape). `Last Error` is appended (on every
+target's record) only when at least one target in the job has a non-empty
+error. Target labels and the scrape pool name are not exposed (the pool is just the
 job name; instance/job already group the record).
 """
 
@@ -316,7 +319,7 @@ job name; instance/job already group the record).
                     {"match[]": _job_selector(job)},
                 )
                 return [
-                    ExploreItem(name=name, type="metric", expandable=True)
+                    ExploreItem(name=name, type="metric", expandable=False)
                     for name in sorted(names)
                 ]
             case _:
@@ -445,7 +448,7 @@ job name; instance/job already group the record).
         try:
             metadata = await self._get(
                 "/api/v1/targets/metadata",
-                {"match_target": selector, "metric": "", "limit": "0"},
+                {"match_target": selector},
             )
         except DriverError:
             metadata = []
@@ -674,8 +677,12 @@ def _target_record(
         for key, label in _TARGET_FIELD_LABELS.items()
         if key in target and key != "lastError"
     ]
-    fields.append(RecordField(label="Scraped Metrics", value=str(metric_count)))
-    fields.append(RecordField(label="Timeseries", value=str(series_count)))
+    fields.append(
+        RecordField(
+            label="Scraped metrics (series)",
+            value=f"{metric_count} ({series_count})",
+        )
+    )
     if "lastError" in target:
         fields.append(
             RecordField(

@@ -421,10 +421,21 @@ class TestExploreList:
         )
         items = await driver.explore_list(["jobs", "prometheus"])
         assert sorted(i.name for i in items) == ["http_requests_total", "up"]
-        assert all(i.type == "metric" and not i.expandable for i in items)
+        assert all(i.type == "metric" and i.expandable for i in items)
         args, kwargs = session.get.call_args
         assert args[0] == "http://localhost:9090/api/v1/label/__name__/values"
         assert kwargs["params"] == {"match[]": '{job="prometheus"}'}
+
+    async def test_job_metric_path_lists_labels_same_as_top_level_metric(self) -> None:
+        driver, session = _driver_with_response(
+            {"status": "success", "data": ["__name__", "job", "instance"]}
+        )
+        items = await driver.explore_list(["jobs", "prometheus", "up"])
+        assert sorted(i.name for i in items) == ["instance", "job"]
+        assert all(i.type == "label" and not i.expandable for i in items)
+        args, kwargs = session.get.call_args
+        assert args[0] == "http://localhost:9090/api/v1/labels"
+        assert kwargs["params"] == {"match[]": "up"}
 
 
 class TestExplorePreview:
@@ -491,6 +502,16 @@ class TestExploreDescribe:
             {"status": "success", "data": ["a", "b", "c", "d"]}
         )
         result = await driver.explore_describe(["metrics", "up", "job"])
+        assert isinstance(result, FieldDescription)
+        assert result.name == "job"
+        assert result.types == ["label"]
+        assert result.sample == ["a", "b", "c"]
+
+    async def test_describe_job_metric_label_matches_top_level_label(self) -> None:
+        driver, _ = _driver_with_response(
+            {"status": "success", "data": ["a", "b", "c", "d"]}
+        )
+        result = await driver.explore_describe(["jobs", "prometheus", "up", "job"])
         assert isinstance(result, FieldDescription)
         assert result.name == "job"
         assert result.types == ["label"]

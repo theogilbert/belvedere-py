@@ -132,22 +132,21 @@ Scalar/string results return a single `timestamp`/`value` row. A `value` of `NaN
 ├── jobs
 │   └── <job>
 │       └── <metric>
+│           └── <label>
 ├── configuration
 └── runtime
 ```
 
 Requires Prometheus >= 2.24 (`/api/v1/labels` with `match[]` support).
 
-`explore.describe` on `["metrics", metric]` (or the equivalent `["jobs", job,
-metric]` reached by drilling into a job) returns label metadata (name, up to
-3 sampled values), with `kind` and `comment` populated from `/api/v1/metadata`
-(type and help text) when available. Describing a single `["metrics", metric,
-label]` re-fetches that label's metadata standalone (up to 3 sampled values).
-`explore.preview` on either metric path runs the metric's bare name as a
-PromQL query (subject to the connection's `query_mode`), same as typing it in
-the query bar — this works for a job's metrics too even though they're
-leaves (unlike the top-level `metrics` list, a job's own metric nodes don't
-expand further; drill into `["metrics", metric]` instead to see labels).
+A metric reached by drilling into a job (`["jobs", job, metric]`) behaves
+identically to the equivalent top-level `["metrics", metric]` node —
+`explore.list` expands it to the same label children (`["metrics", metric,
+label]` / `["jobs", job, metric, label]` describe identically too),
+`explore.describe` returns the same label metadata (name, up to 3 sampled
+values, with `kind`/`comment` from `/api/v1/metadata` when available), and
+`explore.preview` runs the metric's bare name as a PromQL query (subject to
+the connection's `query_mode`), same as typing it in the query bar.
 
 Describing `configuration` (leaf) returns a `RawDocument` (`filetype: "yaml"`)
 holding the running configuration, as reported by `/api/v1/status/config`.
@@ -160,10 +159,10 @@ time, storage stats, …), and build info as label/value fields, merged from
 `Build: *`.
 
 `jobs` lists scrape jobs (`/api/v1/targets`, grouped by the `job` label).
-Expanding a job lists the distinct metric names scraped from it as leaves
+Expanding a job lists the distinct metric names scraped from it
 (`/api/v1/label/__name__/values`, scoped with `match[]={job="<job>"}`) —
-previewable (`explore.preview`) but not expandable further.
-Describing a job returns an array of `GenericRecordDescription`
+each expandable to its labels exactly like a top-level metric node (see
+above). Describing a job returns an array of `GenericRecordDescription`
 (`kind: "prometheus.target"`), one per target, named after its instance, in
 this field order:
 `Interval`, `Timeout`, `Last Scrape` (a relative age — `5s ago`, `3m ago`,
@@ -300,7 +299,7 @@ job name; instance/job already group the record).
                     ExploreItem(name=name, type="metric", expandable=True)
                     for name in sorted(names)
                 ]
-            case ["metrics", metric]:
+            case ["metrics", metric] | ["jobs", _, metric]:
                 labels = await self._get("/api/v1/labels", {"match[]": metric})
                 return [
                     ExploreItem(name=label, type="label", expandable=False)
@@ -319,7 +318,7 @@ job name; instance/job already group the record).
                     {"match[]": _job_selector(job)},
                 )
                 return [
-                    ExploreItem(name=name, type="metric", expandable=False)
+                    ExploreItem(name=name, type="metric", expandable=True)
                     for name in sorted(names)
                 ]
             case _:
@@ -340,7 +339,7 @@ job name; instance/job already group the record).
         match path:
             case ["metrics", metric] | ["jobs", _, metric]:
                 return await self._describe_metric(metric)
-            case ["metrics", metric, label]:
+            case ["metrics", metric, label] | ["jobs", _, metric, label]:
                 return FieldDescription(
                     name=label,
                     types=["label"],

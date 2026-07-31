@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pymongo.errors
 import pytest
+from bson import ObjectId
 
 from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
 from grannos.drivers.mongodb import (
@@ -221,7 +222,9 @@ class TestExploreListGridfs:
         client = MagicMock()
         client[  # ty: ignore[unsupported-operator]
             "mydb"
-        ].list_collection_names = AsyncMock(return_value=["users", "fs.files", "fs.chunks"])
+        ].list_collection_names = AsyncMock(
+            return_value=["users", "fs.files", "fs.chunks"]
+        )
         driver = _make_driver(client)
         items = await driver.explore_list(["mydb"])
         assert items == [
@@ -231,7 +234,9 @@ class TestExploreListGridfs:
 
     async def test_no_gridfs_group_when_no_bucket(self) -> None:
         client = MagicMock()
-        client["mydb"].list_collection_names = AsyncMock(return_value=["users", "orders"])
+        client["mydb"].list_collection_names = AsyncMock(
+            return_value=["users", "orders"]
+        )
         driver = _make_driver(client)
         items = await driver.explore_list(["mydb"])
         assert items == [
@@ -282,9 +287,11 @@ class TestFindGridfs:
     async def test_find_routes_to_gridfs_files_collection(self) -> None:
         client = MagicMock()
         cursor = MagicMock()
+        file_id = ObjectId()
         cursor.to_list = AsyncMock(
             return_value=[
                 {
+                    "_id": file_id,
                     "filename": "report.pdf",
                     "length": 4096,
                     "uploadDate": datetime(2026, 1, 1),
@@ -301,17 +308,19 @@ class TestFindGridfs:
             '{"find": "gridfs.fs", "db": "mydb", "filter": {}, "limit": 50}', []
         )
         assert isinstance(result, ReadResult)
+        assert "_id" in result.columns
         assert "filename" in result.columns
         assert "content" in result.columns
         row = dict(zip(result.columns, result.rows[0]))
+        assert row["_id"] == str(file_id)
         assert row["filename"] == "report.pdf"
         assert row["length"] == "4096"  # flatten_docs stringifies scalar values
         lob = row["content"]
         assert isinstance(lob, LobPlaceholder)
         assert lob.ref is not None
         assert lob.ref.startswith("gridfs:")
-        db_name, bucket, filename = json.loads(lob.ref[len("gridfs:") :])
-        assert (db_name, bucket, filename) == ("mydb", "fs", "report.pdf")
+        db_name, bucket, ref_id = json.loads(lob.ref[len("gridfs:") :])
+        assert (db_name, bucket, ref_id) == ("mydb", "fs", str(file_id))
 
     async def test_aggregate_on_gridfs_collection_raises_driver_error(self) -> None:
         driver = _make_driver(_open_client()[0])
@@ -325,13 +334,15 @@ class TestExploreDownloadRefGridfs:
     async def test_gridfs_ref_delegates_to_gridfs_download(self) -> None:
         client = MagicMock()
         driver = _make_driver(client)
-        ref = "gridfs:" + json.dumps(["mydb", "fs", "report.pdf"])
+        file_id = ObjectId()
+        ref = "gridfs:" + json.dumps(["mydb", "fs", str(file_id)])
         with patch("grannos.drivers.mongodb.AsyncGridFSBucket") as bucket_cls:
             grid_out = MagicMock()
+            grid_out.filename = "report.pdf"
             grid_out.content_type = "application/pdf"
             grid_out.read = AsyncMock(return_value=b"%PDF-1.4")
             grid_out.close = AsyncMock()
-            bucket_cls.return_value.open_download_stream_by_name = AsyncMock(
+            bucket_cls.return_value.open_download_stream = AsyncMock(
                 return_value=grid_out
             )
             result = await driver.explore_download_ref(ref, None)
@@ -341,6 +352,7 @@ class TestExploreDownloadRefGridfs:
         bucket_cls.assert_called_once()
         _, kwargs = bucket_cls.call_args
         assert kwargs["bucket_name"] == "fs"
+        bucket_cls.return_value.open_download_stream.assert_called_once_with(file_id)
 
     async def test_non_gridfs_ref_falls_back_to_cache_lookup(self) -> None:
         driver = _make_driver(_open_client()[0])

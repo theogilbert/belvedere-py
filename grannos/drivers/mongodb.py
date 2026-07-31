@@ -9,7 +9,8 @@ from typing import Any
 import gridfs
 import pymongo
 import pymongo.errors
-from bson import json_util
+from bson import ObjectId, json_util
+from bson.errors import InvalidId
 from gridfs import AsyncGridFSBucket
 
 from ..protocol import (
@@ -152,8 +153,8 @@ queried with `find` on a synthetic collection name `"gridfs.<bucket>"` —
 {"find": "gridfs.fs", "db": "mydb", "filter": {"filename": {"$regex": "^report-2026"}}, "limit": 50}
 ```
 
-Each row is one file: `filename`, `length`, `uploadDate`, `contentType`, `md5`,
-`metadata.*`, and a `content` cell — a LOB placeholder, not the actual bytes.
+Each row is one file: `_id`, `filename`, `length`, `uploadDate`, `contentType`,
+`md5`, `metadata.*`, and a `content` cell — a LOB placeholder, not the actual bytes.
 A bucket can hold tens of thousands of files, so nothing here ever reads file
 content up front; `content` is fetched lazily via `explore.download`'s `ref`
 param once you actually want it.
@@ -312,7 +313,9 @@ to fetch its full content later without re-running the query.
         not passed through — a projection would apply to the wrong doc shape.
         """
         cursor = db[f"{bucket}.files"].find(filter_).limit(limit)
-        cursor = cursor.sort(list(sort.items())) if sort else cursor.sort([("filename", 1)])
+        cursor = (
+            cursor.sort(list(sort.items())) if sort else cursor.sort([("filename", 1)])
+        )
         docs = await cursor.to_list()
         rows = [_gridfs_file_row(db.name, bucket, doc) for doc in docs]
         return _docs_to_result(self._register_lob, rows)
@@ -394,7 +397,9 @@ to fetch its full content later without re-running the query.
                     if not _is_gridfs_internal(n, buckets)
                 ]
                 if buckets:
-                    items.append(ExploreItem(name="gridfs", type="group", expandable=True))
+                    items.append(
+                        ExploreItem(name="gridfs", type="group", expandable=True)
+                    )
                 return items
             case [db_name, "gridfs"]:
                 # Buckets are a leaf, not expandable — a bucket can hold tens
@@ -469,23 +474,25 @@ to fetch its full content later without re-running the query.
         self, ref: str, dest_path: str | None
     ) -> DownloadResult:
         """GridFS file cells (from a "gridfs.<bucket>" find) carry a ref
-        encoding (db, bucket, filename) rather than a cached in-memory value —
+        encoding (db, bucket, file _id) rather than a cached in-memory value —
         unlike an ordinary BSON Binary cell, the content was deliberately never
         read up front (that's the whole point of GridFS: values too large for
-        a normal document). Falls back to BaseDriver's cache-based lookup for
-        ordinary LOB refs.
+        a normal document). The _id (not filename) identifies the file since
+        GridFS allows multiple files to share the same filename. Falls back
+        to BaseDriver's cache-based lookup for ordinary LOB refs.
         """
         if ref.startswith(_GRIDFS_REF_PREFIX):
             try:
-                db_name, bucket, filename = json.loads(ref[len(_GRIDFS_REF_PREFIX) :])
-            except (json.JSONDecodeError, ValueError) as exc:
+                db_name, bucket, file_id = json.loads(ref[len(_GRIDFS_REF_PREFIX) :])
+                file_id = ObjectId(file_id)
+            except (json.JSONDecodeError, ValueError, InvalidId) as exc:
                 raise DriverError("Malformed GridFS ref") from exc
             try:
                 return await self._download_gridfs_file(
-                    db_name, bucket, filename, dest_path
+                    db_name, bucket, file_id, dest_path
                 )
             except gridfs.NoFile as exc:
-                raise DriverError(f"No such GridFS file: {filename!r}") from exc
+                raise DriverError(f"No such GridFS file: {file_id!r}") from exc
         return await super().explore_download_ref(ref, dest_path)
 
     async def _describe_gridfs_bucket(
@@ -495,13 +502,26 @@ to fetch its full content later without re-running the query.
         a bucket can hold tens of thousands of files. Includes example query
         syntax, since that's now the only way to reach individual files."""
         cursor = await self._client[db_name][f"{bucket_name}.files"].aggregate(
-            [{"$group": {"_id": None, "count": {"$sum": 1}, "total_size": {"$sum": "$length"}}}]
+            [
+                {
+                    "$group": {
+                        "_id": None,
+                        "count": {"$sum": 1},
+                        "total_size": {"$sum": "$length"},
+                    }
+                }
+            ]
         )
         docs = await cursor.to_list()
         count = docs[0]["count"] if docs else 0
         total_size = docs[0]["total_size"] if docs else 0
         example = json.dumps(
-            {"find": f"{_GRIDFS_PREFIX}{bucket_name}", "db": db_name, "filter": {}, "limit": 50}
+            {
+                "find": f"{_GRIDFS_PREFIX}{bucket_name}",
+                "db": db_name,
+                "filter": {},
+                "limit": 50,
+            }
         )
         return GenericRecordDescription(
             kind="mongodb.gridfs_bucket",
@@ -514,11 +534,12 @@ to fetch its full content later without re-running the query.
         )
 
     async def _download_gridfs_file(
-        self, db_name: str, bucket_name: str, filename: str, dest_path: str | None
+        self, db_name: str, bucket_name: str, file_id: ObjectId, dest_path: str | None
     ) -> DownloadResult:
         grid_bucket = AsyncGridFSBucket(self._client[db_name], bucket_name=bucket_name)
-        grid_out = await grid_bucket.open_download_stream_by_name(filename)
+        grid_out = await grid_bucket.open_download_stream(file_id)
         try:
+            filename = grid_out.filename
             content_type = grid_out.content_type or "application/octet-stream"
             if dest_path is not None:
                 with open(dest_path, "wb") as f:
@@ -559,13 +580,17 @@ to fetch its full content later without re-running the query.
 
 
 def _gridfs_file_row(db_name: str, bucket: str, doc: dict[str, Any]) -> dict[str, Any]:
-    """Build a synthetic row for one `<bucket>.files` document: filename,
+    """Build a synthetic row for one `<bucket>.files` document: _id, filename,
     size, metadata, and a `content` LOB cell carrying a ref the client can
-    pass to explore.download later — never reads the actual file content."""
+    pass to explore.download later — never reads the actual file content.
+    The ref encodes the file's _id rather than its filename, since GridFS
+    allows multiple files in a bucket to share the same filename."""
+    file_id = doc["_id"]
     filename = doc.get("filename", "")
     length = doc.get("length", 0)
-    ref = _GRIDFS_REF_PREFIX + json.dumps([db_name, bucket, filename])
+    ref = _GRIDFS_REF_PREFIX + json.dumps([db_name, bucket, str(file_id)])
     return {
+        "_id": file_id,
         "filename": filename,
         "length": length,
         "uploadDate": doc.get("uploadDate"),

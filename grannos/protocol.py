@@ -363,9 +363,10 @@ class LobPlaceholder:
     """Server-formatted placeholder text to display, e.g. ``"CLOB (3423 chars)"``."""
     ref: str | None = None
     """Opaque token a client can pass as explore.download's ``ref`` param to fetch
-    this specific cell's full content later. None when the driver can't support
-    re-fetching it (e.g. Oracle's LOB locator, which crashes the process if read
-    after its cursor closes) — the cell just stays inert in that case."""
+    this specific cell's full content later. None when the driver didn't cache the
+    value for re-fetching (e.g. Oracle's schema-browsing sample previews, which skip
+    an eager read of every sampled LOB to keep those cheap) — the cell just stays
+    inert in that case."""
     type: str = "lob"
     """Discriminator — always ``"lob"``."""
 

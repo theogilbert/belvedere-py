@@ -223,8 +223,14 @@ if the connection is silently reconnected (e.g. after an idle timeout).
                 )
             if cur.description is not None:
                 columns = [d[0] for d in cur.description]
+                # Render each row's LOBs as it's fetched rather than after a
+                # bulk fetchall(): a LOB locator is only valid until the
+                # cursor's next internal fetch, and fetchall() on a result
+                # bigger than one arraysize batch (default 100) advances past
+                # earlier rows before we ever get to read their LOBs.
                 rows = [
-                    [await render_lob(v) for v in row] for row in await cur.fetchall()
+                    [await render_lob(v, self._register_lob) for v in row]
+                    async for row in cur
                 ]
                 return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
             invalidate_cache(self._conn)

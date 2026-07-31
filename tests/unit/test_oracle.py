@@ -23,9 +23,11 @@ from grannos.drivers.oracle.queries import (
 from grannos.protocol import ExploreItem, IndexDescription, LobPlaceholder, ReadResult
 
 
-def _make_lob(type_name: str, size: int) -> MagicMock:
+def _make_lob(
+    type_name: str, size: int, content: bytes | str | None = None
+) -> MagicMock:
     lob = MagicMock()
-    lob.read = AsyncMock()
+    lob.read = AsyncMock(return_value=content)
     lob.type.name = type_name
     lob.size = AsyncMock(return_value=size)
     return lob
@@ -45,6 +47,7 @@ def _make_driver(rows: list, has_oracle_maintained: bool) -> OracleDriver:
     cur = MagicMock()
     cur.execute = AsyncMock()
     cur.fetchall = AsyncMock(return_value=rows)
+    cur.__aiter__.return_value = iter(rows)
     conn = MagicMock(spec=oracledb.AsyncConnection)
     conn.cursor.return_value = cur
     return OracleDriver({}, conn, has_oracle_maintained, DriverSettings())
@@ -168,20 +171,40 @@ class TestRenderLob:
         lob = _make_lob("DB_TYPE_BLOB", 128)
         assert asyncio.run(render_lob(lob)) == LobPlaceholder(text="BLOB (128 bytes)")
 
+    def test_with_register_lob_reads_content_and_caches_it(self) -> None:
+        lob = _make_lob("DB_TYPE_CLOB", 4, content="text")
+        cache: dict[str, bytes | str] = {}
+
+        def register_lob(value: bytes | str, text: str) -> LobPlaceholder:
+            ref = "some-ref"
+            cache[ref] = value
+            return LobPlaceholder(text=text, ref=ref)
+
+        result = asyncio.run(render_lob(lob, register_lob))
+        assert result == LobPlaceholder(text="CLOB (4 chars)", ref="some-ref")
+        assert cache["some-ref"] == "text"
+
 
 class TestExecuteRendersLobs:
-    def test_replaces_lob_values_with_placeholders(self) -> None:
-        lob = _make_lob("DB_TYPE_CLOB", 3423)
+    def test_replaces_lob_values_with_downloadable_placeholders(self) -> None:
+        content = "x" * 3423
+        lob = _make_lob("DB_TYPE_CLOB", 3423, content=content)
         cur = MagicMock()
         cur.execute = AsyncMock()
         cur.description = [("ID",), ("NOTES",)]
         cur.fetchall = AsyncMock(return_value=[(1, lob)])
+        cur.__aiter__.return_value = iter([(1, lob)])
         conn = MagicMock(spec=oracledb.AsyncConnection)
         conn.cursor.return_value = cur
         driver = OracleDriver({}, conn, True, DriverSettings())
         result = asyncio.run(driver.execute("SELECT id, notes FROM t", []))
         assert isinstance(result, ReadResult)
-        assert result.rows == [[1, LobPlaceholder(text="CLOB (3423 chars)")]]
+        assert result.rows[0][0] == 1
+        placeholder = result.rows[0][1]
+        assert isinstance(placeholder, LobPlaceholder)
+        assert placeholder.text == "CLOB (3423 chars)"
+        assert placeholder.ref is not None
+        assert driver._lob_cache[placeholder.ref] == content
 
 
 class TestExecuteErrorPropagation:

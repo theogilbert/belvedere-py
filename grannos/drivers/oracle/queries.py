@@ -1,5 +1,6 @@
 """Oracle query functions — one per SQL query, with typed return values."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any
@@ -615,18 +616,32 @@ async def fetch_table_sample_rows(
         return [], []
 
 
-async def render_lob(value: Any) -> Any:
-    """Render a LOB locator as a :class:`LobPlaceholder` instead of reading its content.
+async def render_lob(
+    value: Any,
+    register_lob: Callable[[bytes | str, str], LobPlaceholder] | None = None,
+) -> Any:
+    """Render a LOB locator as a :class:`LobPlaceholder`.
 
-    CLOB/BLOB values can be arbitrarily large, and a locator that outlives its
-    cursor crashes the process if read later (e.g. during response serialization) —
-    a placeholder sidesteps both, at the cost of one cheap ``size()`` round trip.
+    A LOB locator can only be read while the cursor is still positioned on the
+    row it came from — reading it after the cursor's next internal fetch (or
+    after it closes) crashes the process. That means the *only* safe time to
+    read one is right now, immediately after the row was fetched.
+
+    When `register_lob` is given, the full content is read now and cached
+    under a fresh ref via that callback so the cell can be re-downloaded
+    later (the cache holds the materialized value, never the locator). With
+    no callback, this falls back to a cheap ``size()`` round trip and a
+    non-downloadable placeholder — used for schema-browsing previews where
+    eagerly reading every sampled LOB's full content isn't worth the cost.
     """
     if not hasattr(value, "read"):
         return value
     type_name = value.type.name.removeprefix("DB_TYPE_")
     unit = "bytes" if type_name == "BLOB" else "chars"
-    return LobPlaceholder(text=f"{type_name} ({await value.size()} {unit})")
+    if register_lob is None:
+        return LobPlaceholder(text=f"{type_name} ({await value.size()} {unit})")
+    content = await value.read()
+    return register_lob(content, f"{type_name} ({len(content)} {unit})")
 
 
 def build_column_index_lists(

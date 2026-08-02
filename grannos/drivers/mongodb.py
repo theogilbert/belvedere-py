@@ -175,7 +175,9 @@ Describing an index returns its key fields with their sort direction (`asc` / `d
 A GridFS bucket is inferred from a `<bucket>.files` collection; its backing
 `.files`/`.chunks` collections are hidden from the plain collection list once
 represented under `gridfs`. Describing a bucket returns file count, total
-size, and example query syntax — not a file listing.
+size, and example query syntax — not a file listing. `explore.preview` on a
+bucket runs `{"find": "gridfs.<bucket>", "limit": 10}`, same as typing it in
+the query bar.
 
 Any LOB cell in a result row (a GridFS `content` cell, or an ordinary BSON
 Binary value) carries a `ref` — pass that to `explore.download`'s `ref` param
@@ -441,6 +443,11 @@ to fetch its full content later without re-running the query.
             case [db_name, collection_name]:
                 db = self._client[db_name]
                 return await self._find(db, {_Op.FIND: collection_name, "limit": 10})
+            case [db_name, "gridfs", bucket]:
+                db = self._client[db_name]
+                return await self._find(
+                    db, {_Op.FIND: f"{_GRIDFS_PREFIX}{bucket}", "limit": 10}
+                )
             case _:
                 return None
 

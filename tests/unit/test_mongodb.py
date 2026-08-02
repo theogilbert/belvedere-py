@@ -330,6 +330,39 @@ class TestFindGridfs:
             )
 
 
+class TestExplorePreviewGridfs:
+    async def test_preview_routes_to_gridfs_files_collection(self) -> None:
+        client = MagicMock()
+        cursor = MagicMock()
+        file_id = ObjectId()
+        cursor.to_list = AsyncMock(
+            return_value=[
+                {
+                    "_id": file_id,
+                    "filename": "report.pdf",
+                    "length": 4096,
+                    "uploadDate": datetime(2026, 1, 1),
+                    "contentType": "application/pdf",
+                    "metadata": {"owner": "alice"},
+                }
+            ]
+        )
+        db = client["mydb"]
+        db.name = "mydb"
+        db["fs.files"].find.return_value.limit.return_value.sort.return_value = cursor
+        driver = _make_driver(client)
+        result = await driver.explore_preview(["mydb", "gridfs", "fs"])
+        assert isinstance(result, ReadResult)
+        assert "filename" in result.columns
+        row = dict(zip(result.columns, result.rows[0]))
+        assert row["filename"] == "report.pdf"
+
+    async def test_preview_unknown_path_returns_none(self) -> None:
+        driver = _make_driver(_open_client()[0])
+        result = await driver.explore_preview(["mydb"])
+        assert result is None
+
+
 class TestExploreDownloadRefGridfs:
     async def test_gridfs_ref_delegates_to_gridfs_download(self) -> None:
         client = MagicMock()

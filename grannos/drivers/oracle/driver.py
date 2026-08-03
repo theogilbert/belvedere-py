@@ -217,6 +217,7 @@ if the connection is silently reconnected (e.g. after an idle timeout).
             ConnectionLostError: If the connection was lost during execution.
         """
         binds = binds or []
+        _reject_sqlplus_terminator(query)
 
         try:
             cur = self._conn.cursor()
@@ -547,6 +548,23 @@ def _is_explain_plan(query: str) -> bool:
             continue
         return stripped.upper().startswith("EXPLAIN PLAN")
     return False
+
+
+def _reject_sqlplus_terminator(query: str) -> None:
+    """Raise if *query* ends with a lone ``/`` line.
+
+    ``/`` is the SQL*Plus "run the buffer" command, not SQL — it commonly
+    trails a PL/SQL block copied out of a script. Oracle would report it as
+    ``PLS-00103: Encountered the symbol "/"``, which doesn't say what to do
+    about it, so name it here instead. Only a *trailing* ``/`` is rejected: a
+    lone ``/`` mid-statement can legitimately be a line-broken division.
+    """
+    lines = query.rstrip().splitlines()
+    if lines and lines[-1].strip() == "/":
+        raise DriverError(
+            f"line {len(lines)}: '/' is a SQL*Plus terminator, not part of the "
+            "statement — remove it (the statement is sent to Oracle as-is)"
+        )
 
 
 _ALTER_SESSION_RE = re.compile(

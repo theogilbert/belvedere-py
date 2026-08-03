@@ -14,6 +14,7 @@ from grannos.drivers.oracle.driver import (
     _format_type,
     _is_explain_plan,
     _offset_to_line_col,
+    _reject_sqlplus_terminator,
 )
 from grannos.drivers.oracle.queries import (
     _PRE12_SYSTEM_SCHEMAS_SQL,
@@ -462,6 +463,35 @@ class TestIsExplainPlan:
 
     def test_insert_does_not_match(self) -> None:
         assert _is_explain_plan("INSERT INTO t VALUES (1)") is False
+
+
+_PLSQL_BLOCK = "BEGIN\n    NULL;\nEND;"
+
+
+class TestRejectSqlplusTerminator:
+    def test_trailing_slash_is_rejected(self) -> None:
+        with pytest.raises(DriverError, match="SQL\\*Plus terminator"):
+            _reject_sqlplus_terminator(f"{_PLSQL_BLOCK}\n/")
+
+    def test_error_names_the_offending_line(self) -> None:
+        with pytest.raises(DriverError, match="^line 4: "):
+            _reject_sqlplus_terminator(f"{_PLSQL_BLOCK}\n/")
+
+    def test_trailing_whitespace_after_slash_is_rejected(self) -> None:
+        with pytest.raises(DriverError, match="SQL\\*Plus terminator"):
+            _reject_sqlplus_terminator(f"{_PLSQL_BLOCK}\n  /  \n\n")
+
+    def test_block_without_slash_is_accepted(self) -> None:
+        _reject_sqlplus_terminator(_PLSQL_BLOCK)
+
+    def test_plain_select_is_accepted(self) -> None:
+        _reject_sqlplus_terminator("SELECT 1 FROM DUAL")
+
+    def test_line_broken_division_is_accepted(self) -> None:
+        _reject_sqlplus_terminator("SELECT a\n/\nb FROM t")
+
+    def test_slash_inside_expression_is_accepted(self) -> None:
+        _reject_sqlplus_terminator("SELECT a / b FROM t")
 
 
 class TestExplainPlanExecute:

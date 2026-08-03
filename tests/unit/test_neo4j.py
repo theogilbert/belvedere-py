@@ -225,9 +225,9 @@ class TestSerialize:
         assert _serialize(_null_register_lob, None) is None
 
     def test_renders_byte_array_as_byte_count(self) -> None:
-        assert _serialize(_null_register_lob, bytearray(b"\x01\x02\x03")) == LobPlaceholder(
-            text="ByteArray (3 bytes)"
-        )
+        assert _serialize(
+            _null_register_lob, bytearray(b"\x01\x02\x03")
+        ) == LobPlaceholder(text="ByteArray (3 bytes)")
 
     def test_renders_byte_array_nested_in_list(self) -> None:
         result = _serialize(_null_register_lob, [bytearray(b"\x00\x01")])

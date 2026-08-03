@@ -20,7 +20,9 @@ class _StubDriver(BaseDriver):
     (LOB ref cache, explore_download_ref) without a real database."""
 
     @classmethod
-    async def create(cls, params: dict[str, Any], settings: DriverSettings) -> "_StubDriver":
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "_StubDriver":
         return cls(params, settings)
 
     async def reconnect(self) -> None:

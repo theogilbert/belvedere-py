@@ -240,7 +240,9 @@ class TestExploreDownload:
             "ContentType": "application/zip",
         }
         driver = _make_driver(client)
-        result = await driver.explore_download(["my-bucket", "huge.zip"], "/tmp/out.zip")
+        result = await driver.explore_download(
+            ["my-bucket", "huge.zip"], "/tmp/out.zip"
+        )
         assert result.written_to == "/tmp/out.zip"
         assert result.content_base64 is None
         assert result.size == 100 * 1024 * 1024
@@ -254,13 +256,21 @@ class TestExecuteLs:
     async def test_ls_no_args_lists_buckets(self) -> None:
         client = MagicMock()
         client.list_buckets.return_value = {
-            "Buckets": [{"Name": "b1", "CreationDate": datetime(2024, 1, 1, tzinfo=UTC)}]
+            "Buckets": [
+                {"Name": "b1", "CreationDate": datetime(2024, 1, 1, tzinfo=UTC)}
+            ]
         }
         driver = _make_driver(client)
         result = await driver.execute("ls", [])
         assert isinstance(result, ReadResult)
         assert result.rows == [["b1", None, "2024-01-01T00:00:00+00:00", None, None]]
-        assert result.columns == ["key", "size", "last_modified", "storage_class", "etag"]
+        assert result.columns == [
+            "key",
+            "size",
+            "last_modified",
+            "storage_class",
+            "etag",
+        ]
 
     async def test_ls_bucket_lists_objects(self) -> None:
         client = MagicMock()
@@ -311,9 +321,7 @@ class TestExecuteTransfer:
         result = await driver.execute(f"cp {f} s3://my-bucket/uploaded.txt", [])
         assert isinstance(result, WriteResult)
         assert result.rows_affected == 1
-        client.upload_file.assert_called_once_with(
-            str(f), "my-bucket", "uploaded.txt"
-        )
+        client.upload_file.assert_called_once_with(str(f), "my-bucket", "uploaded.txt")
 
     async def test_cp_download_s3_to_local(self, tmp_path: Path) -> None:
         dst = tmp_path / "out.txt"
@@ -343,7 +351,9 @@ class TestExecuteTransfer:
         with pytest.raises(DriverError):
             await driver.execute(f"cp {tmp_path}/a.txt {tmp_path}/b.txt", [])
 
-    async def test_mv_deletes_source_object_after_download(self, tmp_path: Path) -> None:
+    async def test_mv_deletes_source_object_after_download(
+        self, tmp_path: Path
+    ) -> None:
         dst = tmp_path / "out.txt"
         client = MagicMock()
         driver = _make_driver(client)

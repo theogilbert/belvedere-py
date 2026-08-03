@@ -19,7 +19,9 @@ from grannos.protocol import (
     ExploreItem,
     FieldDescription,
     Method,
+    MessageLevel,
     ParamType,
+    ExecuteMessage,
     ExecuteReadResult,
     ExecuteWriteResult,
     ExploreDescribeResult,
@@ -332,6 +334,54 @@ class TestExecute:
         assert isinstance(result, ExecuteReadResult)
         assert isinstance(result.duration_ms, float)
         assert result.duration_ms >= 0
+
+    async def test_should_pass_driver_messages_through_for_reads(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        messages = [ExecuteMessage(level=MessageLevel.INFO, text="hello")]
+        driver.execute.return_value = ReadResult(
+            columns=["id"], rows=[[1]], rows_total=1, messages=messages
+        )
+        result = await disp.dispatch(
+            Method.EXECUTE,
+            {"connection_id": conn_id, "query": "SELECT 1"},
+            noop_progress,
+        )
+        assert isinstance(result, ExecuteReadResult)
+        assert result.messages == messages
+
+    async def test_should_pass_driver_messages_through_for_writes(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        messages = [
+            ExecuteMessage(level=MessageLevel.WARNING, text="PLS-00201", line=4, col=5)
+        ]
+        driver.execute.return_value = WriteResult(rows_affected=0, messages=messages)
+        result = await disp.dispatch(
+            Method.EXECUTE,
+            {
+                "connection_id": conn_id,
+                "query": "CREATE PROCEDURE p AS BEGIN x(); END;",
+            },
+            noop_progress,
+        )
+        assert isinstance(result, ExecuteWriteResult)
+        assert result.messages == messages
+
+    async def test_messages_default_to_empty(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.execute.return_value = WriteResult(rows_affected=1)
+        result = await disp.dispatch(
+            Method.EXECUTE,
+            {"connection_id": conn_id, "query": "DELETE FROM t"},
+            noop_progress,
+        )
+        assert isinstance(result, ExecuteWriteResult)
+        assert result.messages == []
 
     async def test_should_raise_when_connection_id_is_unknown(
         self, dispatcher: Dispatcher

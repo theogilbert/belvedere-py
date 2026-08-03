@@ -499,6 +499,43 @@ class DiagramRegion:
     column, or relationship."""
 
 
+class MessageLevel(StrEnum):
+    """Severity of an :class:`ExecuteMessage`.
+
+    Deliberately has no ``error`` member: a failed request is reported through
+    the response's ``error`` field, so a level that sometimes means "the request
+    failed" would be ambiguous. A statement that *succeeded* while producing
+    something wrong — PL/SQL that compiled with errors, say — is a ``warning``.
+    """
+
+    INFO = "info"
+    """Output the statement chose to emit (Oracle ``DBMS_OUTPUT``, Postgres
+    ``RAISE NOTICE``, SQL Server ``PRINT``)."""
+    WARNING = "warning"
+    """The statement succeeded, but the server flagged a problem with it."""
+
+
+@dataclass
+class ExecuteMessage:
+    """Out-of-band text a statement produced alongside (or instead of) its result.
+
+    Distinct from an error: the statement succeeded. Clients are expected to
+    render these near the result, highlighted by ``level``.
+    """
+
+    level: MessageLevel
+    """``"info"`` or ``"warning"`` — see :class:`MessageLevel`."""
+    text: str
+    """The message itself, without any position prefix — the position is carried
+    in ``line``/``col``, so a client never has to parse it back out."""
+    line: int | None = None
+    """1-indexed line in the submitted ``query`` this message refers to, or None
+    if it refers to no particular position."""
+    col: int | None = None
+    """1-indexed column within ``line``. Always None when ``line`` is None; may
+    be None when the server knows the line but not the column."""
+
+
 @dataclass
 class ReadResult:
     """Result of a read-only query."""
@@ -510,6 +547,8 @@ class ReadResult:
     :class:`SpecialFloat`."""
     rows_total: int
     """Total number of rows matching the query (may exceed len(rows) when the driver applies a default limit)."""
+    messages: list[ExecuteMessage] = field(default_factory=list)
+    """Out-of-band messages the statement produced, in emission order."""
 
 
 @dataclass
@@ -518,6 +557,8 @@ class WriteResult:
 
     rows_affected: int
     """Number of rows inserted, updated, or deleted."""
+    messages: list[ExecuteMessage] = field(default_factory=list)
+    """Out-of-band messages the statement produced, in emission order."""
 
 
 @dataclass
@@ -661,6 +702,9 @@ class ExecuteReadResult:
     driver applied a default limit."""
     duration_ms: float
     """Wall-clock execution time in milliseconds, measured server-side."""
+    messages: list[ExecuteMessage] = field(default_factory=list)
+    """Out-of-band messages the statement produced, in emission order. Empty for
+    drivers and statements that produce none."""
 
 
 @dataclass
@@ -671,6 +715,9 @@ class ExecuteWriteResult:
     """Number of rows inserted, updated, or deleted."""
     duration_ms: float
     """Wall-clock execution time in milliseconds, measured server-side."""
+    messages: list[ExecuteMessage] = field(default_factory=list)
+    """Out-of-band messages the statement produced, in emission order. Empty for
+    drivers and statements that produce none."""
 
 
 @dataclass

@@ -14,7 +14,9 @@ from grannos.drivers.oracle.driver import (
     _format_type,
     _is_explain_plan,
     _offset_to_line_col,
+    _created_object,
     _reject_sqlplus_terminator,
+    _statement_start_line,
 )
 from grannos.drivers.oracle.queries import (
     _PRE12_SYSTEM_SCHEMAS_SQL,
@@ -550,3 +552,61 @@ class TestExplainPlanExecute:
         asyncio.run(explain_driver.execute("EXPLAIN PLAN FOR SELECT 1 FROM DUAL", []))
         second_call_sql = explain_cur.execute.call_args_list[1][0][0]
         assert "DBMS_XPLAN.DISPLAY" in second_call_sql
+
+
+class TestCreatedObject:
+    def test_procedure(self) -> None:
+        assert _created_object("CREATE PROCEDURE p AS BEGIN NULL; END;") == (
+            "P",
+            "PROCEDURE",
+        )
+
+    def test_or_replace_and_lowercase(self) -> None:
+        assert _created_object("create or replace function f return number as") == (
+            "F",
+            "FUNCTION",
+        )
+
+    def test_package_body_type_has_a_single_space(self) -> None:
+        assert _created_object("CREATE OR REPLACE PACKAGE\n  BODY pkg AS") == (
+            "PKG",
+            "PACKAGE BODY",
+        )
+
+    def test_editionable_is_skipped(self) -> None:
+        assert _created_object("CREATE NONEDITIONABLE TRIGGER trg BEFORE INSERT") == (
+            "TRG",
+            "TRIGGER",
+        )
+
+    def test_schema_qualified_name_uses_the_object_name(self) -> None:
+        assert _created_object("CREATE PROCEDURE myschema.p AS") == ("P", "PROCEDURE")
+
+    def test_quoted_name_keeps_its_case(self) -> None:
+        assert _created_object('CREATE PROCEDURE "keepCase" AS') == (
+            "keepCase",
+            "PROCEDURE",
+        )
+
+    def test_leading_comment_is_skipped(self) -> None:
+        assert _created_object("-- note\nCREATE PROCEDURE p AS") == ("P", "PROCEDURE")
+
+    def test_non_create_returns_none(self) -> None:
+        assert _created_object("SELECT 1 FROM DUAL") is None
+
+    def test_create_table_returns_none(self) -> None:
+        assert _created_object("CREATE TABLE t (id NUMBER)") is None
+
+
+class TestStatementStartLine:
+    def test_first_line(self) -> None:
+        assert _statement_start_line("SELECT 1 FROM DUAL") == 1
+
+    def test_skips_leading_comments(self) -> None:
+        assert _statement_start_line("-- a\n-- b\nSELECT 1") == 3
+
+    def test_skips_blank_lines(self) -> None:
+        assert _statement_start_line("\n\nSELECT 1") == 3
+
+    def test_all_comments_falls_back_to_one(self) -> None:
+        assert _statement_start_line("-- nothing here\n") == 1

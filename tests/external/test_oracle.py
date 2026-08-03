@@ -25,6 +25,7 @@ from grannos.protocol import (
     EntityDescription,
     FieldDescription,
     IndexDescription,
+    MessageLevel,
     ReadResult,
     TableReference,
     WriteResult,
@@ -848,3 +849,97 @@ class TestCrossSchemaIndex:
         ddl = by_name[idx].ddl
         assert ddl is not None
         assert idx in ddl
+
+
+@pytest.fixture
+async def proc(driver: OracleDriver) -> AsyncGenerator[str, None]:
+    name = "P_" + uuid.uuid4().hex[:12].upper()
+    yield name
+    try:
+        await driver.execute(f"DROP PROCEDURE {name}", [])
+    except Exception:
+        pass
+
+
+class TestExecuteMessages:
+    async def test_dbms_output_is_returned_as_info_messages(
+        self, driver: OracleDriver
+    ) -> None:
+        result = await driver.execute(
+            "BEGIN DBMS_OUTPUT.PUT_LINE('one'); DBMS_OUTPUT.PUT_LINE('two'); END;", []
+        )
+        assert [(m.level, m.text) for m in result.messages] == [
+            (MessageLevel.INFO, "one"),
+            (MessageLevel.INFO, "two"),
+        ]
+
+    async def test_statement_without_output_has_no_messages(
+        self, driver: OracleDriver
+    ) -> None:
+        result = await driver.execute("SELECT 1 FROM DUAL", [])
+        assert result.messages == []
+
+    async def test_output_does_not_leak_into_the_next_statement(
+        self, driver: OracleDriver
+    ) -> None:
+        await driver.execute("BEGIN DBMS_OUTPUT.PUT_LINE('first'); END;", [])
+        result = await driver.execute("SELECT 1 FROM DUAL", [])
+        assert result.messages == []
+
+    async def test_output_from_a_function_called_by_a_select(
+        self, driver: OracleDriver
+    ) -> None:
+        name = "F_" + uuid.uuid4().hex[:12].upper()
+        await driver.execute(
+            f"CREATE OR REPLACE FUNCTION {name} RETURN NUMBER AS "
+            "BEGIN DBMS_OUTPUT.PUT_LINE('from function'); RETURN 1; END;",
+            [],
+        )
+        try:
+            result = await driver.execute(f"SELECT {name} FROM DUAL", [])
+            assert isinstance(result, ReadResult)
+            assert result.rows == [[1]]
+            assert [m.text for m in result.messages] == ["from function"]
+        finally:
+            await driver.execute(f"DROP FUNCTION {name}", [])
+
+    async def test_output_survives_reconnect(self, driver: OracleDriver) -> None:
+        await driver.reconnect()
+        result = await driver.execute("BEGIN DBMS_OUTPUT.PUT_LINE('alive'); END;", [])
+        assert [m.text for m in result.messages] == ["alive"]
+
+    async def test_compilation_errors_are_returned_as_warnings(
+        self, driver: OracleDriver, proc: str
+    ) -> None:
+        result = await driver.execute(
+            f"CREATE OR REPLACE PROCEDURE {proc} AS\nBEGIN\n    no_such_thing();\nEND;",
+            [],
+        )
+        assert isinstance(result, WriteResult)
+        warnings = [m for m in result.messages if m.level == MessageLevel.WARNING]
+        assert any("PLS-00201" in m.text for m in warnings)
+
+    async def test_compilation_error_position_points_at_the_query(
+        self, driver: OracleDriver, proc: str
+    ) -> None:
+        query = (
+            "-- leading comment\n"
+            f"CREATE OR REPLACE PROCEDURE {proc} AS\n"
+            "BEGIN\n"
+            "    no_such_thing();\n"
+            "END;"
+        )
+        result = await driver.execute(query, [])
+        bad = next(m for m in result.messages if "PLS-00201" in m.text)
+        # Line 4 col 5 is the "no_such_thing()" call in the submitted text.
+        assert bad.line is not None
+        assert (bad.line, bad.col) == (4, 5)
+        assert query.splitlines()[bad.line - 1].strip().startswith("no_such_thing")
+
+    async def test_procedure_that_compiles_has_no_warnings(
+        self, driver: OracleDriver, proc: str
+    ) -> None:
+        result = await driver.execute(
+            f"CREATE OR REPLACE PROCEDURE {proc} AS BEGIN NULL; END;", []
+        )
+        assert result.messages == []

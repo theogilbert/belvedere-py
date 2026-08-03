@@ -142,7 +142,9 @@ objects larger than 25 MB are refused.
         self._client = client
 
     @classmethod
-    async def create(cls, params: dict[str, Any], settings: DriverSettings) -> "S3Driver":
+    async def create(
+        cls, params: dict[str, Any], settings: DriverSettings
+    ) -> "S3Driver":
         client = await asyncio.get_running_loop().run_in_executor(
             None, lambda: _open_client(params)
         )
@@ -316,9 +318,10 @@ objects larger than 25 MB are refused.
                 return None
 
     def _describe_bucket_sync(self, bucket: str) -> RawDocument:
-        region = self._client.get_bucket_location(Bucket=bucket).get(
-            "LocationConstraint"
-        ) or "us-east-1"
+        region = (
+            self._client.get_bucket_location(Bucket=bucket).get("LocationConstraint")
+            or "us-east-1"
+        )
         try:
             versioning_status = self._client.get_bucket_versioning(Bucket=bucket).get(
                 "Status"
@@ -380,9 +383,7 @@ objects larger than 25 MB are refused.
         size = head.get("ContentLength", 0)
         fields = [
             RecordField(label="Size", value=_format_size(size)),
-            RecordField(
-                label="Content-Type", value=head.get("ContentType", "") or ""
-            ),
+            RecordField(label="Content-Type", value=head.get("ContentType", "") or ""),
             RecordField(
                 label="Last Modified",
                 value=_iso(head.get("LastModified")) or "",
@@ -462,8 +463,7 @@ objects larger than 25 MB are refused.
     def _list_buckets_sync(self) -> list[tuple[str, str | None]]:
         resp = self._client.list_buckets()
         return [
-            (b["Name"], _iso(b.get("CreationDate")))
-            for b in resp.get("Buckets", [])
+            (b["Name"], _iso(b.get("CreationDate"))) for b in resp.get("Buckets", [])
         ]
 
     def _ls_sync(

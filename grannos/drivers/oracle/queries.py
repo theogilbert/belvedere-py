@@ -144,6 +144,78 @@ async def fetch_explain_plan(cur: AsyncCursor) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Statement messages (DBMS_OUTPUT, compilation errors)
+# ---------------------------------------------------------------------------
+
+DBMS_OUTPUT_CHUNK = 100
+"""Lines fetched per DBMS_OUTPUT.GET_LINES round trip."""
+
+MAX_DBMS_OUTPUT_LINES = 1000
+"""Cap on lines returned to the client. The buffer is still drained past this
+point — leftovers would otherwise surface on the *next* statement."""
+
+
+async def enable_dbms_output(conn: AsyncConnection) -> None:
+    """Turn on DBMS_OUTPUT capture for this session, with an unbounded buffer.
+
+    Unbounded is deliberate: a bounded buffer raises ORU-10027 *inside* the
+    user's own block, turning a working statement into a failure. The size is
+    bounded in practice by how much the statement chooses to print.
+    """
+    cur = conn.cursor()
+    await cur.callproc("dbms_output.enable", (None,))
+
+
+async def fetch_dbms_output(conn: AsyncConnection) -> tuple[list[str], bool]:
+    """Drain the session's DBMS_OUTPUT buffer.
+
+    Returns:
+        The buffered lines and whether they were truncated at
+        ``MAX_DBMS_OUTPUT_LINES``.
+    """
+    cur = conn.cursor()
+    lines_var = cur.arrayvar(str, DBMS_OUTPUT_CHUNK)
+    count_var = cur.var(int)
+    collected: list[str] = []
+    truncated = False
+
+    while True:
+        count_var.setvalue(0, DBMS_OUTPUT_CHUNK)
+        await cur.callproc("dbms_output.get_lines", (lines_var, count_var))
+        count = int(count_var.getvalue() or 0)
+        if len(collected) < MAX_DBMS_OUTPUT_LINES:
+            room = MAX_DBMS_OUTPUT_LINES - len(collected)
+            batch = lines_var.getvalue()[:count]
+            collected.extend(batch[:room])
+            truncated = truncated or len(batch) > room
+        elif count:
+            truncated = True
+        if count < DBMS_OUTPUT_CHUNK:
+            return collected, truncated
+
+
+_COMPILATION_ERRORS_SQL = """
+    SELECT line, position, text
+    FROM user_errors
+    WHERE name = :1 AND type = :2
+    ORDER BY sequence
+"""
+
+
+async def fetch_compilation_errors(
+    conn: AsyncConnection, name: str, object_type: str
+) -> list[tuple[int, int, str]]:
+    """Return ``(line, position, text)`` for each compilation error on an object.
+
+    Oracle reports a PL/SQL object that failed to compile as a *successful*
+    CREATE, so this is the only way to see why it is broken.
+    """
+    cur = conn.cursor()
+    await cur.execute(_COMPILATION_ERRORS_SQL, [name, object_type])
+    return [(int(line), int(pos), text) for line, pos, text in await cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
 # Explore queries
 # ---------------------------------------------------------------------------
 

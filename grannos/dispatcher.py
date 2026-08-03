@@ -262,13 +262,16 @@ class Dispatcher:
         duration_ms = round((time.perf_counter() - t0) * 1000, 3)
         if isinstance(result, WriteResult):
             return ExecuteWriteResult(
-                rows_affected=result.rows_affected, duration_ms=duration_ms
+                rows_affected=result.rows_affected,
+                duration_ms=duration_ms,
+                messages=result.messages,
             )
         return ExecuteReadResult(
             columns=result.columns,
             rows=result.rows,
             rows_total=result.rows_total,
             duration_ms=duration_ms,
+            messages=result.messages,
         )
 
     async def _handle_explore_list(

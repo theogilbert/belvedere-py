@@ -91,6 +91,7 @@ class TestHandle:
             "rows": [[42]],
             "rows_total": 1,
             "duration_ms": ANY,
+            "messages": [],
         }
 
     async def test_should_return_error_when_execute_is_called_after_disconnect(
@@ -221,4 +222,5 @@ class TestHandle:
             "rows": [[1]],
             "rows_total": 1,
             "duration_ms": ANY,
+            "messages": [],
         }

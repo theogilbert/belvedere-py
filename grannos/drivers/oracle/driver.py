@@ -12,10 +12,12 @@ from ...protocol import (
     DescribeResult,
     DriverParam,
     EntityDescription,
+    ExecuteMessage,
     ExploreItem,
     FieldDescription,
     IndexDescription,
     Language,
+    MessageLevel,
     NodeType,
     ParamType,
     ReadResult,
@@ -33,8 +35,12 @@ from ..base import (
     group_references_by_ref_column,
 )
 from .queries import (
+    MAX_DBMS_OUTPUT_LINES,
     ColumnDetail,
     apply_metadata_transform,
+    enable_dbms_output,
+    fetch_compilation_errors,
+    fetch_dbms_output,
     build_column_index_lists,
     build_preview_query,
     fetch_all_column_comments,
@@ -129,6 +135,28 @@ direction, and uniqueness.
 **Session properties:** run `ALTER SESSION SET <property> = <value>` like any
 other statement. It's remembered per-connection and automatically re-applied
 if the connection is silently reconnected (e.g. after an idle timeout).
+
+**PL/SQL:** anonymous blocks and `CREATE PROCEDURE`/`FUNCTION`/`PACKAGE` run as
+ordinary statements — send the whole block, embedded `;` and all. Do *not*
+include a trailing `/`: that's a SQL\\*Plus command, not SQL, and it's rejected
+with an explicit error.
+
+```sql
+BEGIN
+    INSERT INTO employees (department_id, name) VALUES (10, 'Alice');
+    DBMS_OUTPUT.PUT_LINE('inserted');
+END;
+```
+
+`DBMS_OUTPUT` is enabled on every connection; anything a statement prints comes
+back as `info` messages alongside its result — no `SET SERVEROUTPUT ON` needed.
+A PL/SQL object that compiles *with errors* is reported by Oracle as a
+successful CREATE; its compilation errors come back as `warning` messages
+carrying the line and column of the offending token.
+
+**Transactions:** writes are not auto-committed. Run `COMMIT` (or `ROLLBACK`)
+explicitly — anything uncommitted is lost when the connection closes, including
+after an idle timeout.
 """
 
     def __init__(
@@ -171,6 +199,9 @@ if the connection is silently reconnected (e.g. after an idle timeout).
                 ),
             )
             major_version = int(conn.version.split(".")[0])
+            # Session-scoped, so this has to be redone on every reconnect —
+            # which is why it lives here rather than in create().
+            await enable_dbms_output(conn)
             return conn, major_version >= 12
         except oracledb.DatabaseError as exc:
             raise DriverError(_exc_message(exc)) from exc
@@ -229,7 +260,10 @@ if the connection is silently reconnected (e.g. after an idle timeout).
                 lines = await fetch_explain_plan(cur)
                 rows = [[row] for row in lines]
                 return ReadResult(
-                    columns=["PLAN_TABLE_OUTPUT"], rows=rows, rows_total=len(rows)
+                    columns=["PLAN_TABLE_OUTPUT"],
+                    rows=rows,
+                    rows_total=len(rows),
+                    messages=await self._collect_messages(cur, query),
                 )
             if cur.description is not None:
                 columns = [d[0] for d in cur.description]
@@ -242,14 +276,84 @@ if the connection is silently reconnected (e.g. after an idle timeout).
                     [await render_lob(v, self._register_lob) for v in row]
                     async for row in cur
                 ]
-                return ReadResult(columns=columns, rows=rows, rows_total=len(rows))
+                # Only now the rows are all in hand: collecting messages runs
+                # statements of its own, which would strand the LOB locators.
+                return ReadResult(
+                    columns=columns,
+                    rows=rows,
+                    rows_total=len(rows),
+                    messages=await self._collect_messages(cur, query),
+                )
             invalidate_cache(self._conn)
-            return WriteResult(rows_affected=cur.rowcount if cur.rowcount >= 0 else 0)
+            return WriteResult(
+                rows_affected=cur.rowcount if cur.rowcount >= 0 else 0,
+                messages=await self._collect_messages(cur, query),
+            )
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
             if isinstance(exc, oracledb.DatabaseError):
                 raise DriverError(_format_db_error(exc, query)) from exc
             raise
+
+    async def _collect_messages(self, cur: Any, query: str) -> list[ExecuteMessage]:
+        """Gather the out-of-band messages a just-executed statement produced.
+
+        Never raises: the statement already succeeded, so failing to read its
+        DBMS_OUTPUT or compilation errors must not turn it into an error.
+        """
+        messages: list[ExecuteMessage] = []
+        try:
+            lines, truncated = await fetch_dbms_output(self._conn)
+            messages.extend(
+                ExecuteMessage(level=MessageLevel.INFO, text=line) for line in lines
+            )
+            if truncated:
+                messages.append(
+                    ExecuteMessage(
+                        level=MessageLevel.WARNING,
+                        text=(
+                            f"DBMS_OUTPUT truncated at {MAX_DBMS_OUTPUT_LINES} lines; "
+                            "the rest was discarded"
+                        ),
+                    )
+                )
+        except Exception as exc:
+            logger.debug("Failed to drain DBMS_OUTPUT: %s", exc)
+
+        try:
+            messages.extend(await self._compilation_messages(cur, query))
+        except Exception as exc:
+            logger.debug("Failed to fetch compilation errors: %s", exc)
+
+        return messages
+
+    async def _compilation_messages(self, cur: Any, query: str) -> list[ExecuteMessage]:
+        """Turn a "created with compilation errors" warning into per-error messages.
+
+        Oracle reports a PL/SQL object that failed to compile as a *successful*
+        CREATE, flagging it only through ``cursor.warning``. Without this the
+        client is told the statement worked and the object is silently broken.
+        """
+        if getattr(cur, "warning", None) is None:
+            return []
+        target = _created_object(query)
+        if target is None:
+            return []
+
+        name, object_type = target
+        errors = await fetch_compilation_errors(self._conn, name, object_type)
+        return [
+            ExecuteMessage(
+                level=MessageLevel.WARNING,
+                text=text.strip(),
+                # user_errors positions are relative to the CREATE keyword, which
+                # is where the submitted query starts once its leading blank and
+                # comment lines are accounted for.
+                line=line + _statement_start_line(query) - 1,
+                col=position or None,
+            )
+            for line, position, text in errors
+        ]
 
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         try:
@@ -548,6 +652,51 @@ def _is_explain_plan(query: str) -> bool:
             continue
         return stripped.upper().startswith("EXPLAIN PLAN")
     return False
+
+
+_CREATE_OBJECT_RE = re.compile(
+    r"""(?isx)
+    ^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?
+    (PACKAGE\s+BODY|TYPE\s+BODY|PACKAGE|PROCEDURE|FUNCTION|TRIGGER|TYPE|VIEW)\s+
+    (?:(?:"(?P<sq>[^"]+)"|(?P<su>\w+))\s*\.\s*)?
+    (?:"(?P<nq>[^"]+)"|(?P<nu>\w+))
+    """
+)
+
+
+def _created_object(query: str) -> tuple[str, str] | None:
+    """Return ``(name, user_errors type)`` for a CREATE of a compilable object.
+
+    The name is upper-cased unless it was double-quoted, matching how Oracle
+    stores it in ``user_errors``. Returns None for any other statement.
+    """
+    match = _CREATE_OBJECT_RE.match(_strip_leading_comments(query))
+    if match is None:
+        return None
+    quoted, unquoted = match.group("nq"), match.group("nu")
+    name = quoted if quoted is not None else (unquoted or "").upper()
+    object_type = re.sub(r"\s+", " ", match.group(1).upper())
+    return name, object_type
+
+
+def _statement_start_line(query: str) -> int:
+    """1-indexed line of the first line that isn't blank or a ``--`` comment.
+
+    Oracle numbers compilation errors from the start of the object's source, so
+    any preamble in the submitted query has to be added back to make the line
+    numbers line up with what the user is looking at.
+    """
+    for offset, line in enumerate(query.splitlines()):
+        stripped = line.strip()
+        if stripped and not stripped.startswith("--"):
+            return offset + 1
+    return 1
+
+
+def _strip_leading_comments(query: str) -> str:
+    lines = query.splitlines()
+    start = _statement_start_line(query) - 1
+    return "\n".join(lines[start:])
 
 
 def _reject_sqlplus_terminator(query: str) -> None:

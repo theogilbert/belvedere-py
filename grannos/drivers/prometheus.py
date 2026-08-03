@@ -21,6 +21,7 @@ from ..protocol import (
     FieldDescription,
     GenericRecordDescription,
     Language,
+    NodeType,
     ParamType,
     RawDocument,
     RecordField,
@@ -58,6 +59,12 @@ class PrometheusDriver(BaseDriver):
     LANGUAGES = [Language.PROMQL]
 
     SUPPORTS_WRITES = False
+
+    FIND_PATHS = {
+        NodeType.METRIC: [["metrics", "*"]],
+        NodeType.LABEL: [["metrics", "*", "*"]],
+        NodeType.JOB: [["jobs", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(

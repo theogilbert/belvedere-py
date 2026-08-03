@@ -11,9 +11,23 @@ from .drivers.base import BaseDriver, ConnectionLostError, DriverSettings
 from .explore_cache import CachingDriver, ConnectionCache, cache_file
 from .protocol import (
     PROTOCOL_VERSION,
+    CapabilitiesResult,
+    ConnectResult,
     DescribeResult,
+    DownloadResult,
+    DriverHelpResult,
+    ExecuteReadResult,
+    ExecuteWriteResult,
+    ExploreDescribeResult,
+    ExploreDiagramResult,
+    ExploreFindResult,
+    ExploreListResult,
+    ExplorePreviewResult,
     Method,
+    MethodResult,
+    OkResult,
     ProgressCallback,
+    SearchScope,
     WriteResult,
 )
 
@@ -132,7 +146,7 @@ class Dispatcher:
 
     async def dispatch(
         self, method: Method, params: dict[str, Any], send_progress: ProgressCallback
-    ) -> dict[str, Any]:
+    ) -> MethodResult:
         """Dispatch a method call to its handler, serialized per connection.
 
         Args:
@@ -167,10 +181,11 @@ class Dispatcher:
 
     def _build_conn_handlers(
         self,
-    ) -> dict[Method, Callable[..., Awaitable[dict[str, Any]]]]:
+    ) -> dict[Method, Callable[..., Awaitable[MethodResult]]]:
         return {
             Method.EXECUTE: self._handle_execute,
             Method.EXPLORE_LIST: self._handle_explore_list,
+            Method.EXPLORE_FIND: self._handle_explore_find,
             Method.EXPLORE_DESCRIBE: self._handle_explore_describe,
             Method.EXPLORE_PREVIEW: self._handle_explore_preview,
             Method.EXPLORE_DIAGRAM: self._handle_explore_diagram,
@@ -183,21 +198,21 @@ class Dispatcher:
         self,
         _params: dict[str, Any],
         _send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
-        return {
-            "server": "grannos",
-            "protocol_version": PROTOCOL_VERSION,
-            "drivers": list_drivers(),
-        }
+    ) -> CapabilitiesResult:
+        return CapabilitiesResult(
+            server="grannos",
+            protocol_version=PROTOCOL_VERSION,
+            drivers=list_drivers(),
+        )
 
     async def _handle_driver_help(
         self,
         params: dict[str, Any],
         _send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> DriverHelpResult:
         driver_name = self._require_param(params, "driver")
         try:
-            return {"content": get_driver_help(driver_name)}
+            return DriverHelpResult(content=get_driver_help(driver_name))
         except ValueError as exc:
             raise DispatchError(str(exc)) from exc
 
@@ -205,7 +220,7 @@ class Dispatcher:
         self,
         params: dict[str, Any],
         _send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> ConnectResult:
         driver_name = self._require_param(params, "driver")
         try:
             driver_cls = get_driver(driver_name)
@@ -221,23 +236,23 @@ class Dispatcher:
         raw_timeout = params.get("idle_timeout")
         timeout = float(raw_timeout) if raw_timeout is not None else None
         conn = self._store.open(driver, params, timeout)
-        return {"connection_id": conn.id}
+        return ConnectResult(connection_id=conn.id)
 
     async def _handle_disconnect(
         self,
         params: dict[str, Any],
         _send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> OkResult:
         conn_id = params.get("connection_id") or ""
         await self._store.close(conn_id)
-        return {"ok": True}
+        return OkResult()
 
     async def _handle_execute(
         self,
         conn: Connection,
         params: dict[str, Any],
         send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> ExecuteReadResult | ExecuteWriteResult:
         query: str = self._require_param(params, "query")
         binds: list[Any] = params.get("params") or []
         t0 = time.perf_counter()
@@ -246,48 +261,66 @@ class Dispatcher:
         )
         duration_ms = round((time.perf_counter() - t0) * 1000, 3)
         if isinstance(result, WriteResult):
-            return {"rows_affected": result.rows_affected, "duration_ms": duration_ms}
-        return {
-            "columns": result.columns,
-            "rows": result.rows,
-            "rows_total": result.rows_total,
-            "duration_ms": duration_ms,
-        }
+            return ExecuteWriteResult(
+                rows_affected=result.rows_affected, duration_ms=duration_ms
+            )
+        return ExecuteReadResult(
+            columns=result.columns,
+            rows=result.rows,
+            rows_total=result.rows_total,
+            duration_ms=duration_ms,
+        )
 
     async def _handle_explore_list(
         self,
         conn: Connection,
         params: dict[str, Any],
         send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> ExploreListResult:
         path: list[str] = params.get("path") or []
         if params.get("reset_cache"):
             conn.reset_cache(path)
         items = await self._reconnect_and_retry(
             conn, lambda: conn.driver.explore_list(path), send_progress
         )
-        return {"items": items}
+        return ExploreListResult(items=items)
+
+    async def _handle_explore_find(
+        self,
+        conn: Connection,
+        params: dict[str, Any],
+        send_progress: ProgressCallback,
+    ) -> ExploreFindResult:
+        node_type = self._require_param(params, "type")
+        name = self._require_param(params, "name")
+        scopes = _parse_scopes(params.get("scope") or [])
+        paths = await self._reconnect_and_retry(
+            conn,
+            lambda: conn.driver.explore_find(node_type, name, scopes),
+            send_progress,
+        )
+        return ExploreFindResult(paths=paths)
 
     async def _handle_explore_describe(
         self,
         conn: Connection,
         params: dict[str, Any],
         send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> ExploreDescribeResult:
         path: list[str] = params.get("path") or []
         if params.get("reset_cache"):
             conn.reset_cache(path)
         desc = await self._reconnect_and_retry(
             conn, lambda: conn.driver.explore_describe(path), send_progress
         )
-        return {"details": desc}
+        return ExploreDescribeResult(details=desc)
 
     async def _handle_explore_preview(
         self,
         conn: Connection,
         params: dict[str, Any],
         send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> ExplorePreviewResult:
         path: list[str] = params.get("path") or []
         t0 = time.perf_counter()
         result = await self._reconnect_and_retry(
@@ -295,25 +328,22 @@ class Dispatcher:
         )
         duration_ms = round((time.perf_counter() - t0) * 1000, 3)
         if result is None:
-            return {
-                "columns": None,
-                "rows": None,
-                "rows_total": None,
-                "duration_ms": duration_ms,
-            }
-        return {
-            "columns": result.columns,
-            "rows": result.rows,
-            "rows_total": result.rows_total,
-            "duration_ms": duration_ms,
-        }
+            return ExplorePreviewResult(
+                columns=None, rows=None, rows_total=None, duration_ms=duration_ms
+            )
+        return ExplorePreviewResult(
+            columns=result.columns,
+            rows=result.rows,
+            rows_total=result.rows_total,
+            duration_ms=duration_ms,
+        )
 
     async def _handle_explore_diagram(
         self,
         conn: Connection,
         params: dict[str, Any],
         send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> ExploreDiagramResult:
         path: list[str] = params.get("path") or []
 
         async def describe(p: list[str]) -> DescribeResult:
@@ -325,14 +355,14 @@ class Dispatcher:
             result = await build_diagram(path, describe)
         except DiagramError as exc:
             raise DispatchError(str(exc)) from exc
-        return {"diagram": result.diagram, "regions": result.regions}
+        return ExploreDiagramResult(diagram=result.diagram, regions=result.regions)
 
     async def _handle_explore_download(
         self,
         conn: Connection,
         params: dict[str, Any],
         send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> DownloadResult:
         ref: str | None = params.get("ref")
         dest_path: str | None = params.get("dest_path")
         if ref is not None:
@@ -348,23 +378,17 @@ class Dispatcher:
                 lambda: conn.driver.explore_download(path, dest_path),
                 send_progress,
             )
-        return {
-            "content_base64": result.content_base64,
-            "written_to": result.written_to,
-            "filename": result.filename,
-            "content_type": result.content_type,
-            "size": result.size,
-        }
+        return result
 
     async def _handle_session_set(
         self,
         conn: Connection,
         params: dict[str, Any],
         _send_progress: ProgressCallback,
-    ) -> dict[str, Any]:
+    ) -> OkResult:
         values = {k: v for k, v in params.items() if k != "connection_id"}
         await conn.driver.set_session(values)
-        return {"ok": True}
+        return OkResult()
 
     async def _handle_session_get(
         self,
@@ -399,6 +423,24 @@ class Dispatcher:
         if key not in params:
             raise DispatchError(f"Missing required param: {key!r}")
         return params[key]
+
+
+def _parse_scopes(raw: Any) -> list[SearchScope]:
+    """Parse explore.find's ``scope`` param into SearchScope objects.
+
+    Raises:
+        DispatchError: If *raw* is not an array of ``{name, type}`` objects.
+    """
+    if not isinstance(raw, list):
+        raise DispatchError("scope must be an array of {name, type} objects")
+    scopes = []
+    for entry in raw:
+        if not isinstance(entry, dict) or "name" not in entry or "type" not in entry:
+            raise DispatchError(
+                f"Invalid scope entry {entry!r}: expected an object with 'name' and 'type'"
+            )
+        scopes.append(SearchScope(name=entry["name"], type=entry["type"]))
+    return scopes
 
 
 class IdleTimer:

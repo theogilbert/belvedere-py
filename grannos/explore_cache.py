@@ -7,7 +7,14 @@ from typing import Any, Self
 
 from grannos.drivers import SENSITIVE_PARAM_KEYS
 
-from .drivers.base import BaseDriver, DriverSettings, ReadResult, WriteResult
+from .drivers.base import (
+    BaseDriver,
+    DriverSettings,
+    FindNotSupported,
+    ReadResult,
+    WriteResult,
+)
+from .explore_find import walk_find
 from .protocol import (
     Connection,
     DescribeResult,
@@ -20,6 +27,7 @@ from .protocol import (
     IndexKeyField,
     RawDocument,
     RecordField,
+    SearchScope,
     TableReference,
     json_default,
 )
@@ -79,6 +87,23 @@ class CachingDriver(BaseDriver):
         else:
             logger.debug(f"explore.list cache hit for path {path}")
         return items
+
+    async def explore_find(
+        self, node_type: str, name: str, scopes: list[SearchScope]
+    ) -> list[list[str]]:
+        """Resolve a symbol via the inner driver, falling back to the generic
+        tree walk.
+
+        The walk runs here rather than on the inner driver so that it expands
+        wildcard levels through *this* class's cached ``explore_list`` — a
+        symbol found once costs no further round trips.
+        """
+        try:
+            return await self._inner.explore_find(node_type, name, scopes)
+        except FindNotSupported:
+            return await walk_find(
+                self.explore_list, self._inner.FIND_PATHS, node_type, name, scopes
+            )
 
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         return await self._inner.explore_preview(path)

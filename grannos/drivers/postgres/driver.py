@@ -15,6 +15,7 @@ from ...protocol import (
     FieldDescription,
     IndexDescription,
     Language,
+    NodeType,
     ParamType,
     ReadResult,
     TableReference,
@@ -76,6 +77,14 @@ class PostgresDriver(BaseDriver):
 
     LABEL = "PostgreSQL"
     LANGUAGES = [Language.SQL]
+
+    FIND_PATHS = {
+        NodeType.SCHEMA: [["*"]],
+        NodeType.TABLE: [["*", "*"]],
+        NodeType.VIEW: [["*", "*"]],
+        NodeType.COLUMN: [["*", "*", "columns", "*"]],
+        NodeType.INDEX: [["*", "*", "indexes", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

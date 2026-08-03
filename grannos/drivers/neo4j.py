@@ -18,6 +18,7 @@ from ..protocol import (
     IndexKeyField,
     Language,
     LobPlaceholder,
+    NodeType,
     ParamType,
     ReadResult,
     WriteResult,
@@ -43,6 +44,16 @@ class Neo4jDriver(BaseDriver):
 
     LABEL = "Neo4j"
     LANGUAGES = [Language.CYPHER]
+
+    FIND_PATHS = {
+        NodeType.LABEL: [["entities", "*"]],
+        NodeType.RELATIONSHIP_TYPE: [["relationships", "*"]],
+        NodeType.PROPERTY: [
+            ["entities", "*", "properties", "*"],
+            ["relationships", "*", "properties", "*"],
+        ],
+        NodeType.INDEX: [["indexes", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(

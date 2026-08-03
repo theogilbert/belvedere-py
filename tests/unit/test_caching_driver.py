@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from grannos.drivers.base import FindNotSupported
 from grannos.explore_cache import CachingDriver, ConnectionCache
 from grannos.protocol import (
     EntityDescription,
@@ -12,7 +13,9 @@ from grannos.protocol import (
     FieldDescription,
     IndexDescription,
     IndexKeyField,
+    NodeType,
     RawDocument,
+    SearchScope,
     TableReference,
 )
 
@@ -316,3 +319,45 @@ class TestDelegation:
     ) -> None:
         inner.get_session = MagicMock(return_value={"query_mode": "range"})
         assert driver.get_session() == {"query_mode": "range"}
+
+
+class TestExploreFind:
+    """The walker has to run on the CachingDriver rather than on the driver it
+    wraps, so its wildcard levels expand through the cached explore_list."""
+
+    @pytest.fixture
+    def searchable(self, inner: AsyncMock) -> AsyncMock:
+        inner.FIND_PATHS = {NodeType.TABLE: [["*"]]}
+        inner.explore_find.side_effect = FindNotSupported
+        return inner
+
+    async def test_falls_back_to_the_walker(
+        self, driver: CachingDriver, searchable: AsyncMock
+    ) -> None:
+        assert await driver.explore_find(NodeType.TABLE, "t", []) == [["t"]]
+
+    async def test_walk_is_served_from_cache_on_a_repeated_search(
+        self, driver: CachingDriver, searchable: AsyncMock
+    ) -> None:
+        await driver.explore_find(NodeType.TABLE, "t", [])
+        await driver.explore_find(NodeType.TABLE, "t", [])
+        searchable.explore_list.assert_awaited_once()
+
+    async def test_a_tree_already_browsed_costs_no_round_trip(
+        self, driver: CachingDriver, searchable: AsyncMock
+    ) -> None:
+        await driver.explore_list([])
+        searchable.explore_list.reset_mock()
+        assert await driver.explore_find(NodeType.TABLE, "t", []) == [["t"]]
+        searchable.explore_list.assert_not_awaited()
+
+    async def test_driver_implementation_takes_precedence(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_find.return_value = [["public", "users"]]
+        scopes = [SearchScope(name="public", type=NodeType.SCHEMA)]
+        assert await driver.explore_find(NodeType.TABLE, "users", scopes) == [
+            ["public", "users"]
+        ]
+        inner.explore_find.assert_awaited_once_with(NodeType.TABLE, "users", scopes)
+        inner.explore_list.assert_not_awaited()

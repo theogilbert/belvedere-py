@@ -144,6 +144,53 @@ class TestHandle:
         assert r3["error"] is None
         assert any(item["name"] == "t" for item in r3["result"]["items"])
 
+    async def test_should_resolve_a_symbol_to_a_path_when_explore_find_is_called(
+        self, server: Server, out: io.BytesIO
+    ) -> None:
+        """The round trip a hovering client makes: find the symbol, then
+        describe the path it came back with."""
+        r1 = await send(
+            server,
+            out,
+            id=1,
+            method="connect",
+            params={"driver": "sqlite", "database": ":memory:"},
+        )
+        conn_id = r1["result"]["connection_id"]
+        await send(
+            server,
+            out,
+            id=2,
+            method="execute",
+            params={
+                "connection_id": conn_id,
+                "query": "CREATE TABLE t (id INTEGER, label TEXT)",
+            },
+        )
+        r3 = await send(
+            server,
+            out,
+            id=3,
+            method="explore.find",
+            params={
+                "connection_id": conn_id,
+                "type": "column",
+                "name": "label",
+                "scope": [{"name": "t", "type": "table"}],
+            },
+        )
+        assert r3["error"] is None
+        assert r3["result"]["paths"] == [["t", "columns", "label"]]
+
+        r4 = await send(
+            server,
+            out,
+            id=4,
+            method="explore.describe",
+            params={"connection_id": conn_id, "path": r3["result"]["paths"][0]},
+        )
+        assert r4["result"]["details"]["name"] == "label"
+
     async def test_should_emit_progress_messages_before_result_when_reconnecting(
         self, server: Server, out: io.BytesIO, mock_get_driver: MagicMock
     ) -> None:

@@ -14,7 +14,9 @@ from ..protocol import (
     ExploreItem,
     Language,
     LobPlaceholder,
+    NodeType,
     ReadResult,
+    SearchScope,
     TableReference,
     WriteResult,
 )
@@ -75,6 +77,18 @@ class ConnectionLostError(Exception):
     """Raised when the database connection is lost and a reconnect should be attempted."""
 
 
+class FindNotSupported(Exception):
+    """Raised by :meth:`BaseDriver.explore_find` to hand a search back to the
+    generic tree walker.
+
+    Raised by the base implementation for every search, and by an overriding
+    driver for the node types its own catalog lookup does not cover — so an
+    override can special-case one kind of node without reimplementing the rest.
+    Deliberately not ``NotImplementedError``, which a driver's underlying
+    library may raise for unrelated reasons; swallowing that would silently
+    convert a bug into a slow tree walk."""
+
+
 class BaseDriver(ABC):
     """Base class for all database drivers.
 
@@ -102,6 +116,22 @@ class BaseDriver(ABC):
 
     HELP: str = ""
     """Markdown help text declared by each driver subclass."""
+
+    FIND_PATHS: ClassVar[dict[NodeType, list[list[str]]]] = {}
+    """Where each kind of node lives in this driver's object tree, as path
+    templates keyed by node type — the declaration backing ``explore.find``.
+
+    A ``"*"`` segment stands for one level of children, any other segment for a
+    literal group name; a template's last segment is the node itself. A type may
+    list several templates (a Neo4j property lives under both entities and
+    relationships), and several types may share one (a SQL table and view sit at
+    the same level — nothing at that level says which is which, and a client
+    reading a ``FROM`` clause cannot tell either).
+
+    Empty for a driver whose tree has no fixed shape (e.g. S3's arbitrarily
+    nested prefixes), which makes it unsearchable. See
+    :mod:`grannos.explore_find`.
+    """
 
     DEFAULT_IDLE_TIMEOUT: ClassVar[float] = 600
     """The default idle timeout for this driver.
@@ -181,6 +211,34 @@ class BaseDriver(ABC):
             Child nodes, or an empty list if the path is unrecognised.
         """
         ...
+
+    async def explore_find(
+        self, node_type: str, name: str, scopes: list[SearchScope]
+    ) -> list[list[str]]:
+        """Resolve a symbol to the paths of the nodes matching it.
+
+        Not implemented here: the base behaviour is to defer to the generic
+        walker over :data:`FIND_PATHS`, which runs one level up (in
+        ``CachingDriver``) so its ``explore_list`` calls are served from the
+        connection's explore cache. A driver whose catalog can answer a search
+        in a single query overrides this and raises :class:`FindNotSupported`
+        for whatever node types that query does not cover.
+
+        Args:
+            node_type: Kind of node to find (e.g. ``"column"``).
+            name: Symbol name as written by the client; match it
+                case-insensitively.
+            scopes: Ancestor restrictions — see
+                :class:`~grannos.protocol.SearchScope`.
+
+        Returns:
+            Describe-paths of the matching nodes: empty if the symbol resolves
+            to nothing, more than one entry if it is ambiguous.
+
+        Raises:
+            FindNotSupported: To hand the search to the generic walker.
+        """
+        raise FindNotSupported
 
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         """Return a sample of rows for the node at the given path.

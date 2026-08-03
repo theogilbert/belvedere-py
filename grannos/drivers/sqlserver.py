@@ -18,6 +18,7 @@ from ..protocol import (
     IndexKeyField,
     Language,
     LobPlaceholder,
+    NodeType,
     ParamType,
     ReadResult,
     TableReference,
@@ -51,6 +52,14 @@ class SQLServerDriver(BaseDriver):
 
     LABEL = "SQL Server"
     LANGUAGES = [Language.SQL]
+
+    FIND_PATHS = {
+        NodeType.SCHEMA: [["*"]],
+        NodeType.TABLE: [["*", "*"]],
+        NodeType.VIEW: [["*", "*"]],
+        NodeType.COLUMN: [["*", "*", "columns", "*"]],
+        NodeType.INDEX: [["*", "*", "indices", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

@@ -14,6 +14,7 @@ from ..protocol import (
     IndexKeyField,
     Language,
     LobPlaceholder,
+    NodeType,
     ParamType,
     ReadResult,
     TableReference,
@@ -43,6 +44,13 @@ class SQLiteDriver(BaseDriver):
     LANGUAGES = [Language.SQL]
     DEFAULT_IDLE_TIMEOUT: ClassVar[float] = 0
     """File-based driver; idle connections are never closed automatically."""
+
+    FIND_PATHS = {
+        NodeType.TABLE: [["*"]],
+        NodeType.VIEW: [["*"]],
+        NodeType.COLUMN: [["*", "columns", "*"]],
+        NodeType.INDEX: [["*", "indices", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="database", type=ParamType.STRING, label="Database file path"),

@@ -7,8 +7,11 @@ from grannos.dispatcher import Dispatcher
 from grannos.drivers.base import DriverSettings
 from grannos.explore_cache import cache_file
 from grannos.protocol import (
+    ConnectResult,
     EntityDescription,
     ExploreItem,
+    ExploreDescribeResult,
+    ExploreListResult,
     FieldDescription,
     Method,
     TableReference,
@@ -39,7 +42,8 @@ def _driver_class(driver: AsyncMock) -> AsyncMock:
 async def connect(dispatcher: Dispatcher, driver: AsyncMock, params: dict) -> str:
     with patch("grannos.dispatcher.get_driver", return_value=_driver_class(driver)):
         result = await dispatcher.dispatch(Method.CONNECT, params, noop_progress)
-    return result["connection_id"]
+        assert isinstance(result, ConnectResult)
+    return result.connection_id
 
 
 PARAMS = {"driver": "sqlite", "database": ":memory:"}
@@ -128,8 +132,9 @@ class TestDiskCache:
         result = await disp2.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id2, "path": []}, noop_progress
         )
+        assert isinstance(result, ExploreListResult)
 
-        assert result["items"] == [fresh_item]
+        assert result.items == [fresh_item]
         assert (
             mock_driver.explore_list.await_count == 2
         )  # initial + reset; second session hits cache
@@ -239,9 +244,11 @@ class TestDiskCache:
             {"connection_id": conn_id2, "path": ["t"]},
             noop_progress,
         )
+        assert isinstance(result, ExploreDescribeResult)
 
         mock_driver.explore_describe.assert_awaited_once()
-        by_name = {f.name: f for f in result["details"].properties}
+        assert isinstance(result.details, EntityDescription)
+        by_name = {f.name: f for f in result.details.properties}
         assert by_name["fk"].outgoing_references == [
             TableReference(table="t", column="fk", ref_table="other", ref_column="id")
         ]
@@ -287,9 +294,11 @@ class TestDiskCache:
             {"connection_id": conn_id2, "path": ["t", "columns", "parent_id"]},
             noop_progress,
         )
+        assert isinstance(result, ExploreDescribeResult)
 
         mock_driver.explore_describe.assert_awaited_once()
-        details = result["details"]
+        details = result.details
+        assert isinstance(details, FieldDescription)
         assert details.outgoing_references == [
             TableReference(
                 table="t", column="parent_id", ref_table="parent", ref_column="id"
@@ -322,6 +331,7 @@ class TestDiskCache:
             {"connection_id": conn_id2, "path": ["t", "relationships", "fk"]},
             noop_progress,
         )
+        assert isinstance(result, ExploreDescribeResult)
 
         mock_driver.explore_describe.assert_awaited_once()
-        assert result["details"] == rel
+        assert result.details == rel

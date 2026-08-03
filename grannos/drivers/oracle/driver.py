@@ -16,6 +16,7 @@ from ...protocol import (
     FieldDescription,
     IndexDescription,
     Language,
+    NodeType,
     ParamType,
     ReadResult,
     TableReference,
@@ -74,6 +75,14 @@ class OracleDriver(BaseDriver):
 
     LABEL = "Oracle"
     LANGUAGES = [Language.SQL]
+
+    FIND_PATHS = {
+        NodeType.SCHEMA: [["*"]],
+        NodeType.TABLE: [["*", "*"]],
+        NodeType.VIEW: [["*", "*"]],
+        NodeType.COLUMN: [["*", "*", "columns", "*"]],
+        NodeType.INDEX: [["*", "*", "indexes", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

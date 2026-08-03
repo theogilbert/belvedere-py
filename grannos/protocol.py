@@ -40,6 +40,7 @@ class Method(StrEnum):
     EXECUTE = "execute"
     CANCEL = "cancel"
     EXPLORE_LIST = "explore.list"
+    EXPLORE_FIND = "explore.find"
     EXPLORE_DESCRIBE = "explore.describe"
     EXPLORE_PREVIEW = "explore.preview"
     EXPLORE_DIAGRAM = "explore.diagram"
@@ -92,6 +93,60 @@ class Progress:
     """Status update payload."""
 
 
+class NodeType(StrEnum):
+    """Canonical kinds of node in the object tree, shared by explore.list's
+    ``type`` field, explore.find's ``type`` param, and drivers' ``FIND_PATHS``.
+
+    Deliberately a flat vocabulary across all drivers rather than one enum per
+    driver: a client picks an icon, or names a symbol's kind, without knowing
+    which backend it is talking to. A given driver uses only the subset its tree
+    actually contains.
+
+    A ``StrEnum`` so a member is usable anywhere the raw wire string is, and
+    compares equal to it — drivers and clients that pass plain strings keep
+    working.
+    """
+
+    GROUP = "group"
+    """Organisational node bundling sub-categories (``columns``, ``indexes``, …).
+    Not a database object, and never an explore.find result."""
+
+    SCHEMA = "schema"
+    DATABASE = "database"
+    TABLE = "table"
+    VIEW = "view"
+    COLLECTION = "collection"
+    LABEL = "label"
+    """Graph node label (Neo4j), or a metric label (Prometheus)."""
+    RELATIONSHIP_TYPE = "relationship_type"
+    """Graph relationship type (Neo4j)."""
+
+    COLUMN = "column"
+    FIELD = "field"
+    """Field of a schemaless document or mapping (MongoDB, Elasticsearch)."""
+    PROPERTY = "property"
+    """Property of a graph node or relationship (Neo4j)."""
+
+    INDEX = "index"
+    """A SQL/Mongo/Neo4j index — or, for Elasticsearch, an index in its own
+    entity-shaped sense."""
+    FOREIGN_KEY = "foreign_key"
+    ALIAS = "alias"
+
+    GRIDFS_BUCKET = "gridfs_bucket"
+    BUCKET = "bucket"
+    """S3 bucket."""
+    PREFIX = "prefix"
+    """S3 key prefix, i.e. a directory-like level."""
+    OBJECT = "object"
+    """S3 object."""
+
+    METRIC = "metric"
+    JOB = "job"
+    CONFIGURATION = "configuration"
+    SETTINGS = "settings"
+
+
 @dataclass
 class ExploreItem:
     """A single node in the database object tree returned by explore.list."""
@@ -99,9 +154,36 @@ class ExploreItem:
     name: str
     """Display name of the node."""
     type: str
-    """Node kind (e.g. ``"table"``, ``"schema"``, ``"index"``)."""
+    """Node kind — a :class:`NodeType` for structural nodes.
+
+    Not typed as ``NodeType`` because drivers currently overload this field on
+    leaf field nodes, reporting the field's *data* type there instead (e.g.
+    ``"int4"``, ``"varchar2"``) so a tree client can show it next to the name.
+    """
     expandable: bool
     """Whether the node has children that can be listed."""
+
+
+@dataclass
+class SearchScope:
+    """One restriction narrowing an explore.find search to a region of the tree.
+
+    A scope names an *ancestor* the matched node must sit under. Scopes sharing
+    a ``type`` are alternatives (the node may sit under any one of them); scopes
+    of different types all have to hold. So searching a column with scopes
+    ``[(users, table), (orders, table), (public, schema)]`` looks for the column
+    under ``public.users`` or ``public.orders``.
+
+    A scope whose ``type`` names no level of the driver's tree is ignored rather
+    than failing the search — clients infer scopes from source text and cannot
+    know each driver's vocabulary.
+    """
+
+    name: str
+    """Display name of the ancestor node (matched case-insensitively)."""
+    type: str
+    """Ancestor's node kind, normally a :class:`NodeType`. Plain ``str`` because
+    it arrives from a client, which may name a kind this driver does not have."""
 
 
 @dataclass
@@ -514,6 +596,157 @@ class Driver:
     use them to prioritise matching drivers in a connection picker.  An empty
     list means the driver has no language affinity and is treated as generic.
     """
+
+
+# --- Method results -------------------------------------------------------
+#
+# One dataclass per method, carrying exactly the fields that method puts in a
+# response's ``result``. These *are* the wire shape: ``encode`` serialises them
+# field-for-field, so renaming a field here changes the protocol.
+#
+# Distinct from the driver-level types above (:class:`ReadResult`,
+# :class:`WriteResult`, …), which are what a driver hands back internally — a
+# method result may add fields the driver has no knowledge of, such as the
+# server-measured ``duration_ms``.
+
+
+@dataclass
+class CapabilitiesResult:
+    """Result of ``capabilities``."""
+
+    server: str
+    """Server implementation name — always ``"grannos"``."""
+    protocol_version: str
+    """Wire-protocol version, as ``"<major>.<minor>"``; see :data:`PROTOCOL_VERSION`."""
+    drivers: list[Driver]
+    """Every driver whose optional dependencies are installed."""
+
+
+@dataclass
+class DriverHelpResult:
+    """Result of ``driver.help``."""
+
+    content: str
+    """Driver documentation, in Markdown."""
+
+
+@dataclass
+class ConnectResult:
+    """Result of ``connect``."""
+
+    connection_id: str
+    """Identifier to pass as ``connection_id`` in subsequent requests."""
+
+
+@dataclass
+class OkResult:
+    """Result of a method whose only outcome is success — ``disconnect``,
+    ``session.set``. Failure arrives as an ``error`` on the response envelope
+    instead, never as ``ok: false``."""
+
+    ok: bool = True
+
+
+@dataclass
+class ExecuteReadResult:
+    """Result of ``execute`` for a query that returned rows."""
+
+    columns: list[str]
+    """Column names in order."""
+    rows: list[list[Any]]
+    """Each row as a list of values; a value may be a :class:`LobPlaceholder` or a
+    :class:`SpecialFloat`."""
+    rows_total: int
+    """Total rows matching the query, which may exceed ``len(rows)`` when the
+    driver applied a default limit."""
+    duration_ms: float
+    """Wall-clock execution time in milliseconds, measured server-side."""
+
+
+@dataclass
+class ExecuteWriteResult:
+    """Result of ``execute`` for a query that wrote rows."""
+
+    rows_affected: int
+    """Number of rows inserted, updated, or deleted."""
+    duration_ms: float
+    """Wall-clock execution time in milliseconds, measured server-side."""
+
+
+@dataclass
+class ExploreListResult:
+    """Result of ``explore.list``."""
+
+    items: list[ExploreItem]
+    """Child nodes of the requested path; empty if it has none."""
+
+
+@dataclass
+class ExploreFindResult:
+    """Result of ``explore.find``."""
+
+    paths: list[list[str]]
+    """Describe-paths of the nodes matching the search. Empty when the symbol
+    resolves to nothing; more than one entry when it is ambiguous — the client
+    decides how to report either case."""
+
+
+@dataclass
+class ExploreDescribeResult:
+    """Result of ``explore.describe``."""
+
+    details: "DescribeResult"
+    """Metadata for the node, or null if the path names nothing describable.
+    Discriminate on each object's own ``type`` field."""
+
+
+@dataclass
+class ExplorePreviewResult:
+    """Result of ``explore.preview``. Every row field is null for a node type
+    that cannot be previewed (i.e. anything but a table, view, collection, or
+    GridFS bucket) — which is not an error."""
+
+    columns: list[str] | None
+    """Column names in order; null if the node does not support preview."""
+    rows: list[list[Any]] | None
+    """Up to 10 sample rows; null if the node does not support preview."""
+    rows_total: int | None
+    """Number of rows returned; null if the node does not support preview."""
+    duration_ms: float
+    """Wall-clock execution time in milliseconds, measured server-side."""
+
+
+@dataclass
+class ExploreDiagramResult:
+    """Result of ``explore.diagram``."""
+
+    diagram: str
+    """The rendered diagram, as a multi-line string."""
+    regions: list[DiagramRegion]
+    """Spans mapping points in ``diagram`` back to describe-paths."""
+
+
+MethodResult = (
+    CapabilitiesResult
+    | DriverHelpResult
+    | ConnectResult
+    | OkResult
+    | ExecuteReadResult
+    | ExecuteWriteResult
+    | ExploreListResult
+    | ExploreFindResult
+    | ExploreDescribeResult
+    | ExplorePreviewResult
+    | ExploreDiagramResult
+    | DownloadResult
+    | dict[str, Any]
+)
+"""What a dispatched method returns, to be carried as a :class:`Result`'s
+``result``.
+
+The bare ``dict`` is for ``session.get`` alone: its shape is whatever the
+driver's ``SESSION_PARAMS`` declare, so there is no fixed dataclass to give it.
+"""
 
 
 Response = Result | Progress | ExploreItem

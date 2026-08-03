@@ -11,6 +11,7 @@ from ..protocol import (
     EntityDescription,
     ExploreItem,
     FieldDescription,
+    NodeType,
     ParamType,
     ReadResult,
     WriteResult,
@@ -31,6 +32,12 @@ class ElasticsearchDriver(BaseDriver):
     """
 
     LABEL = "Elasticsearch"
+
+    FIND_PATHS = {
+        NodeType.INDEX: [["*"]],
+        NodeType.FIELD: [["*", "mappings", "*"]],
+        NodeType.ALIAS: [["*", "aliases", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(key="host", type=ParamType.STRING, label="Host"),

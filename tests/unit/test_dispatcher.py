@@ -1,6 +1,7 @@
 import asyncio
 import pathlib
 from collections.abc import Generator
+from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,18 +11,38 @@ from grannos.drivers.base import ConnectionLostError, DriverSettings
 from grannos.protocol import (
     PROTOCOL_VERSION,
     DriverParam,
+    CapabilitiesResult,
+    ConnectResult,
+    DriverHelpResult,
+    ExploreDiagramResult,
     EntityDescription,
     ExploreItem,
     FieldDescription,
     Method,
     ParamType,
+    ExecuteReadResult,
+    ExecuteWriteResult,
+    ExploreDescribeResult,
+    ExploreFindResult,
+    ExploreListResult,
+    OkResult,
     ReadResult,
+    SearchScope,
     WriteResult,
 )
 
 
 async def noop_progress(status: str, message: str) -> None:
     pass
+
+
+async def connect(dispatcher: Dispatcher, params: dict[str, Any] | None = None) -> str:
+    """Open a connection and return its id, narrowing the dispatch result."""
+    result = await dispatcher.dispatch(
+        Method.CONNECT, params or {"driver": "mock"}, noop_progress
+    )
+    assert isinstance(result, ConnectResult)
+    return result.connection_id
 
 
 def _make_mock_driver() -> AsyncMock:
@@ -80,7 +101,8 @@ async def connected(
     result = await dispatcher.dispatch(
         Method.CONNECT, {"driver": "mock"}, noop_progress
     )
-    return dispatcher, result["connection_id"], mock_driver
+    assert isinstance(result, ConnectResult)
+    return dispatcher, result.connection_id, mock_driver
 
 
 class TestConnection:
@@ -138,42 +160,47 @@ class TestIdleTimer:
 class TestCapabilities:
     async def test_should_return_server_name(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        assert result["server"] == "grannos"
+        assert isinstance(result, CapabilitiesResult)
+        assert result.server == "grannos"
 
     async def test_should_return_protocol_version(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        assert result["protocol_version"] == PROTOCOL_VERSION
+        assert isinstance(result, CapabilitiesResult)
+        assert result.protocol_version == PROTOCOL_VERSION
 
     async def test_should_always_include_sqlite(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        assert "sqlite" in [t.driver for t in result["drivers"]]
+        assert isinstance(result, CapabilitiesResult)
+        assert "sqlite" in [t.driver for t in result.drivers]
 
     async def test_all_drivers_have_at_least_one_param(
         self, dispatcher: Dispatcher
     ) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        assert all(len(tech.params) > 0 for tech in result["drivers"])
+        assert isinstance(result, CapabilitiesResult)
+        assert all(len(tech.params) > 0 for tech in result.drivers)
 
     async def test_all_params_have_required_fields(
         self, dispatcher: Dispatcher
     ) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
+        assert isinstance(result, CapabilitiesResult)
         assert all(
-            p.key and p.type and p.label
-            for tech in result["drivers"]
-            for p in tech.params
+            p.key and p.type and p.label for tech in result.drivers for p in tech.params
         )
 
     async def test_sqlite_supports_writes(self, dispatcher: Dispatcher) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        sqlite = next(t for t in result["drivers"] if t.driver == "sqlite")
+        assert isinstance(result, CapabilitiesResult)
+        sqlite = next(t for t in result.drivers if t.driver == "sqlite")
         assert sqlite.supports_writes is True
 
     async def test_prometheus_does_not_support_writes(
         self, dispatcher: Dispatcher
     ) -> None:
         result = await dispatcher.dispatch(Method.CAPABILITIES, {}, noop_progress)
-        drivers_by_name = {t.driver: t for t in result["drivers"]}
+        assert isinstance(result, CapabilitiesResult)
+        drivers_by_name = {t.driver: t for t in result.drivers}
         if "prometheus" not in drivers_by_name:
             pytest.skip("prometheus driver not installed")
         assert drivers_by_name["prometheus"].supports_writes is False
@@ -184,8 +211,8 @@ class TestDriverHelp:
         result = await dispatcher.dispatch(
             Method.DRIVER_HELP, {"driver": "sqlite"}, noop_progress
         )
-        assert "content" in result
-        assert "SQLite" in result["content"]
+        assert isinstance(result, DriverHelpResult)
+        assert "SQLite" in result.content
 
     async def test_should_raise_for_unknown_driver(
         self, dispatcher: Dispatcher
@@ -235,7 +262,8 @@ class TestConnect:
         result = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock", "host": "localhost"}, noop_progress
         )
-        assert "connection_id" in result
+        assert isinstance(result, ConnectResult)
+        assert result.connection_id
 
     async def test_optional_params_may_be_absent(
         self, dispatcher: Dispatcher, mock_get_driver: AsyncMock
@@ -251,7 +279,8 @@ class TestConnect:
         result = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock"}, noop_progress
         )
-        assert "connection_id" in result
+        assert isinstance(result, ConnectResult)
+        assert result.connection_id
 
 
 class TestDispatch:
@@ -275,12 +304,9 @@ class TestExecute:
             {"connection_id": conn_id, "query": "SELECT 1"},
             noop_progress,
         )
-        assert result == {
-            "columns": ["id"],
-            "rows": [[1], [2]],
-            "rows_total": 2,
-            "duration_ms": ANY,
-        }
+        assert result == ExecuteReadResult(
+            columns=["id"], rows=[[1], [2]], rows_total=2, duration_ms=ANY
+        )
 
     async def test_should_return_rows_affected_for_dml(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -292,7 +318,7 @@ class TestExecute:
             {"connection_id": conn_id, "query": "DELETE FROM t"},
             noop_progress,
         )
-        assert result == {"rows_affected": 3, "duration_ms": ANY}
+        assert result == ExecuteWriteResult(rows_affected=3, duration_ms=ANY)
 
     async def test_duration_ms_is_non_negative_number(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -303,8 +329,9 @@ class TestExecute:
             {"connection_id": conn_id, "query": "SELECT 1"},
             noop_progress,
         )
-        assert isinstance(result["duration_ms"], float)
-        assert result["duration_ms"] >= 0
+        assert isinstance(result, ExecuteReadResult)
+        assert isinstance(result.duration_ms, float)
+        assert result.duration_ms >= 0
 
     async def test_should_raise_when_connection_id_is_unknown(
         self, dispatcher: Dispatcher
@@ -329,12 +356,9 @@ class TestExecute:
             {"connection_id": conn_id, "query": "SELECT 1"},
             noop_progress,
         )
-        assert result == {
-            "columns": ["n"],
-            "rows": [[42]],
-            "rows_total": 1,
-            "duration_ms": ANY,
-        }
+        assert result == ExecuteReadResult(
+            columns=["n"], rows=[[42]], rows_total=1, duration_ms=ANY
+        )
 
     async def test_reconnects_when_connection_is_lost(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -390,7 +414,7 @@ class TestSessionSet:
             {"connection_id": conn_id, "query_mode": "range"},
             noop_progress,
         )
-        assert result == {"ok": True}
+        assert result == OkResult()
         driver.set_session.assert_awaited_once_with({"query_mode": "range"})
 
     async def test_excludes_connection_id_from_forwarded_values(
@@ -444,7 +468,7 @@ class TestDisconnect:
         result = await disp.dispatch(
             Method.DISCONNECT, {"connection_id": conn_id}, noop_progress
         )
-        assert result == {"ok": True}
+        assert result == OkResult()
 
     async def test_should_succeed_when_connection_id_is_unknown(
         self, dispatcher: Dispatcher
@@ -452,7 +476,7 @@ class TestDisconnect:
         result = await dispatcher.dispatch(
             Method.DISCONNECT, {"connection_id": "x"}, noop_progress
         )
-        assert result == {"ok": True}
+        assert result == OkResult()
 
 
 class TestExploreList:
@@ -466,9 +490,9 @@ class TestExploreList:
         result = await disp.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_id, "path": []}, noop_progress
         )
-        assert result == {
-            "items": [ExploreItem(name="t", type="table", expandable=True)]
-        }
+        assert result == ExploreListResult(
+            items=[ExploreItem(name="t", type="table", expandable=True)]
+        )
 
     async def test_should_cache_result_on_repeated_calls(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -542,10 +566,12 @@ class TestExploreList:
         r1 = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock"}, noop_progress
         )
+        assert isinstance(r1, ConnectResult)
         r2 = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock"}, noop_progress
         )
-        conn_a, conn_b = r1["connection_id"], r2["connection_id"]
+        assert isinstance(r2, ConnectResult)
+        conn_a, conn_b = r1.connection_id, r2.connection_id
         await dispatcher.dispatch(
             Method.EXPLORE_LIST, {"connection_id": conn_a, "path": []}, noop_progress
         )
@@ -565,6 +591,82 @@ class TestExploreList:
         )  # a, b, a-reset; b still cached
 
 
+class TestExploreFind:
+    async def test_should_return_paths_from_driver(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_find.return_value = [["public", "users", "columns", "id"]]
+        result = await disp.dispatch(
+            Method.EXPLORE_FIND,
+            {
+                "connection_id": conn_id,
+                "type": "column",
+                "name": "id",
+                "scope": [{"name": "users", "type": "table"}],
+            },
+            noop_progress,
+        )
+        assert result == ExploreFindResult(paths=[["public", "users", "columns", "id"]])
+        driver.explore_find.assert_awaited_once_with(
+            "column", "id", [SearchScope(name="users", type="table")]
+        )
+
+    async def test_should_default_to_an_unscoped_search(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_find.return_value = []
+        await disp.dispatch(
+            Method.EXPLORE_FIND,
+            {"connection_id": conn_id, "type": "table", "name": "users"},
+            noop_progress,
+        )
+        driver.explore_find.assert_awaited_once_with("table", "users", [])
+
+    @pytest.mark.parametrize("missing", ["type", "name"])
+    async def test_should_reject_a_request_missing_a_required_param(
+        self, connected: tuple[Dispatcher, str, AsyncMock], missing: str
+    ) -> None:
+        disp, conn_id, _ = connected
+        params = {"connection_id": conn_id, "type": "column", "name": "id"}
+        del params[missing]
+        with pytest.raises(DispatchError, match=missing):
+            await disp.dispatch(Method.EXPLORE_FIND, params, noop_progress)
+
+    @pytest.mark.parametrize(
+        "scope", ["users", [{"name": "users"}], [{"type": "table"}], ["users"]]
+    )
+    async def test_should_reject_a_malformed_scope(
+        self, connected: tuple[Dispatcher, str, AsyncMock], scope: object
+    ) -> None:
+        disp, conn_id, _ = connected
+        with pytest.raises(DispatchError, match="scope"):
+            await disp.dispatch(
+                Method.EXPLORE_FIND,
+                {
+                    "connection_id": conn_id,
+                    "type": "column",
+                    "name": "id",
+                    "scope": scope,
+                },
+                noop_progress,
+            )
+
+    async def test_should_reconnect_and_retry_when_connection_lost(
+        self, connected: tuple[Dispatcher, str, AsyncMock]
+    ) -> None:
+        disp, conn_id, driver = connected
+        driver.explore_find.side_effect = [ConnectionLostError(), [["users"]]]
+        result = await disp.dispatch(
+            Method.EXPLORE_FIND,
+            {"connection_id": conn_id, "type": "table", "name": "users"},
+            noop_progress,
+        )
+        assert result == ExploreFindResult(paths=[["users"]])
+        driver.reconnect.assert_awaited_once()
+
+
 class TestExploreDescribe:
     async def test_should_return_details_from_driver(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -581,7 +683,7 @@ class TestExploreDescribe:
             {"connection_id": conn_id, "path": ["t"]},
             noop_progress,
         )
-        assert result == {"details": td}
+        assert result == ExploreDescribeResult(details=td)
 
     async def test_should_cache_result_on_repeated_calls(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -664,7 +766,7 @@ class TestExploreDescribe:
             {"connection_id": conn_id, "path": ["t"]},
             noop_progress,
         )
-        assert result == {"details": None}
+        assert result == ExploreDescribeResult(details=None)
 
 
 class TestExploreDiagram:
@@ -682,10 +784,11 @@ class TestExploreDiagram:
             {"connection_id": conn_id, "path": ["t"]},
             noop_progress,
         )
-        assert "t" in result["diagram"]
-        assert "id" in result["diagram"]
-        assert any(r.path == ["t"] for r in result["regions"])
-        assert any(r.path == ["t", "columns", "id"] for r in result["regions"])
+        assert isinstance(result, ExploreDiagramResult)
+        assert "t" in result.diagram
+        assert "id" in result.diagram
+        assert any(r.path == ["t"] for r in result.regions)
+        assert any(r.path == ["t", "columns", "id"] for r in result.regions)
 
     async def test_should_raise_when_path_does_not_resolve_to_a_table(
         self, connected: tuple[Dispatcher, str, AsyncMock]
@@ -725,9 +828,7 @@ class TestConcurrency:
         dispatcher = Dispatcher(
             driver_settings=DriverSettings(), cache_dir=tmp_path, max_concurrency=1
         )
-        conn_id = (
-            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
-        )["connection_id"]
+        conn_id = await connect(dispatcher)
         t1 = asyncio.create_task(
             dispatcher.dispatch(
                 Method.EXECUTE,
@@ -758,12 +859,8 @@ class TestConcurrency:
         dispatcher = Dispatcher(
             driver_settings=DriverSettings(), cache_dir=tmp_path, max_concurrency=1
         )
-        conn_a = (
-            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
-        )["connection_id"]
-        conn_b = (
-            await dispatcher.dispatch(Method.CONNECT, {"driver": "mock"}, noop_progress)
-        )["connection_id"]
+        conn_a = await connect(dispatcher)
+        conn_b = await connect(dispatcher)
         t1 = asyncio.create_task(
             dispatcher.dispatch(
                 Method.EXECUTE, {"connection_id": conn_a, "query": "q"}, noop_progress
@@ -815,10 +912,11 @@ class TestIdleTimeout:
         r = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
         )
+        assert isinstance(r, ConnectResult)
         await asyncio.sleep(0.07)
         await dispatcher.dispatch(
             Method.EXECUTE,
-            {"connection_id": r["connection_id"], "query": "SELECT 1"},
+            {"connection_id": r.connection_id, "query": "SELECT 1"},
             noop_progress,
         )
         await asyncio.sleep(0.07)
@@ -839,8 +937,9 @@ class TestIdleTimeout:
         r = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock", "idle_timeout": 0.1}, noop_progress
         )
+        assert isinstance(r, ConnectResult)
         await dispatcher.dispatch(
-            Method.DISCONNECT, {"connection_id": r["connection_id"]}, noop_progress
+            Method.DISCONNECT, {"connection_id": r.connection_id}, noop_progress
         )
         mock_driver.disconnect.assert_awaited_once()
         await asyncio.sleep(0.15)
@@ -852,6 +951,7 @@ class TestIdleTimeout:
         r = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
         )
+        assert isinstance(r, ConnectResult)
         await asyncio.sleep(0.15)
         mock_driver.execute.side_effect = [
             ConnectionLostError(),
@@ -859,7 +959,7 @@ class TestIdleTimeout:
         ]
         await dispatcher.dispatch(
             Method.EXECUTE,
-            {"connection_id": r["connection_id"], "query": "SELECT 1"},
+            {"connection_id": r.connection_id, "query": "SELECT 1"},
             noop_progress,
         )
         mock_driver.reconnect.assert_awaited_once()
@@ -880,10 +980,11 @@ class TestIdleTimeout:
         r = await dispatcher.dispatch(
             Method.CONNECT, {"driver": "mock", "idle_timeout": 0.05}, noop_progress
         )
+        assert isinstance(r, ConnectResult)
         task = asyncio.create_task(
             dispatcher.dispatch(
                 Method.EXECUTE,
-                {"connection_id": r["connection_id"], "query": "SELECT 1"},
+                {"connection_id": r.connection_id, "query": "SELECT 1"},
                 noop_progress,
             )
         )

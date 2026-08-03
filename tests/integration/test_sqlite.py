@@ -1,15 +1,19 @@
+import pathlib
 from collections.abc import AsyncGenerator
 
 import pytest
 
 from grannos.drivers.base import DriverSettings
 from grannos.drivers.sqlite import SQLiteDriver
+from grannos.explore_cache import CachingDriver, ConnectionCache
 from grannos.protocol import (
     EntityDescription,
     ExploreItem,
     FieldDescription,
     IndexDescription,
+    NodeType,
     ReadResult,
+    SearchScope,
     TableReference,
     WriteResult,
 )
@@ -500,3 +504,95 @@ class TestExploreDescribeField:
         desc = await driver.explore_describe(["t", "columns", "val"])
         assert isinstance(desc, FieldDescription)
         assert desc.sample == []
+
+
+class TestExploreFind:
+    """End-to-end symbol resolution: the generic walker over a real database,
+    through the caching driver a live connection actually uses."""
+
+    @pytest.fixture
+    async def searchable(
+        self, driver: SQLiteDriver, tmp_path: pathlib.Path
+    ) -> CachingDriver:
+        await driver.execute(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)", []
+        )
+        await driver.execute(
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER,"
+            " REFERENCES users(id))".replace(
+                ", REFERENCES", ", FOREIGN KEY (user_id) REFERENCES"
+            ),
+            [],
+        )
+        await driver.execute("CREATE INDEX orders_user_id ON orders (user_id)", [])
+        await driver.execute("CREATE VIEW active_users AS SELECT * FROM users", [])
+        return CachingDriver(driver, ConnectionCache({}, tmp_path / "cache.json"))
+
+    async def test_finds_a_column_within_its_table(
+        self, searchable: CachingDriver
+    ) -> None:
+        result = await searchable.explore_find(
+            NodeType.COLUMN, "name", [SearchScope(name="users", type=NodeType.TABLE)]
+        )
+        assert result == [["users", "columns", "name"]]
+
+    async def test_reports_every_candidate_for_an_unqualified_column(
+        self, searchable: CachingDriver
+    ) -> None:
+        result = await searchable.explore_find(NodeType.COLUMN, "id", [])
+        assert result == [
+            ["active_users", "columns", "id"],  # the view selects users.*
+            ["orders", "columns", "id"],
+            ["users", "columns", "id"],
+        ]
+
+    async def test_scope_disambiguates_an_unqualified_column(
+        self, searchable: CachingDriver
+    ) -> None:
+        result = await searchable.explore_find(
+            NodeType.COLUMN, "id", [SearchScope(name="orders", type=NodeType.TABLE)]
+        )
+        assert result == [["orders", "columns", "id"]]
+
+    async def test_finds_a_table(self, searchable: CachingDriver) -> None:
+        assert await searchable.explore_find(NodeType.TABLE, "orders", []) == [
+            ["orders"]
+        ]
+
+    async def test_finds_a_view_asked_for_as_a_table(
+        self, searchable: CachingDriver
+    ) -> None:
+        """A client reading a FROM clause cannot tell a view from a table."""
+        assert await searchable.explore_find(NodeType.TABLE, "active_users", []) == [
+            ["active_users"]
+        ]
+
+    async def test_finds_an_index(self, searchable: CachingDriver) -> None:
+        assert await searchable.explore_find(NodeType.INDEX, "orders_user_id", []) == [
+            ["orders", "indices", "orders_user_id"]
+        ]
+
+    async def test_returns_catalog_casing_for_a_differently_cased_symbol(
+        self, searchable: CachingDriver
+    ) -> None:
+        """SQL identifiers are case-insensitive, so the query text's casing need
+        not match the catalog's — the path returned has to be the catalog's, or
+        explore.describe could not consume it."""
+        result = await searchable.explore_find(
+            NodeType.COLUMN, "NAME", [SearchScope(name="USERS", type=NodeType.TABLE)]
+        )
+        assert result == [["users", "columns", "name"]]
+
+    async def test_returned_path_describes(self, searchable: CachingDriver) -> None:
+        """The whole point of a find: hand the path straight back to describe."""
+        (path,) = await searchable.explore_find(
+            NodeType.COLUMN, "name", [SearchScope(name="users", type=NodeType.TABLE)]
+        )
+        desc = await searchable.explore_describe(path)
+        assert isinstance(desc, FieldDescription)
+        assert desc.name == "name"
+
+    async def test_unknown_symbol_finds_nothing(
+        self, searchable: CachingDriver
+    ) -> None:
+        assert await searchable.explore_find(NodeType.COLUMN, "nope", []) == []

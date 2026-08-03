@@ -22,6 +22,7 @@ from ..protocol import (
     IndexDescription,
     IndexKeyField,
     LobPlaceholder,
+    NodeType,
     ParamType,
     ReadResult,
     RecordField,
@@ -65,6 +66,14 @@ class MongoDriver(BaseDriver):
     """
 
     LABEL = "MongoDB"
+
+    FIND_PATHS = {
+        NodeType.DATABASE: [["*"]],
+        NodeType.COLLECTION: [["*", "*"]],
+        NodeType.FIELD: [["*", "*", "fields", "*"]],
+        NodeType.INDEX: [["*", "*", "indexes", "*"]],
+        NodeType.GRIDFS_BUCKET: [["*", "gridfs", "*"]],
+    }
 
     PARAMS: list[DriverParam] = [
         DriverParam(

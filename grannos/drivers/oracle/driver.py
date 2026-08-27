@@ -198,6 +198,7 @@ after an idle timeout.
                     f"/{params.get('service_name', 'FREEPDB1')}"
                 ),
             )
+            conn.outputtypehandler = _replace_undecodable_text
             major_version = int(conn.version.split(".")[0])
             # Session-scoped, so this has to be redone on every reconnect —
             # which is why it lives here rather than in create().
@@ -291,6 +292,7 @@ after an idle timeout.
             )
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
+            _maybe_raise_decode_error(exc)
             if isinstance(exc, oracledb.DatabaseError):
                 raise DriverError(_format_db_error(exc, query)) from exc
             raise
@@ -360,6 +362,7 @@ after an idle timeout.
             return await self._explore_list(path)
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
+            _maybe_raise_decode_error(exc)
             raise
 
     async def _explore_list(self, path: list[str]) -> list[ExploreItem]:
@@ -417,6 +420,7 @@ after an idle timeout.
             return await self._explore_describe(path)
         except Exception as exc:
             _maybe_raise_connection_lost(exc)
+            _maybe_raise_decode_error(exc)
             raise
 
     async def _explore_describe(self, path: list[str]) -> DescribeResult:
@@ -630,6 +634,43 @@ after an idle timeout.
             return "-- DDL unavailable"
 
 
+_TEXT_DB_TYPES = (
+    oracledb.DB_TYPE_VARCHAR,
+    oracledb.DB_TYPE_NVARCHAR,
+    oracledb.DB_TYPE_CHAR,
+    oracledb.DB_TYPE_NCHAR,
+    oracledb.DB_TYPE_LONG,
+)
+"""Character types fetched as str, and so decoded with the database charset."""
+
+
+def _replace_undecodable_text(cursor: Any, metadata: Any) -> Any:
+    """Fetch character columns with undecodable bytes replaced by U+FFFD.
+
+    Oracle hands back whatever bytes a column holds, even ones that aren't
+    valid in the database's own character set — a Latin-1 string loaded into an
+    AL32UTF8 database, say. python-oracledb then raises UnicodeDecodeError
+    while fetching the row, which fails the entire request: one bad byte in one
+    sampled value takes down a table description or a whole diagram. Decoding
+    with ``errors="replace"`` keeps the rest of the row (and every other row)
+    intact and shows the damage as U+FFFD where it actually is.
+
+    Installed on the connection, so it covers every cursor: user queries,
+    previews and the catalog queries behind explore.
+
+    Returns:
+        A var for character columns, None to leave any other type alone.
+    """
+    if metadata.type_code not in _TEXT_DB_TYPES:
+        return None
+    return cursor.var(
+        metadata.type_code,
+        size=metadata.display_size or 0,
+        arraysize=cursor.arraysize,
+        encoding_errors="replace",
+    )
+
+
 _VARCHAR_TYPES = {"VARCHAR2", "VARCHAR"}
 
 
@@ -726,6 +767,22 @@ def _alter_session_property(query: str) -> str | None:
     SET <property> = ...`` statement, else None."""
     match = _ALTER_SESSION_RE.match(query)
     return match.group(1).upper() if match else None
+
+
+def _maybe_raise_decode_error(exc: Exception) -> None:
+    """Report a decode failure the output type handler didn't cover.
+
+    :func:`_replace_undecodable_text` disarms the common case (character
+    columns), but a few paths decode outside it — a CLOB read, an array var —
+    and a bare UnicodeDecodeError reaches the client as "internal error", which
+    says nothing about what to do. Naming the charset and the offending byte at
+    least points at the data.
+    """
+    if isinstance(exc, UnicodeDecodeError):
+        raise DriverError(
+            "the database returned bytes that are not valid "
+            f"{exc.encoding} at byte {exc.start}: {exc.reason}"
+        ) from exc
 
 
 def _maybe_raise_connection_lost(exc: Exception) -> None:

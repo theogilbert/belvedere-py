@@ -175,6 +175,36 @@ class TestExecute:
         assert result.rows == [[1, "hello"]]
 
 
+class TestUndecodableBytes:
+    """Bytes that aren't valid in the database character set — a Latin-1 string
+    loaded into an AL32UTF8 database, say — reach the client as U+FFFD instead
+    of failing the whole request."""
+
+    BAD_BYTES = "UTL_RAW.CAST_TO_VARCHAR2(HEXTORAW('41FF42'))"
+    """A VARCHAR2 holding 'A', 0xFF, 'B' — 0xFF is not valid UTF-8."""
+
+    async def test_execute_replaces_undecodable_bytes(
+        self, driver: OracleDriver
+    ) -> None:
+        result = await driver.execute(f"SELECT {self.BAD_BYTES} AS bad FROM DUAL", [])
+        assert isinstance(result, ReadResult)
+        assert result.rows == [["A\ufffdB"]]
+
+    async def test_describe_samples_replace_undecodable_bytes(
+        self, driver: OracleDriver, schema: str, table: str
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (id NUMBER, val VARCHAR2(50))", []
+        )
+        await driver.execute(
+            f"INSERT INTO {schema}.{table} VALUES (1, {self.BAD_BYTES})", []
+        )
+        description = await driver.explore_describe([schema, table])
+        assert isinstance(description, EntityDescription)
+        val = next(p for p in description.properties if p.name == "VAL")
+        assert val.sample == ["A\ufffdB"]
+
+
 class TestExploreList:
     async def test_root_lists_non_system_schemas(
         self, driver: OracleDriver, schema: str

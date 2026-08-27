@@ -16,6 +16,7 @@ from grannos.drivers.oracle.driver import (
     _offset_to_line_col,
     _created_object,
     _reject_sqlplus_terminator,
+    _replace_undecodable_text,
     _statement_start_line,
 )
 from grannos.drivers.oracle.queries import (
@@ -173,6 +174,13 @@ class TestRenderLob:
     def test_renders_blob_as_byte_count(self) -> None:
         lob = _make_lob("DB_TYPE_BLOB", 128)
         assert asyncio.run(render_lob(lob)) == LobPlaceholder(text="BLOB (128 bytes)")
+
+    def test_undecodable_clob_becomes_a_placeholder(self) -> None:
+        lob = _make_lob("DB_TYPE_CLOB", 3)
+        lob.read = AsyncMock(side_effect=_bad_bytes_error())
+
+        result = asyncio.run(render_lob(lob, lambda value, text: pytest.fail(text)))
+        assert result == LobPlaceholder(text="CLOB (undecodable text)")
 
     def test_with_register_lob_reads_content_and_caches_it(self) -> None:
         lob = _make_lob("DB_TYPE_CLOB", 4, content="text")
@@ -610,3 +618,57 @@ class TestStatementStartLine:
 
     def test_all_comments_falls_back_to_one(self) -> None:
         assert _statement_start_line("-- nothing here\n") == 1
+
+
+def _bad_bytes_error() -> UnicodeDecodeError:
+    return UnicodeDecodeError("utf-8", b"A\xffB", 1, 2, "invalid start byte")
+
+
+class TestReplaceUndecodableText:
+    def test_char_columns_are_decoded_with_replacement(self) -> None:
+        cursor = MagicMock()
+        cursor.arraysize = 100
+        metadata = MagicMock(type_code=oracledb.DB_TYPE_VARCHAR, display_size=50)
+
+        assert _replace_undecodable_text(cursor, metadata) is cursor.var.return_value
+        cursor.var.assert_called_once_with(
+            oracledb.DB_TYPE_VARCHAR,
+            size=50,
+            arraysize=100,
+            encoding_errors="replace",
+        )
+
+    def test_unsized_column_uses_the_default_size(self) -> None:
+        cursor = MagicMock()
+        cursor.arraysize = 100
+        metadata = MagicMock(type_code=oracledb.DB_TYPE_LONG, display_size=None)
+
+        _replace_undecodable_text(cursor, metadata)
+        assert cursor.var.call_args.kwargs["size"] == 0
+
+    def test_non_char_columns_keep_the_default_var(self) -> None:
+        cursor = MagicMock()
+        metadata = MagicMock(type_code=oracledb.DB_TYPE_NUMBER, display_size=None)
+
+        assert _replace_undecodable_text(cursor, metadata) is None
+        cursor.var.assert_not_called()
+
+
+class TestDecodeErrorPropagation:
+    def test_execute_reports_the_offending_byte(self) -> None:
+        cur = MagicMock()
+        cur.execute = AsyncMock(side_effect=_bad_bytes_error())
+        conn = MagicMock(spec=oracledb.AsyncConnection)
+        conn.cursor.return_value = cur
+        driver = OracleDriver({}, conn, True, DriverSettings())
+        with pytest.raises(DriverError, match="not valid utf-8 at byte 1"):
+            asyncio.run(driver.execute("SELECT txt FROM t", []))
+
+    def test_explore_describe_reports_the_offending_byte(self) -> None:
+        cur = MagicMock()
+        cur.execute = AsyncMock(side_effect=_bad_bytes_error())
+        conn = MagicMock(spec=oracledb.AsyncConnection)
+        conn.cursor.return_value = cur
+        driver = OracleDriver({}, conn, True, DriverSettings())
+        with pytest.raises(DriverError, match="not valid utf-8"):
+            asyncio.run(driver.explore_describe(["MYSCHEMA", "MYTABLE"]))

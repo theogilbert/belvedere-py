@@ -712,7 +712,14 @@ async def render_lob(
     unit = "bytes" if type_name == "BLOB" else "chars"
     if register_lob is None:
         return LobPlaceholder(text=f"{type_name} ({await value.size()} {unit})")
-    content = await value.read()
+    try:
+        content = await value.read()
+    except UnicodeDecodeError:
+        # A CLOB holding bytes that aren't valid in the database charset. Unlike
+        # a VARCHAR2 there is no decoding hook to soften this (the LOB is
+        # decoded as it is read), so the cell reports the damage instead of
+        # failing the statement that happened to select it.
+        return LobPlaceholder(text=f"{type_name} (undecodable text)")
     return register_lob(content, f"{type_name} ({len(content)} {unit})")
 
 

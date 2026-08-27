@@ -26,7 +26,9 @@ from grannos.protocol import (
     FieldDescription,
     IndexDescription,
     MessageLevel,
+    NodeType,
     ReadResult,
+    SearchScope,
     TableReference,
     WriteResult,
 )
@@ -973,3 +975,127 @@ class TestExecuteMessages:
             f"CREATE OR REPLACE PROCEDURE {proc} AS BEGIN NULL; END;", []
         )
         assert result.messages == []
+
+
+class TestExploreFind:
+    """The find queries run against the real data dictionary — the unit tests
+    mock the cursor and so never prove the SQL parses."""
+
+    async def test_finds_a_table_without_a_schema_scope(
+        self, driver: OracleDriver, table: str, schema: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        assert await driver.explore_find(NodeType.TABLE, table, []) == [[schema, table]]
+
+    async def test_found_path_is_describable(
+        self, driver: OracleDriver, table: str
+    ) -> None:
+        """The whole point of matching the tree's own schema filter: a path a
+        find returns has to be one explore.describe accepts."""
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        (path,) = await driver.explore_find(NodeType.TABLE, table, [])
+        described = await driver.explore_describe(path)
+        assert isinstance(described, EntityDescription)
+        assert described.name == table
+
+    async def test_lower_case_symbol_matches_the_folded_identifier(
+        self, driver: OracleDriver, table: str, schema: str
+    ) -> None:
+        """A symbol read out of a query buffer is rarely upper-cased."""
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        assert await driver.explore_find(NodeType.TABLE, table.lower(), []) == [
+            [schema, table]
+        ]
+
+    async def test_finds_a_view(self, driver: OracleDriver, table: str) -> None:
+        view = f"V_{table}"
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE VIEW {view} AS SELECT * FROM {table}", [])
+        try:
+            paths = await driver.explore_find(NodeType.VIEW, view, [])
+            assert [p[1] for p in paths] == [view]
+        finally:
+            await driver.execute(f"DROP VIEW {view}", [])
+
+    async def test_finds_a_column_scoped_by_its_table(
+        self, driver: OracleDriver, tables: tuple[str, str], schema: str
+    ) -> None:
+        """A column name is never hovered without a table in the query, and the
+        same name in two tables must resolve to only the scoped one."""
+        first, second = tables
+        await driver.execute(f"CREATE TABLE {first} (shared_col NUMBER)", [])
+        await driver.execute(f"CREATE TABLE {second} (shared_col NUMBER)", [])
+        paths = await driver.explore_find(
+            NodeType.COLUMN,
+            "shared_col",
+            [SearchScope(name=first, type=NodeType.TABLE)],
+        )
+        assert paths == [[schema, first, "columns", "SHARED_COL"]]
+
+    async def test_unscoped_column_returns_every_candidate(
+        self, driver: OracleDriver, tables: tuple[str, str]
+    ) -> None:
+        """Ambiguity is the client's picker to resolve, not an error."""
+        first, second = tables
+        await driver.execute(f"CREATE TABLE {first} (shared_col NUMBER)", [])
+        await driver.execute(f"CREATE TABLE {second} (shared_col NUMBER)", [])
+        paths = await driver.explore_find(NodeType.COLUMN, "shared_col", [])
+        assert sorted(p[1] for p in paths) == sorted([first, second])
+
+    async def test_found_column_path_is_describable(
+        self, driver: OracleDriver, table: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        (path,) = await driver.explore_find(
+            NodeType.COLUMN, "id", [SearchScope(name=table, type=NodeType.TABLE)]
+        )
+        described = await driver.explore_describe(path)
+        assert isinstance(described, FieldDescription)
+        assert described.name == "ID"
+
+    async def test_finds_an_index_under_its_table(
+        self, driver: OracleDriver, table: str, schema: str
+    ) -> None:
+        index = f"I_{table}"
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE INDEX {index} ON {table} (id)", [])
+        assert await driver.explore_find(NodeType.INDEX, index, []) == [
+            [schema, table, "indexes", index]
+        ]
+
+    async def test_found_index_path_is_describable(
+        self, driver: OracleDriver, table: str
+    ) -> None:
+        index = f"I_{table}"
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE INDEX {index} ON {table} (id)", [])
+        (path,) = await driver.explore_find(NodeType.INDEX, index, [])
+        described = await driver.explore_describe(path)
+        assert isinstance(described, IndexDescription)
+        assert described.name == index
+
+    async def test_schema_scope_excludes_another_schema(
+        self, driver: OracleDriver, table: str, schema: str, schema2: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        assert (
+            await driver.explore_find(
+                NodeType.TABLE, table, [SearchScope(name=schema2, type=NodeType.SCHEMA)]
+            )
+            == []
+        )
+        assert await driver.explore_find(
+            NodeType.TABLE, table, [SearchScope(name=schema, type=NodeType.SCHEMA)]
+        ) == [[schema, table]]
+
+    async def test_does_not_resolve_to_a_system_table(
+        self, driver: OracleDriver
+    ) -> None:
+        """DUAL lives in SYS, which the object tree does not list — returning it
+        would hand the client a path describe cannot follow."""
+        assert await driver.explore_find(NodeType.TABLE, "DUAL", []) == []
+
+    async def test_absent_symbol_resolves_to_nothing(
+        self, driver: OracleDriver
+    ) -> None:
+        assert await driver.explore_find(NodeType.TABLE, "T_NO_SUCH_TABLE", []) == []

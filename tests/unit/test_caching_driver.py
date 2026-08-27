@@ -55,6 +55,7 @@ def cache(tmp_path: pathlib.Path) -> ConnectionCache:
 @pytest.fixture
 def inner() -> AsyncMock:
     d = AsyncMock()
+    d.FIND_PATHS = {}
     d.explore_list.return_value = [ExploreItem(name="t", type="table", expandable=True)]
     d.explore_describe.return_value = EntityDescription(
         name="t", kind="table", properties=[]
@@ -361,3 +362,72 @@ class TestExploreFind:
         ]
         inner.explore_find.assert_awaited_once_with(NodeType.TABLE, "users", scopes)
         inner.explore_list.assert_not_awaited()
+
+    async def test_cache_is_preferred_over_the_driver_implementation(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        """A symbol resolvable from the cache must not cost a catalog query,
+        however cheap that query is — this is the whole point of pass 1."""
+        inner.FIND_PATHS = {NodeType.TABLE: [["*"]]}
+        inner.explore_find.return_value = [["from-the-database"]]
+        await driver.explore_list([])
+
+        assert await driver.explore_find(NodeType.TABLE, "t", []) == [["t"]]
+        inner.explore_find.assert_not_awaited()
+
+    async def test_cache_miss_falls_through_to_the_driver_implementation(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        """The cached root does not settle a search for a *column*: the level
+        below it was never listed, so the walk cannot conclude "no match"."""
+        inner.FIND_PATHS = {
+            NodeType.TABLE: [["*"]],
+            NodeType.COLUMN: [["*", "columns", "*"]],
+        }
+        inner.explore_find.return_value = [["t", "columns", "id"]]
+        await driver.explore_list([])
+
+        assert await driver.explore_find(NodeType.COLUMN, "id", []) == [
+            ["t", "columns", "id"]
+        ]
+        inner.explore_find.assert_awaited_once()
+
+    async def test_a_complete_cache_only_walk_trusts_an_empty_result(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        """No match, with every level the walk touched cached, is an answer —
+        not a reason to go to the database."""
+        inner.FIND_PATHS = {NodeType.TABLE: [["*"]]}
+        await driver.explore_list([])
+
+        assert await driver.explore_find(NodeType.TABLE, "absent", []) == []
+        inner.explore_find.assert_not_awaited()
+
+    async def test_undeclared_node_type_skips_the_cache_only_walk(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        """A type with no template makes the walk return empty without reading
+        the cache at all — which must not be mistaken for "no such symbol" when
+        the driver's own lookup covers that type."""
+        inner.FIND_PATHS = {NodeType.TABLE: [["*"]]}
+        inner.explore_find.return_value = [["entities", "Person"]]
+        await driver.explore_list([])
+
+        assert await driver.explore_find(NodeType.LABEL, "Person", []) == [
+            ["entities", "Person"]
+        ]
+        inner.explore_find.assert_awaited_once()
+
+    async def test_cache_only_walk_survives_a_restart(
+        self, inner: AsyncMock, cache: ConnectionCache, tmp_path: pathlib.Path
+    ) -> None:
+        """Pass 1 reads the on-disk cache, so a symbol resolved in one session
+        still costs no round trip in the next."""
+        inner.FIND_PATHS = {NodeType.TABLE: [["*"]]}
+        await CachingDriver(inner, cache).explore_list([])
+
+        reopened = CachingDriver(inner, ConnectionCache(PARAMS, tmp_path / "c.json"))
+        inner.explore_list.reset_mock()
+        assert await reopened.explore_find(NodeType.TABLE, "t", []) == [["t"]]
+        inner.explore_list.assert_not_awaited()
+        inner.explore_find.assert_not_awaited()

@@ -50,6 +50,7 @@ async def connect(dispatcher: Dispatcher, params: dict[str, Any] | None = None) 
 def _make_mock_driver() -> AsyncMock:
     d = AsyncMock()
     d.DEFAULT_IDLE_TIMEOUT = 600
+    d.FIND_PATHS = {}
     d.execute.return_value = ReadResult(columns=[], rows=[], rows_total=0)
     d.explore_list.return_value = []
     d.explore_describe.return_value = None

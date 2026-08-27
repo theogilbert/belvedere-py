@@ -290,6 +290,181 @@ async def fetch_index_names_and_types(
 
 
 # ---------------------------------------------------------------------------
+# Symbol lookup (explore.find)
+# ---------------------------------------------------------------------------
+#
+# One query per node type, resolving a name across every schema at once rather
+# than listing schema by schema. Each predicate is an equality against an
+# indexed dictionary column, and the owner filter repeats what fetch_schemas
+# selects — a find must never resolve to a path the object tree does not hold.
+
+
+def _owner_filter(column: str, has_oracle_maintained: bool) -> str:
+    """Return an AND-predicate restricting *column* to the non-system schemas
+    :func:`fetch_schemas` lists, expressed as a subquery so the two cannot drift
+    apart and the whole find stays one round trip."""
+    if has_oracle_maintained:
+        return (
+            f" AND {column} IN"
+            " (SELECT USERNAME FROM ALL_USERS WHERE ORACLE_MAINTAINED = 'N')"
+        )
+    return f" AND {column} NOT IN ({_PRE12_SYSTEM_SCHEMAS_SQL})"
+
+
+def _in_binds(values: tuple[str, ...], start: int) -> str:
+    """Render *values* as a positional bind list starting at ``:start``."""
+    return ", ".join(f":{start + i}" for i in range(len(values)))
+
+
+def _scope_filter(column: str, names: tuple[str, ...], binds: list[str]) -> str:
+    """Return an AND-predicate restricting *column* to *names*, appending the
+    bind values to *binds*. Empty *names* leaves the column unconstrained."""
+    if not names:
+        return ""
+    start = len(binds) + 1
+    binds.extend(names)
+    return f" AND {column} IN ({_in_binds(names, start)})"
+
+
+def _name_forms(name: str) -> tuple[str, ...]:
+    """Return the stored forms *name* may take: as written, and folded upper.
+
+    Oracle stores an unquoted identifier upper-cased, so a symbol typed in a
+    query buffer almost always needs folding; a quoted identifier is stored
+    verbatim. Matching both as equalities keeps the dictionary index usable,
+    where an ``UPPER(column) =`` predicate would not.
+    """
+    return (name,) if name == name.upper() else (name, name.upper())
+
+
+def _find_object_branch(
+    view: str,
+    name_column: str,
+    names: tuple[str, ...],
+    schemas: tuple[str, ...],
+    has_oracle_maintained: bool,
+    binds: list[str],
+) -> str:
+    """Render one branch of the table/view union, appending its bind values to
+    *binds*.
+
+    Each branch gets its own bind numbers rather than reusing the first's:
+    oracledb counts a repeated ``:1`` as a second positional bind, so a shared
+    placeholder list fails with DPY-4009.
+    """
+    start = len(binds) + 1
+    binds.extend(names)
+    return (
+        f"SELECT OWNER, {name_column} FROM {view}"
+        f" WHERE {name_column} IN ({_in_binds(names, start)})"
+        f"{_owner_filter('OWNER', has_oracle_maintained)}"
+        f"{_scope_filter('OWNER', schemas, binds)}"
+    )
+
+
+@_conn_cache
+async def fetch_find_tables_and_views(
+    conn: AsyncConnection,
+    name: str,
+    schemas: tuple[str, ...],
+    has_oracle_maintained: bool,
+) -> list[tuple[str, str]]:
+    """Return (owner, name) pairs for every table or view called *name*.
+
+    Unions the same two dictionary views :func:`fetch_tables_and_views` lists
+    from, so a find and the tree agree on what exists.
+
+    Args:
+        conn: Open connection.
+        name: Symbol name as written by the client.
+        schemas: Owner names to restrict to; empty searches every schema.
+        has_oracle_maintained: True on Oracle 12c+.
+    """
+    names = _name_forms(name)
+    binds: list[str] = []
+    tables = _find_object_branch(
+        "ALL_TABLES", "TABLE_NAME", names, schemas, has_oracle_maintained, binds
+    )
+    views = _find_object_branch(
+        "ALL_VIEWS", "VIEW_NAME", names, schemas, has_oracle_maintained, binds
+    )
+    cur = conn.cursor()
+    await cur.execute(f"{tables} UNION {views} ORDER BY 1, 2", binds)
+    return [(r[0], r[1]) for r in await cur.fetchall()]
+
+
+@_conn_cache
+async def fetch_find_columns(
+    conn: AsyncConnection,
+    name: str,
+    schemas: tuple[str, ...],
+    tables: tuple[str, ...],
+    has_oracle_maintained: bool,
+) -> list[tuple[str, str, str]]:
+    """Return (owner, table, column) triples for every column called *name*.
+
+    ``ALL_TAB_COLUMNS`` covers views as well as tables, matching the object
+    tree, which hangs a ``columns`` group off both.
+
+    Args:
+        conn: Open connection.
+        name: Symbol name as written by the client.
+        schemas: Owner names to restrict to; empty searches every schema.
+        tables: Table/view names to restrict to; empty searches every table.
+        has_oracle_maintained: True on Oracle 12c+.
+    """
+    names = _name_forms(name)
+    binds: list[str] = list(names)
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT OWNER, TABLE_NAME, COLUMN_NAME FROM ALL_TAB_COLUMNS"
+        f" WHERE COLUMN_NAME IN ({_in_binds(names, 1)})"
+        f"{_owner_filter('OWNER', has_oracle_maintained)}"
+        f"{_scope_filter('OWNER', schemas, binds)}"
+        f"{_scope_filter('TABLE_NAME', tables, binds)}"
+        " ORDER BY 1, 2, 3",
+        binds,
+    )
+    return [(r[0], r[1], r[2]) for r in await cur.fetchall()]
+
+
+@_conn_cache
+async def fetch_find_indexes(
+    conn: AsyncConnection,
+    name: str,
+    schemas: tuple[str, ...],
+    tables: tuple[str, ...],
+    has_oracle_maintained: bool,
+) -> list[tuple[str, str, str]]:
+    """Return (table_owner, table, index) triples for every index called *name*.
+
+    Keyed on ``TABLE_OWNER``/``TABLE_NAME`` rather than the index's own owner,
+    since the tree hangs an index off the table it indexes — the same basis
+    :func:`fetch_index_names_and_types` lists on.
+
+    Args:
+        conn: Open connection.
+        name: Symbol name as written by the client.
+        schemas: Owner names to restrict to; empty searches every schema.
+        tables: Table names to restrict to; empty searches every table.
+        has_oracle_maintained: True on Oracle 12c+.
+    """
+    names = _name_forms(name)
+    binds: list[str] = list(names)
+    cur = conn.cursor()
+    await cur.execute(
+        "SELECT TABLE_OWNER, TABLE_NAME, INDEX_NAME FROM ALL_INDEXES"
+        f" WHERE INDEX_NAME IN ({_in_binds(names, 1)})"
+        f"{_owner_filter('TABLE_OWNER', has_oracle_maintained)}"
+        f"{_scope_filter('TABLE_OWNER', schemas, binds)}"
+        f"{_scope_filter('TABLE_NAME', tables, binds)}"
+        " ORDER BY 1, 2, 3",
+        binds,
+    )
+    return [(r[0], r[1], r[2]) for r in await cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
 # Table describe queries
 # ---------------------------------------------------------------------------
 

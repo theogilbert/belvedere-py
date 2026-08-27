@@ -85,6 +85,17 @@ async def walk_find(
     return _dedupe(_prefer_exact(matches, name))
 
 
+def declares(templates: dict[NodeType, list[list[str]]], node_type: str) -> bool:
+    """Return True if *templates* says where a node of kind *node_type* lives.
+
+    Lets a caller tell a walk that found nothing from one that never looked: an
+    undeclared kind yields no matches without a single ``explore_list`` call, so
+    its empty result carries no information about whether the symbol exists.
+    """
+    kind = _as_node_type(node_type)
+    return kind is not None and bool(templates.get(kind))
+
+
 def _constraints(
     template: list[str],
     templates: dict[NodeType, list[list[str]]],

@@ -21,6 +21,7 @@ from ...protocol import (
     NodeType,
     ParamType,
     ReadResult,
+    SearchScope,
     TableReference,
     WriteResult,
 )
@@ -29,6 +30,7 @@ from ..base import (
     ConnectionLostError,
     DriverError,
     DriverSettings,
+    FindNotSupported,
     build_column_samples,
     find_reference,
     group_references_by_column,
@@ -47,6 +49,9 @@ from .queries import (
     fetch_column_details,
     fetch_column_names_and_types,
     fetch_explain_plan,
+    fetch_find_columns,
+    fetch_find_indexes,
+    fetch_find_tables_and_views,
     fetch_index_ddl,
     fetch_index_fields_for_index,
     invalidate_cache,
@@ -406,6 +411,60 @@ after an idle timeout.
 
             case _:
                 return []
+
+    async def explore_find(
+        self, node_type: str, name: str, scopes: list[SearchScope]
+    ) -> list[list[str]]:
+        """Resolve a symbol with one data-dictionary query instead of a descent.
+
+        The generic walker would list every schema's tables just to learn which
+        owner holds an unqualified name — N round trips, and the whole catalog
+        over the wire, to answer with one row. Oracle's dictionary answers it
+        directly, so a cold-cache hover costs a single query.
+
+        ``schema`` is left to the walker: the root listing is one cheap call the
+        explore cache already serves.
+        """
+        try:
+            return await self._explore_find(node_type, name, scopes)
+        except FindNotSupported:
+            raise
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            _maybe_raise_decode_error(exc)
+            raise
+
+    async def _explore_find(
+        self, node_type: str, name: str, scopes: list[SearchScope]
+    ) -> list[list[str]]:
+        schemas = _scope_names(scopes, NodeType.SCHEMA)
+        tables = _scope_names(scopes, NodeType.TABLE, NodeType.VIEW)
+        match node_type:
+            case NodeType.TABLE | NodeType.VIEW:
+                # Both kinds are returned for either search: the tree holds them
+                # at one level, and a client naming a view "table" is guessing
+                # from syntax that cannot tell them apart.
+                rows = await fetch_find_tables_and_views(
+                    self._conn, name, schemas, self._has_oracle_maintained
+                )
+                return [[owner, table] for owner, table in rows]
+
+            case NodeType.COLUMN:
+                cols = await fetch_find_columns(
+                    self._conn, name, schemas, tables, self._has_oracle_maintained
+                )
+                return [
+                    [owner, table, "columns", column] for owner, table, column in cols
+                ]
+
+            case NodeType.INDEX:
+                idx = await fetch_find_indexes(
+                    self._conn, name, schemas, tables, self._has_oracle_maintained
+                )
+                return [[owner, table, "indexes", index] for owner, table, index in idx]
+
+            case _:
+                raise FindNotSupported
 
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         match path:
@@ -767,6 +826,19 @@ def _alter_session_property(query: str) -> str | None:
     SET <property> = ...`` statement, else None."""
     match = _ALTER_SESSION_RE.match(query)
     return match.group(1).upper() if match else None
+
+
+def _scope_names(scopes: list[SearchScope], *types: NodeType) -> tuple[str, ...]:
+    """Return the names of every scope of one of *types*, in both the form the
+    client wrote and its upper-cased form — the two ways Oracle may have stored
+    the identifier. Sorted so the query text is stable and cacheable.
+    """
+    wanted = {str(t) for t in types}
+    names: set[str] = set()
+    for scope in scopes:
+        if scope.type in wanted:
+            names.update({scope.name, scope.name.upper()})
+    return tuple(sorted(names))
 
 
 def _maybe_raise_decode_error(exc: Exception) -> None:

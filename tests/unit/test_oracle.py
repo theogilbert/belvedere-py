@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 import oracledb
 import pytest
 
-from grannos.drivers.base import ConnectionLostError, DriverError, DriverSettings
+from grannos.drivers.base import (
+    ConnectionLostError,
+    DriverError,
+    DriverSettings,
+    FindNotSupported,
+)
 from grannos.drivers.oracle.driver import (
     OracleDriver,
     _alter_session_property,
@@ -24,7 +29,14 @@ from grannos.drivers.oracle.queries import (
     ColumnDetail,
     render_lob,
 )
-from grannos.protocol import ExploreItem, IndexDescription, LobPlaceholder, ReadResult
+from grannos.protocol import (
+    ExploreItem,
+    IndexDescription,
+    LobPlaceholder,
+    NodeType,
+    ReadResult,
+    SearchScope,
+)
 
 
 def _make_lob(
@@ -672,3 +684,125 @@ class TestDecodeErrorPropagation:
         driver = OracleDriver({}, conn, True, DriverSettings())
         with pytest.raises(DriverError, match="not valid utf-8"):
             asyncio.run(driver.explore_describe(["MYSCHEMA", "MYTABLE"]))
+
+
+class TestExploreFind:
+    """One dictionary query resolves a symbol across every schema, in place of
+    the generic walker's schema-by-schema descent."""
+
+    @staticmethod
+    def _find(rows: list, node_type: str, name: str, scopes: list) -> tuple:
+        """Run a find against a driver returning *rows*, and hand back the
+        resulting paths with the SQL and binds the driver submitted."""
+        driver = _make_driver(rows, has_oracle_maintained=True)
+        paths = asyncio.run(driver.explore_find(node_type, name, scopes))
+        call = driver._conn.cursor().execute.call_args  # ty: ignore[unresolved-attribute]
+        return paths, call[0][0], call[0][1]
+
+    def test_table_resolves_across_schemas_in_one_query(self) -> None:
+        paths, sql, _ = self._find(
+            [("HR", "EMPLOYEES"), ("PAYROLL", "EMPLOYEES")],
+            NodeType.TABLE,
+            "employees",
+            [],
+        )
+        assert paths == [["HR", "EMPLOYEES"], ["PAYROLL", "EMPLOYEES"]]
+        assert "OWNER =" not in sql
+
+    def test_ambiguous_table_returns_every_candidate(self) -> None:
+        """Two schemas holding the same name is a picker, not an error."""
+        paths, _, _ = self._find(
+            [("HR", "EMPLOYEES"), ("PAYROLL", "EMPLOYEES")],
+            NodeType.TABLE,
+            "employees",
+            [],
+        )
+        assert len(paths) == 2
+
+    def test_view_search_also_matches_tables(self) -> None:
+        """The tree holds tables and views at one level, and a client naming a
+        symbol from surrounding syntax cannot tell them apart."""
+        paths, sql, _ = self._find([("HR", "EMP_V")], NodeType.VIEW, "emp_v", [])
+        assert paths == [["HR", "EMP_V"]]
+        assert "ALL_TABLES" in sql
+        assert "ALL_VIEWS" in sql
+
+    def test_column_path_carries_the_group_segment(self) -> None:
+        paths, _, _ = self._find(
+            [("HR", "EMPLOYEES", "SALARY")], NodeType.COLUMN, "salary", []
+        )
+        assert paths == [["HR", "EMPLOYEES", "columns", "SALARY"]]
+
+    def test_index_is_keyed_on_the_table_it_indexes(self) -> None:
+        """The tree hangs an index off its table, so the path needs TABLE_OWNER
+        rather than the index's own owner."""
+        paths, sql, _ = self._find(
+            [("HR", "EMPLOYEES", "EMP_PK")], NodeType.INDEX, "emp_pk", []
+        )
+        assert paths == [["HR", "EMPLOYEES", "indexes", "EMP_PK"]]
+        assert "TABLE_OWNER" in sql
+
+    def test_table_scope_narrows_a_column_search(self) -> None:
+        _, sql, binds = self._find(
+            [("HR", "EMPLOYEES", "ID")],
+            NodeType.COLUMN,
+            "id",
+            [SearchScope(name="employees", type=NodeType.TABLE)],
+        )
+        assert "TABLE_NAME IN" in sql
+        assert "EMPLOYEES" in binds
+
+    def test_schema_scope_narrows_the_owner(self) -> None:
+        _, sql, binds = self._find(
+            [("HR", "EMPLOYEES")],
+            NodeType.TABLE,
+            "employees",
+            [SearchScope(name="hr", type=NodeType.SCHEMA)],
+        )
+        assert "OWNER IN" in sql
+        assert "HR" in binds
+
+    def test_unquoted_name_is_matched_upper_cased(self) -> None:
+        """Oracle stores an unquoted identifier folded up, so the symbol as
+        typed rarely matches the dictionary verbatim."""
+        _, _, binds = self._find([("HR", "EMPLOYEES")], NodeType.TABLE, "employees", [])
+        assert "EMPLOYEES" in binds
+        assert "employees" in binds
+
+    def test_already_upper_name_needs_no_second_form(self) -> None:
+        """Tested on the single-statement column query, so the count reflects
+        the name forms alone and not the union's per-branch binds."""
+        _, _, binds = self._find([("HR", "EMPLOYEES", "ID")], NodeType.COLUMN, "ID", [])
+        assert binds == ["ID"]
+
+    def test_union_binds_each_branch_separately(self) -> None:
+        """oracledb counts a repeated ``:1`` as a second positional bind, so the
+        two branches cannot share one placeholder list (DPY-4009)."""
+        _, sql, binds = self._find(
+            [("HR", "EMPLOYEES")], NodeType.TABLE, "EMPLOYEES", []
+        )
+        assert binds == ["EMPLOYEES", "EMPLOYEES"]
+        assert ":1" in sql and ":2" in sql
+
+    def test_find_excludes_oracle_maintained_schemas(self) -> None:
+        """A path the object tree does not contain would 404 on describe."""
+        _, sql, _ = self._find([("HR", "EMPLOYEES")], NodeType.TABLE, "employees", [])
+        assert "ORACLE_MAINTAINED" in sql
+
+    def test_pre12c_find_uses_the_exclusion_list(self) -> None:
+        driver = _make_driver([("HR", "EMPLOYEES")], has_oracle_maintained=False)
+        asyncio.run(driver.explore_find(NodeType.TABLE, "employees", []))
+        sql = driver._conn.cursor().execute.call_args[0][0]  # ty: ignore[unresolved-attribute]
+        assert "ORACLE_MAINTAINED" not in sql
+        assert "NOT IN" in sql
+
+    def test_schema_search_is_handed_to_the_walker(self) -> None:
+        """The root listing is one cheap call the explore cache already serves."""
+        driver = _make_driver([], has_oracle_maintained=True)
+        with pytest.raises(FindNotSupported):
+            asyncio.run(driver.explore_find(NodeType.SCHEMA, "hr", []))
+
+    def test_unknown_node_type_is_handed_to_the_walker(self) -> None:
+        driver = _make_driver([], has_oracle_maintained=True)
+        with pytest.raises(FindNotSupported):
+            asyncio.run(driver.explore_find("relationship_type", "ACTED_IN", []))

@@ -17,10 +17,10 @@ from .graph import GraphEdge, GraphNode
 from .layout import Layout
 
 _BOX_GAP = 1
-"""Blank rows between boxes stacked within the same column."""
+"""Default blank rows between boxes stacked within the same column."""
 _CHANNEL_PADDING = 1
-"""Blank columns on each side of an inter-column channel, outside the lanes
-an edge might actually run through."""
+"""Default blank columns on each side of an inter-column channel, outside the
+lanes an edge might actually run through."""
 _ALIGN_SWEEPS = 2
 """Rounds of vertical alignment; each round pulls every column toward its
 left neighbors, then every column toward its right neighbors."""
@@ -53,16 +53,39 @@ class PlaceResult:
     margin ring reserved for edges to detour around the diagram's content."""
 
 
+@dataclass(frozen=True)
+class Spacing:
+    """How much empty grid to leave between the boxes for ``route.py`` to
+    route through.
+
+    The defaults are the tightest placement that still connects everything in
+    the common case: a ``box_gap`` of 1 leaves two vertically stacked boxes no
+    room for the mandatory stub between them, so neither can anchor an edge on
+    the side facing the other. Usually harmless — the sides facing the
+    channels carry the edges — but a small box can end up with every remaining
+    anchor taken, which is why ``build_diagram`` re-places with a roomier
+    spacing when an edge comes out unroutable."""
+
+    box_gap: int = _BOX_GAP
+    channel_padding: int = _CHANNEL_PADDING
+
+
+DEFAULT_SPACING = Spacing()
+
+
 def place(
-    nodes: list[GraphNode], edges: list[GraphEdge], layout: Layout
+    nodes: list[GraphNode],
+    edges: list[GraphEdge],
+    layout: Layout,
+    spacing: Spacing = DEFAULT_SPACING,
 ) -> PlaceResult:
     box_lines = {n.id: _box_lines(n) for n in nodes}
     box_size = {nid: _box_size(lines) for nid, lines in box_lines.items()}
     height = {nid: h for nid, (h, _) in box_size.items()}
 
-    col_x = _column_x(layout, box_size, edges)
-    y_within = _initial_rows(layout, height)
-    _align_rows(layout, edges, y_within, height)
+    col_x = _column_x(layout, box_size, edges, spacing.channel_padding)
+    y_within = _initial_rows(layout, height, spacing.box_gap)
+    _align_rows(layout, edges, y_within, height, spacing.box_gap)
     shift = -min(y_within.values(), default=0)
     if shift > 0:
         y_within = {nid: y + shift for nid, y in y_within.items()}
@@ -187,7 +210,10 @@ def _box_size(lines: list[_Line]) -> tuple[int, int]:
 
 
 def _column_x(
-    layout: Layout, box_size: dict[int, tuple[int, int]], edges: list[GraphEdge]
+    layout: Layout,
+    box_size: dict[int, tuple[int, int]],
+    edges: list[GraphEdge],
+    channel_padding: int,
 ) -> dict[int, int]:
     col_width: dict[int, int] = defaultdict(lambda: 1)
     for nid, (_, w) in box_size.items():
@@ -212,18 +238,20 @@ def _column_x(
             # reaching into it from their own side, plus room to bend past
             # each other — a channel narrower than that starves route.py of
             # anywhere to put the stub regardless of how few edges cross it.
-            gap = max(2 * _CHANNEL_PADDING + boundary_count[c], 2 * STUB_LEN + 1)
+            gap = max(2 * channel_padding + boundary_count[c], 2 * STUB_LEN + 1)
             x += gap
     return col_x
 
 
-def _initial_rows(layout: Layout, height: dict[int, int]) -> dict[int, int]:
+def _initial_rows(
+    layout: Layout, height: dict[int, int], box_gap: int
+) -> dict[int, int]:
     y_within: dict[int, int] = {}
     for ids in layout.row_order.values():
         y = 0
         for nid in ids:
             y_within[nid] = y
-            y += height[nid] + _BOX_GAP
+            y += height[nid] + box_gap
     return y_within
 
 
@@ -232,6 +260,7 @@ def _align_rows(
     edges: list[GraphEdge],
     y_within: dict[int, int],
     height: dict[int, int],
+    box_gap: int,
 ) -> None:
     """Nudges boxes up or down within their column so a direct edge between
     two adjacent columns lands on the same row on both ends, giving it a
@@ -263,7 +292,7 @@ def _align_rows(
             if not refs:
                 continue
             desired = round(sum(refs) / len(refs)) - height[nid] // 2
-            _nudge(ids, ids.index(nid), desired, y_within, height, priority)
+            _nudge(ids, ids.index(nid), desired, y_within, height, priority, box_gap)
 
     columns = sorted(layout.row_order)
     for _ in range(_ALIGN_SWEEPS):
@@ -280,6 +309,7 @@ def _nudge(
     y: dict[int, int],
     height: dict[int, int],
     priority: dict[int, int],
+    box_gap: int,
 ) -> None:
     """Moves ``ids[i]`` as close to ``desired`` as its column-mates allow:
     strictly lower-priority nodes in the way get pushed along, while an
@@ -287,17 +317,17 @@ def _nudge(
     nid = ids[i]
     if desired > y[nid]:
         limit = desired
-        needed = height[nid] + _BOX_GAP
+        needed = height[nid] + box_gap
         for k in range(i + 1, len(ids)):
             if priority[ids[k]] >= priority[nid]:
                 limit = min(limit, y[ids[k]] - needed)
                 break
-            needed += height[ids[k]] + _BOX_GAP
+            needed += height[ids[k]] + box_gap
         if limit <= y[nid]:
             return
         y[nid] = limit
         for k in range(i + 1, len(ids)):
-            floor = y[ids[k - 1]] + height[ids[k - 1]] + _BOX_GAP
+            floor = y[ids[k - 1]] + height[ids[k - 1]] + box_gap
             if y[ids[k]] >= floor:
                 break
             y[ids[k]] = floor
@@ -306,14 +336,14 @@ def _nudge(
         needed = 0
         for k in range(i - 1, -1, -1):
             if priority[ids[k]] >= priority[nid]:
-                limit = max(limit, y[ids[k]] + height[ids[k]] + _BOX_GAP + needed)
+                limit = max(limit, y[ids[k]] + height[ids[k]] + box_gap + needed)
                 break
-            needed += height[ids[k]] + _BOX_GAP
+            needed += height[ids[k]] + box_gap
         if limit >= y[nid]:
             return
         y[nid] = limit
         for k in range(i - 1, -1, -1):
-            ceiling = y[ids[k + 1]] - height[ids[k]] - _BOX_GAP
+            ceiling = y[ids[k + 1]] - height[ids[k]] - box_gap
             if y[ids[k]] <= ceiling:
                 break
             y[ids[k]] = ceiling

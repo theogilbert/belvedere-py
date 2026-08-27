@@ -65,6 +65,17 @@ _SIDE_HEADING = {"top": "N", "bottom": "S", "left": "W", "right": "E"}
 """Outward travel direction of a box side's mandatory stub."""
 
 
+class NoRouteError(Exception):
+    """Raised when an edge has no orthogonal path left between its two boxes.
+
+    Every anchor the edge could leave from is taken and the cells around them
+    are already carrying other edges on both axes. This says the boxes are
+    packed too tightly, not that the graph is undrawable: placing the same
+    graph with a roomier ``place.Spacing`` gives the router more anchors and
+    more lanes, which is what ``build_diagram`` does with it.
+    """
+
+
 @dataclass
 class RoutedEdge:
     points: list[Cell]
@@ -100,6 +111,13 @@ class _RouteInfo:
 def route(
     nodes: list[GraphNode], edges: list[GraphEdge], place_result: PlaceResult
 ) -> list[RoutedEdge]:
+    """Route every edge over the placed grid — all of them or none, since a
+    diagram quietly missing a relationship is worse than no diagram at all.
+
+    Raises:
+        NoRouteError: If any edge has no path left. The caller is expected to
+            re-place with a roomier ``place.Spacing`` and try again.
+    """
     node_by_id = {n.id: n for n in nodes}
     rects = place_result.rects
     blocked = _blocked_cells(rects)
@@ -125,9 +143,13 @@ def route(
 
     worst = sorted(routed, key=lambda i: -routed[i].cost)[:_RIP_UP_COUNT]
     for i in worst:
-        _mark_occupied(occupied, routed[i], i, remove=True)
-        _release_anchors(used_anchors, edges[i], routed[i])
-        info = _route_edge(edges[i], rects, blocked, used_anchors, occupied, bounds)
+        previous = routed[i]
+        _mark_occupied(occupied, previous, i, remove=True)
+        _release_anchors(used_anchors, edges[i], previous)
+        try:
+            info = _route_edge(edges[i], rects, blocked, used_anchors, occupied, bounds)
+        except NoRouteError:
+            info = previous  # the field moved under it; keep the route it had
         routed[i] = info
         _mark_occupied(occupied, info, i)
         _consume_anchors(used_anchors, edges[i], info)
@@ -330,7 +352,8 @@ def _astar(
                     heap, (new_g + _heuristic(neighbor, tip_cells), new_g, new_state)
                 )
 
-    assert best is not None, "no route found despite overprovisioned margin"
+    if best is None:
+        raise NoRouteError("no orthogonal path between the two boxes")
     total_cost, goal_state = best
 
     states = []

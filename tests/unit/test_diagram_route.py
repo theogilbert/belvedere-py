@@ -1,6 +1,9 @@
+import pytest
+
 from grannos.diagram.graph import GraphEdge, GraphNode
 from grannos.diagram.place import STUB_LEN, PlaceResult, Rect
 from grannos.diagram.route import (
+    NoRouteError,
     _adjacent_to_any,
     _astar,
     _blocked_cells,
@@ -147,3 +150,23 @@ def _adjacent_to(cell: tuple[int, int], rect: Rect) -> bool:
         rect.top - 1 <= r <= rect.top + rect.height
         and rect.left - 1 <= c <= rect.left + rect.width
     )
+
+
+class TestUnroutableEdge:
+    """A box pinned between the canvas border and its neighbour has nowhere to
+    put a stub, so its edge cannot be routed at all."""
+
+    def _boxed_in(self) -> tuple[list[GraphNode], list[GraphEdge], PlaceResult]:
+        rects = {
+            0: Rect(top=0, left=0, height=5, width=10),
+            1: Rect(top=0, left=11, height=5, width=10),
+        }
+        nodes = [_node(0), _node(1)]
+        edges = [GraphEdge(0, 1, fk_column="x")]
+        place_result = PlaceResult(rects=rects, box_lines={}, bounds=(5, 21))
+        return nodes, edges, place_result
+
+    def test_raises_rather_than_asserting(self) -> None:
+        nodes, edges, place_result = self._boxed_in()
+        with pytest.raises(NoRouteError):
+            route(nodes, edges, place_result)

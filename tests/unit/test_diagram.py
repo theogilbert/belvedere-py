@@ -3,7 +3,10 @@ from collections.abc import Awaitable, Callable, Mapping
 
 import pytest
 
+import grannos.diagram as diagram
 from grannos.diagram import DiagramError, build_diagram
+from grannos.diagram.place import PlaceResult, Spacing
+from grannos.diagram.route import NoRouteError
 from grannos.protocol import (
     DescribeResult,
     EntityDescription,
@@ -701,3 +704,63 @@ class TestBuildDiagramRegions:
         for i, path_a in enumerate(paths):
             for path_b in paths[i + 1 :]:
                 assert not (cells_by_path[path_a] & cells_by_path[path_b])
+
+
+class TestUnroutableEdges:
+    """``route`` failing is not the end of the diagram: ``build_diagram``
+    re-places with more room, and draws what it can if that still fails."""
+
+    def _two_related_tables(self) -> Describe:
+        parent = _entity("parent", fields=[_field("id", pk=True)])
+        child = _entity(
+            "child",
+            fields=[
+                _field("id", pk=True),
+                _field(
+                    "parent_id",
+                    outgoing=[_outgoing("child", "parent_id", "parent", "id")],
+                ),
+            ],
+        )
+        return _describe_from({("child",): child, ("parent",): parent})
+
+    async def test_retries_with_a_roomier_spacing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        real_place, real_route = diagram.place, diagram.route
+        spacings: list[Spacing] = []
+        calls = 0
+
+        def spy_place(nodes, edges, layout, spacing) -> PlaceResult:  # type: ignore[no-untyped-def]
+            spacings.append(spacing)
+            return real_place(nodes, edges, layout, spacing)
+
+        def flaky_route(nodes, edges, place_result):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise NoRouteError("no room on the first try")
+            return real_route(nodes, edges, place_result)
+
+        monkeypatch.setattr(diagram, "place", spy_place)
+        monkeypatch.setattr(diagram, "route", flaky_route)
+        result = await build_diagram(["child"], self._two_related_tables())
+
+        assert len(spacings) == 2
+        assert spacings[1].box_gap > spacings[0].box_gap
+        assert "parent" in result.diagram
+
+    async def test_fails_rather_than_drawing_a_diagram_missing_a_connector(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        attempts = 0
+
+        def stuck_route(nodes, edges, place_result):  # type: ignore[no-untyped-def]
+            nonlocal attempts
+            attempts += 1
+            raise NoRouteError("no room, ever")
+
+        monkeypatch.setattr(diagram, "route", stuck_route)
+        with pytest.raises(DiagramError):
+            await build_diagram(["child"], self._two_related_tables())
+        assert attempts == len(diagram._spacing_ladder(1))

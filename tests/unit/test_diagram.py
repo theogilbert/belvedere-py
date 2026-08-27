@@ -87,6 +87,17 @@ class TestBuildDiagram:
         assert "users" in result.diagram
         assert "id" in result.diagram
 
+    async def test_type_length_is_dropped_from_the_box(self) -> None:
+        desc = _entity(
+            "users",
+            fields=[_field("name", type_="VARCHAR2(50 CHAR, 200 BYTE)", pk=True)],
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+        assert "VARCHAR2" in result.diagram
+        assert "BYTE" not in result.diagram
+        assert "(" not in result.diagram
+
     async def test_schema_qualified_table_shows_schema_dot_table(self) -> None:
         desc = _entity("users", schema="dbo")
         describe = _describe_from({("dbo", "users"): desc})

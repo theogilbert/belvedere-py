@@ -7,6 +7,7 @@ through without ever needing to touch a box. ``route.py`` compacts the
 overprovisioned space back out once every path is known.
 """
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -84,6 +85,20 @@ def place(
     return PlaceResult(rects=rects, box_lines=box_lines, bounds=bounds)
 
 
+_TYPE_MODIFIER_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def _base_type(type_: str) -> str:
+    """Drop a type's parenthesised modifier — ``VARCHAR2(50 CHAR, 200 BYTE)``
+    becomes ``VARCHAR2``.
+
+    The diagram is a structural overview: a length or precision says nothing
+    about the relationships it exists to show, and widens every box that
+    carries one. ``explore.describe`` still reports the full type.
+    """
+    return _TYPE_MODIFIER_RE.sub("", type_)
+
+
 def _box_lines(node: GraphNode) -> list[_Line]:
     if node.unavailable:
         content_lines = ["(unavailable)"]
@@ -106,7 +121,8 @@ def _box_lines(node: GraphNode) -> list[_Line]:
                     markers.append("PK")
                 if col.name in node.fk_columns:
                     markers.append("FK")
-                rows.append((col.name, "|".join(col.types), ",".join(markers)))
+                types = "|".join(_base_type(t) for t in col.types)
+                rows.append((col.name, types, ",".join(markers)))
             name_w = max((len(r[0]) for r in rows), default=0)
             type_w = max((len(r[1]) for r in rows), default=0)
             content_lines = [

@@ -99,19 +99,27 @@ class CachingDriver(BaseDriver):
     ) -> list[list[str]]:
         """Resolve a symbol, preferring the cache over any round trip.
 
-        Three passes, cheapest first:
+        Four passes, cheapest first:
 
-        1. The generic walk over levels *already cached*. A symbol hovered
-           before — or sitting in a subtree the user has browsed — resolves
-           with no database call at all, and because the explore cache is on
-           disk that holds across reconnects and restarts.
-        2. The inner driver's own catalog lookup, for a driver that can resolve
-           a name in one query. This is where a cold cache lands, so the cost of
-           a first hover is one query rather than a level-by-level descent.
-        3. The generic walk over the *live* ``explore_list``, for drivers with
+        1. The find cache — this exact search, answered before and kept on
+           disk. The only pass that spares a driver's own lookup (pass 3) a
+           second round trip for a symbol already resolved, since that lookup
+           populates nothing the tree walk can read.
+        2. The generic walk over tree levels *already cached*. Covers a search
+           never run before whose levels the user has browsed anyway.
+        3. The inner driver's own catalog lookup, for a driver that can resolve
+           a name in one query. This is where a cold cache lands, so a first
+           hover costs one query rather than a level-by-level descent.
+        4. The generic walk over the *live* ``explore_list``, for drivers with
            no such lookup. It runs here rather than on the inner driver so its
            wildcard levels expand through this class's caching ``explore_list``,
-           populating the cache for pass 1 next time.
+           populating the cache for pass 2 next time.
+
+        Only pass 3 is written to the find cache, because it is the only pass
+        that leaves nothing behind for the others: pass 4 caches every level it
+        lists, so pass 2 can serve a repeat of that same search unaided, and
+        pass 2 is already free. Writing them too would persist the whole cache
+        file on every cold find to save a walk measured in microseconds.
 
         A cache-only walk that completes is authoritative, empty result
         included; only one that runs off the end of the cache (``_CacheMiss``)
@@ -120,6 +128,10 @@ class CachingDriver(BaseDriver):
         no template the walk returns empty without consulting the cache at all,
         which would wrongly settle a search the driver's own lookup can answer.
         """
+        cached = self._cache.get_find(node_type, name, scopes)
+        if cached is not None:
+            logger.debug(f"explore.find cache hit for {name!r}")
+            return cached
         if declares(self._inner.FIND_PATHS, node_type):
             try:
                 return await walk_find(
@@ -128,11 +140,13 @@ class CachingDriver(BaseDriver):
             except _CacheMiss, DriverError:
                 logger.debug(f"explore.find: cache-only walk for {name!r} incomplete")
         try:
-            return await self._inner.explore_find(node_type, name, scopes)
+            paths = await self._inner.explore_find(node_type, name, scopes)
         except FindNotSupported:
             return await walk_find(
                 self.explore_list, self._inner.FIND_PATHS, node_type, name, scopes
             )
+        self._cache.set_find(node_type, name, scopes, paths)
+        return paths
 
     async def _cached_list(self, path: list[str]) -> list[ExploreItem]:
         """List a path's children from the cache alone.
@@ -203,6 +217,18 @@ def cache_file(params: dict[str, Any], cache_dir: pathlib.Path) -> pathlib.Path:
     return cache_dir / f"{driver}_{digest}.json"
 
 
+def find_key(node_type: str, name: str, scopes: list[SearchScope]) -> str:
+    """Return the cache key identifying one explore.find search.
+
+    Scopes are sorted and case-folded: they are a *set* of constraints, and both
+    resolvers match a scope name case-insensitively, so neither their order nor
+    their casing can change the answer. *name* is kept verbatim — it cannot be
+    folded, since an exact-case match outranks an inexact one (``_prefer_exact``).
+    """
+    folded = sorted([s.type, s.name.casefold()] for s in scopes)
+    return json.dumps([node_type, name, folded])
+
+
 class ConnectionCache:
     """Explore result cache for a single database connection, backed by a JSON file.
 
@@ -224,6 +250,10 @@ class ConnectionCache:
         """In-memory cache mapping path tuples to their explore.list results."""
         self._describe: dict[tuple[str, ...], CachedDescribe | GroupDescribe] = {}
         """In-memory cache mapping path tuples to their explore.describe results."""
+        self._find: dict[str, list[list[str]]] = {}
+        """In-memory cache mapping a :func:`find_key` to the paths it resolved to.
+        Keyed by search rather than by path, so unlike the other two it cannot be
+        evicted per-prefix — :meth:`reset` clears it whole."""
         self._load()
 
     def reset(self, path: list[str]) -> None:
@@ -235,7 +265,11 @@ class ConnectionCache:
                 list/describe entries (since their children may have changed — an
                 ancestor's own describe result, e.g. an EntityDescription, may embed
                 a now-stale copy of what we just reset). An empty list resets the
-                entire cache.
+                entire cache. Cached finds are dropped in full whatever the path:
+                they are keyed by search, not by path, and a reset invalidates
+                them in both directions — a find that resolved *into* the reset
+                subtree may now point at nothing, and one that resolved to
+                nothing may now match something newly created there.
         """
         prefix = tuple(path)
         n = len(prefix)
@@ -247,6 +281,7 @@ class ConnectionCache:
         for i in range(n):
             self._list.pop(prefix[:i], None)
             self._describe.pop(prefix[:i], None)
+        self._find.clear()
         if self._list or self._describe:
             self._persist()
         else:
@@ -271,6 +306,27 @@ class ConnectionCache:
             items: Items to cache.
         """
         self._list[tuple(path)] = items
+        self._persist()
+
+    def get_find(
+        self, node_type: str, name: str, scopes: list[SearchScope]
+    ) -> list[list[str]] | None:
+        """Return the cached paths for an explore.find search, or None on a miss.
+
+        An empty list is a cached *answer* — the symbol resolved to nothing —
+        and is deliberately distinct from None.
+        """
+        return self._find.get(find_key(node_type, name, scopes))
+
+    def set_find(
+        self,
+        node_type: str,
+        name: str,
+        scopes: list[SearchScope],
+        paths: list[list[str]],
+    ) -> None:
+        """Store the paths an explore.find search resolved to and persist to disk."""
+        self._find[find_key(node_type, name, scopes)] = paths
         self._persist()
 
     def has_describe(self, path: list[str]) -> bool:
@@ -340,10 +396,13 @@ class ConnectionCache:
                     self._describe[key] = _deserialize_record(desc)
                 else:
                     self._describe[key] = _deserialize_entity(desc)
+            for key_str, paths in data.get("find", {}).items():
+                self._find[key_str] = [list(p) for p in paths]
         except Exception:
             logger.warning(f"Discarding unreadable explore cache at {self._path}")
             self._list.clear()
             self._describe.clear()
+            self._find.clear()
 
     def _persist(self) -> None:
         try:
@@ -365,6 +424,7 @@ class ConnectionCache:
                     )
                     for key, desc in self._describe.items()
                 },
+                "find": self._find,
             }
             tmp = self._path.with_suffix(".tmp")
             tmp.write_text(json.dumps(data, indent=2, default=json_default))

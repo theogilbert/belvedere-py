@@ -418,6 +418,110 @@ class TestExploreFind:
         ]
         inner.explore_find.assert_awaited_once()
 
+    async def test_driver_lookup_is_cached_across_a_restart(
+        self, inner: AsyncMock, cache: ConnectionCache, tmp_path: pathlib.Path
+    ) -> None:
+        """The point of the find cache: a driver's own lookup populates nothing
+        the tree walk can read, so without it every session re-queries."""
+        inner.FIND_PATHS = {NodeType.TABLE: [["*"]]}
+        inner.explore_find.return_value = [["HR", "EMPLOYEES"]]
+        await CachingDriver(inner, cache).explore_find(NodeType.TABLE, "employees", [])
+        inner.explore_find.reset_mock()
+
+        reopened = CachingDriver(inner, ConnectionCache(PARAMS, tmp_path / "c.json"))
+        assert await reopened.explore_find(NodeType.TABLE, "employees", []) == [
+            ["HR", "EMPLOYEES"]
+        ]
+        inner.explore_find.assert_not_awaited()
+
+    async def test_a_cached_empty_result_is_an_answer(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        """ "No such symbol" is worth caching too — otherwise the miss that costs
+        a round trip is the one repeated most."""
+        inner.explore_find.return_value = []
+        assert await driver.explore_find(NodeType.TABLE, "nope", []) == []
+        inner.explore_find.reset_mock()
+
+        assert await driver.explore_find(NodeType.TABLE, "nope", []) == []
+        inner.explore_find.assert_not_awaited()
+
+    async def test_scope_order_and_case_do_not_split_the_key(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        """Scopes are a set of constraints matched case-insensitively, so these
+        two searches are the same search."""
+        inner.explore_find.return_value = [["public", "users"]]
+        await driver.explore_find(
+            NodeType.COLUMN,
+            "id",
+            [
+                SearchScope(name="users", type=NodeType.TABLE),
+                SearchScope(name="public", type=NodeType.SCHEMA),
+            ],
+        )
+        inner.explore_find.reset_mock()
+
+        await driver.explore_find(
+            NodeType.COLUMN,
+            "id",
+            [
+                SearchScope(name="PUBLIC", type=NodeType.SCHEMA),
+                SearchScope(name="USERS", type=NodeType.TABLE),
+            ],
+        )
+        inner.explore_find.assert_not_awaited()
+
+    async def test_name_case_does_split_the_key(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        """The symbol's own casing can change the answer, since an exact match
+        outranks an inexact one — so it cannot be folded into the key."""
+        inner.explore_find.return_value = [["app", "users"]]
+        await driver.explore_find(NodeType.TABLE, "users", [])
+        inner.explore_find.reset_mock()
+
+        await driver.explore_find(NodeType.TABLE, "USERS", [])
+        inner.explore_find.assert_awaited_once()
+
+    async def test_a_different_scope_is_a_different_search(
+        self, driver: CachingDriver, inner: AsyncMock
+    ) -> None:
+        inner.explore_find.return_value = [["public", "users"]]
+        await driver.explore_find(NodeType.TABLE, "users", [])
+        inner.explore_find.reset_mock()
+
+        await driver.explore_find(
+            NodeType.TABLE, "users", [SearchScope(name="app", type=NodeType.SCHEMA)]
+        )
+        inner.explore_find.assert_awaited_once()
+
+    async def test_reset_clears_the_find_cache(
+        self, driver: CachingDriver, inner: AsyncMock, cache: ConnectionCache
+    ) -> None:
+        """A find is keyed by search, not by path, so any reset drops all of
+        them — the symbol may have moved into or out of the reset subtree."""
+        inner.explore_find.return_value = [["HR", "EMPLOYEES"]]
+        await driver.explore_find(NodeType.TABLE, "employees", [])
+        inner.explore_find.reset_mock()
+
+        cache.reset(["SOMETHING", "ELSE"])
+        await driver.explore_find(NodeType.TABLE, "employees", [])
+        inner.explore_find.assert_awaited_once()
+
+    async def test_walk_result_is_not_written_to_the_find_cache(
+        self, driver: CachingDriver, searchable: AsyncMock, cache: ConnectionCache
+    ) -> None:
+        """The walk caches every level it lists, so pass 2 serves a repeat of it
+        unaided — a find entry would only duplicate that, and each write
+        persists the whole file."""
+        assert await driver.explore_find(NodeType.TABLE, "t", []) == [["t"]]
+        assert cache.get_find(NodeType.TABLE, "t", []) is None
+
+        searchable.explore_list.reset_mock()
+        assert await driver.explore_find(NodeType.TABLE, "t", []) == [["t"]]
+        searchable.explore_list.assert_not_awaited()
+
     async def test_cache_only_walk_survives_a_restart(
         self, inner: AsyncMock, cache: ConnectionCache, tmp_path: pathlib.Path
     ) -> None:

@@ -13,10 +13,12 @@ every other segment is a literal group name. This module walks those templates,
 pruning each wildcard level by the caller's scopes, and returns the concrete
 paths that can be handed straight back to ``explore.describe``.
 
-Walking through ``explore_list`` — rather than querying each backend's catalog —
-means results come from the connection's existing explore cache, so a repeated
-hover costs no round trip and needs no cache of its own. A driver that can
-resolve names in a single catalog query overrides ``explore_find`` instead.
+A driver that can resolve names in a single catalog query overrides
+``explore_find`` instead of being walked. Either way the answer is cached by
+``CachingDriver`` under the search itself, so a repeated hover costs no round
+trip: the walk reads the live ``explore_list``, not the explore cache, since a
+walk lists only the levels its templates pass through and stops at the one it
+was searching.
 """
 
 import logging
@@ -34,7 +36,7 @@ MAX_LIST_CALLS = 200
 """Cap on explore_list calls per find. A search whose scopes leave an
 intermediate level unconstrained fans out across every node at that level; the
 cap turns a pathological case (e.g. an unqualified column over a database of
-hundreds of tables, on a cold cache) into an error telling the client to narrow
+hundreds of tables) into an error telling the client to narrow
 its scope, rather than thousands of round trips."""
 
 ListFn = Callable[[list[str]], Awaitable[list[ExploreItem]]]
@@ -51,8 +53,7 @@ async def walk_find(
     """Resolve a symbol to the paths of every node matching it.
 
     Args:
-        list_fn: Lists a path's children — normally the *caching* explore_list,
-            so repeated searches are served from cache.
+        list_fn: Lists a path's children — the driver's own explore_list.
         templates: The driver's ``FIND_PATHS``.
         node_type: Kind of node to find, as a key of *templates*. A kind the
             driver does not declare yields no matches.
@@ -83,17 +84,6 @@ async def walk_find(
             matches,
         )
     return _dedupe(_prefer_exact(matches, name))
-
-
-def declares(templates: dict[NodeType, list[list[str]]], node_type: str) -> bool:
-    """Return True if *templates* says where a node of kind *node_type* lives.
-
-    Lets a caller tell a walk that found nothing from one that never looked: an
-    undeclared kind yields no matches without a single ``explore_list`` call, so
-    its empty result carries no information about whether the symbol exists.
-    """
-    kind = _as_node_type(node_type)
-    return kind is not None and bool(templates.get(kind))
 
 
 def _constraints(

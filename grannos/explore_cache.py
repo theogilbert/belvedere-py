@@ -9,13 +9,12 @@ from grannos.drivers import SENSITIVE_PARAM_KEYS
 
 from .drivers.base import (
     BaseDriver,
-    DriverError,
     DriverSettings,
     FindNotSupported,
     ReadResult,
     WriteResult,
 )
-from .explore_find import declares, walk_find
+from .explore_find import walk_find
 from .protocol import (
     Connection,
     DescribeResult,
@@ -51,11 +50,6 @@ GroupDescribe = (
     list[IndexDescription] | list[FieldDescription] | list[GenericRecordDescription]
 )
 """Describe result for a group path — a bare array of a single describable type."""
-
-
-class _CacheMiss(Exception):
-    """Raised by :meth:`CachingDriver._cached_list` when a level has not been
-    listed yet, abandoning a cache-only walk that cannot answer the search."""
 
 
 class CachingDriver(BaseDriver):
@@ -97,67 +91,40 @@ class CachingDriver(BaseDriver):
     async def explore_find(
         self, node_type: str, name: str, scopes: list[SearchScope]
     ) -> list[list[str]]:
-        """Resolve a symbol, preferring the cache over any round trip.
+        """Resolve a symbol, preferring the find cache over any round trip.
 
-        Four passes, cheapest first:
+        Two passes:
 
-        1. The find cache — this exact search, answered before and kept on
-           disk. The only pass that spares a driver's own lookup (pass 3) a
-           second round trip for a symbol already resolved, since that lookup
-           populates nothing the tree walk can read.
-        2. The generic walk over tree levels *already cached*. Covers a search
-           never run before whose levels the user has browsed anyway.
-        3. The inner driver's own catalog lookup, for a driver that can resolve
-           a name in one query. This is where a cold cache lands, so a first
-           hover costs one query rather than a level-by-level descent.
-        4. The generic walk over the *live* ``explore_list``, for drivers with
-           no such lookup. It runs here rather than on the inner driver so its
-           wildcard levels expand through this class's caching ``explore_list``,
-           populating the cache for pass 2 next time.
+        1. The **find cache** — this exact search, answered before and kept on
+           disk. Keyed by the search itself, it serves a repeat whichever pass
+           answered it the first time, and survives a restart.
+        2. The wrapped driver: its own catalog lookup where it has one, else the
+           generic walk over its ``explore_list``.
 
-        Only pass 3 is written to the find cache, because it is the only pass
-        that leaves nothing behind for the others: pass 4 caches every level it
-        lists, so pass 2 can serve a repeat of that same search unaided, and
-        pass 2 is already free. Writing them too would persist the whole cache
-        file on every cold find to save a walk measured in microseconds.
-
-        A cache-only walk that completes is authoritative, empty result
-        included; only one that runs off the end of the cache (``_CacheMiss``)
-        or off the end of its call budget (``DriverError``) falls through. It is
-        attempted only for a node type the driver declares a template for: with
-        no template the walk returns empty without consulting the cache at all,
-        which would wrongly settle a search the driver's own lookup can answer.
+        The walk runs on the wrapped driver rather than on this class, so a find
+        neither reads nor writes the list cache. The two caches answer different
+        questions — the list cache holds what a *path* contains, and a walk stops
+        at the level it was searching, leaving everything below it unlisted — so
+        a tree the user has browsed can neither settle a search nor be completed
+        by one. Every answer, from either pass, is cached under the search that
+        asked for it.
         """
         cached = self._cache.get_find(node_type, name, scopes)
         if cached is not None:
             logger.debug(f"explore.find cache hit for {name!r}")
             return cached
-        if declares(self._inner.FIND_PATHS, node_type):
-            try:
-                return await walk_find(
-                    self._cached_list, self._inner.FIND_PATHS, node_type, name, scopes
-                )
-            except _CacheMiss, DriverError:
-                logger.debug(f"explore.find: cache-only walk for {name!r} incomplete")
         try:
             paths = await self._inner.explore_find(node_type, name, scopes)
         except FindNotSupported:
-            return await walk_find(
-                self.explore_list, self._inner.FIND_PATHS, node_type, name, scopes
+            paths = await walk_find(
+                self._inner.explore_list,
+                self._inner.FIND_PATHS,
+                node_type,
+                name,
+                scopes,
             )
         self._cache.set_find(node_type, name, scopes, paths)
         return paths
-
-    async def _cached_list(self, path: list[str]) -> list[ExploreItem]:
-        """List a path's children from the cache alone.
-
-        Raises:
-            _CacheMiss: If *path* has not been listed yet.
-        """
-        items = self._cache.get_list(path)
-        if items is None:
-            raise _CacheMiss
-        return items
 
     async def explore_preview(self, path: list[str]) -> ReadResult | None:
         return await self._inner.explore_preview(path)

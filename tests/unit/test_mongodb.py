@@ -220,9 +220,7 @@ class TestGridfsBucketDetection:
 class TestExploreListGridfs:
     async def test_gridfs_group_shown_only_when_bucket_exists(self) -> None:
         client = MagicMock()
-        client[  # ty: ignore[unsupported-operator]
-            "mydb"
-        ].list_collection_names = AsyncMock(
+        client["mydb"].list_collection_names = AsyncMock(
             return_value=["users", "fs.files", "fs.chunks"]
         )
         driver = _make_driver(client)
@@ -279,6 +277,7 @@ class TestDescribeGridfsBucket:
         client["mydb"]["fs.files"].aggregate = AsyncMock(return_value=cursor)
         driver = _make_driver(client)
         result = await driver.explore_describe(["mydb", "gridfs", "fs"])
+        assert isinstance(result, GenericRecordDescription)
         labels = {f.label: f.value for f in result.fields}
         assert labels["Files"] == "0"
 

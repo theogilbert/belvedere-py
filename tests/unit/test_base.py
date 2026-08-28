@@ -12,7 +12,13 @@ from grannos.drivers.base import (
     DriverSettings,
     build_column_samples,
 )
-from grannos.protocol import DownloadResult, ExploreItem, ReadResult, WriteResult
+from grannos.protocol import (
+    DownloadResult,
+    ExploreItem,
+    LobPlaceholder,
+    ReadResult,
+    WriteResult,
+)
 
 
 class _StubDriver(BaseDriver):
@@ -45,6 +51,16 @@ def _make_driver() -> _StubDriver:
     return _StubDriver({}, DriverSettings())
 
 
+def _ref(placeholder: LobPlaceholder) -> str:
+    """Return a placeholder's download ref, asserting the driver cached one.
+
+    ``ref`` is optional on the wire — None when the driver chose not to cache
+    the value — but every placeholder these tests register has one.
+    """
+    assert placeholder.ref is not None
+    return placeholder.ref
+
+
 class TestRegisterLobAndDownloadRef:
     async def test_register_then_download_ref_returns_base64(self) -> None:
         driver = _make_driver()
@@ -63,7 +79,7 @@ class TestRegisterLobAndDownloadRef:
         driver = _make_driver()
         placeholder = driver._register_lob(b"hello", "text")
         dest = tmp_path / "out.bin"
-        result = await driver.explore_download_ref(placeholder.ref, str(dest))
+        result = await driver.explore_download_ref(_ref(placeholder), str(dest))
         assert result.written_to == str(dest)
         assert result.content_base64 is None
         assert dest.read_bytes() == b"hello"
@@ -71,14 +87,15 @@ class TestRegisterLobAndDownloadRef:
     async def test_str_value_is_utf8_encoded(self) -> None:
         driver = _make_driver()
         placeholder = driver._register_lob("héllo", "text")
-        result = await driver.explore_download_ref(placeholder.ref, None)
+        result = await driver.explore_download_ref(_ref(placeholder), None)
+        assert result.content_base64 is not None
         assert base64.b64decode(result.content_base64) == "héllo".encode()
         assert result.content_type == "text/plain"
 
     async def test_bytes_value_gets_octet_stream_content_type(self) -> None:
         driver = _make_driver()
         placeholder = driver._register_lob(b"\x00\x01", "bin")
-        result = await driver.explore_download_ref(placeholder.ref, None)
+        result = await driver.explore_download_ref(_ref(placeholder), None)
         assert result.content_type == "application/octet-stream"
 
     async def test_unknown_ref_raises_driver_error(self) -> None:
@@ -89,7 +106,7 @@ class TestRegisterLobAndDownloadRef:
     async def test_cache_evicts_oldest_beyond_max(self) -> None:
         driver = _make_driver()
         refs = [
-            driver._register_lob(f"v{i}".encode(), "t").ref
+            _ref(driver._register_lob(f"v{i}".encode(), "t"))
             for i in range(driver._LOB_CACHE_MAX + 1)
         ]
         with pytest.raises(DriverError):

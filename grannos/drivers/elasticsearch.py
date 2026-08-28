@@ -1,10 +1,12 @@
 """Elasticsearch driver — requires: pip install elasticsearch aiohttp"""
 
+import logging
 import json
 from typing import Any
 
 import elasticsearch
 
+from ..log import log_query
 from ..protocol import (
     DriverParam,
     DriverParamChoice,
@@ -20,6 +22,9 @@ from ..tabular import flatten_docs
 from .base import BaseDriver, ConnectionLostError, DriverError, DriverSettings
 
 _DEFAULT_SEARCH_SIZE = 1000
+
+
+logger = logging.getLogger(__name__)
 
 
 class ElasticsearchDriver(BaseDriver):
@@ -199,6 +204,7 @@ Describing an index returns field metadata from its mapping (name, type).
                 "Example: orders | status:open AND total:>50"
             )
         index, _, lucene = query.partition(" | ")
+        log_query(logger, query)
         resp = await self._client.search(
             index=index.strip(), q=lucene.strip(), size=_DEFAULT_SEARCH_SIZE
         )
@@ -222,6 +228,7 @@ Describing an index returns field metadata from its mapping (name, type).
         body, headers = self._parse_body(body_str)
         if isinstance(body, dict) and "_search" in path:
             body.setdefault("size", _DEFAULT_SEARCH_SIZE)
+        log_query(logger, query)
         raw = await self._client.perform_request(
             method, path, body=body, headers=headers
         )
@@ -241,6 +248,7 @@ Describing an index returns field metadata from its mapping (name, type).
         return ReadResult(columns=["response"], rows=[[str(resp)]], rows_total=1)
 
     async def _execute_esql(self, query: str) -> ReadResult:
+        log_query(logger, query)
         resp = await self._client.esql.query(query=query, format="json")
         columns = [col["name"] for col in resp["columns"]]
         rows = resp["values"]
@@ -293,6 +301,7 @@ Describing an index returns field metadata from its mapping (name, type).
     async def explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
+                log_query(logger, "cat.indices")
                 resp = await self._client.cat.indices(
                     format="json", h="index", s="index"
                 )
@@ -307,6 +316,7 @@ Describing an index returns field metadata from its mapping (name, type).
                     ExploreItem(name="aliases", type="group", expandable=True),
                 ]
             case [index, "mappings"]:
+                log_query(logger, f"indices.get_mapping {index}")
                 resp = await self._client.indices.get_mapping(index=index)
                 props = resp[index]["mappings"].get("properties", {})
                 return [
@@ -316,6 +326,7 @@ Describing an index returns field metadata from its mapping (name, type).
                     for field, info in props.items()
                 ]
             case [index, "aliases"]:
+                log_query(logger, f"indices.get_alias {index}")
                 resp = await self._client.indices.get_alias(index=index)
                 aliases = resp.get(index, {}).get("aliases", {})
                 return [
@@ -328,6 +339,7 @@ Describing an index returns field metadata from its mapping (name, type).
     async def explore_describe(self, path: list[str]) -> EntityDescription | None:
         match path:
             case [index]:
+                log_query(logger, f"indices.get_mapping {index}")
                 resp = await self._client.indices.get_mapping(index=index)
                 props = resp[index]["mappings"].get("properties", {})
                 return EntityDescription(

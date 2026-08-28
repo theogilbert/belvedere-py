@@ -1,6 +1,7 @@
 """PostgreSQL query functions — one per SQL query, with typed return values."""
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any
@@ -8,8 +9,38 @@ from weakref import WeakKeyDictionary
 
 from psycopg import AsyncConnection, sql
 
+from ...log import log_query
 from ...protocol import IndexDescription, IndexKeyField, LobPlaceholder, TableReference
 from ..base import SAMPLE_SCAN_ROWS
+
+logger = logging.getLogger(__name__)
+
+
+async def _exec(
+    cur: Any,
+    statement: Any,
+    binds: Sequence[Any] | None = None,
+    *,
+    private: bool = False,
+) -> None:
+    """Log *sql* and run it on *cur*.
+
+    Every statement this module sends to the database goes through here, so
+    debug logging of them needs no change at the call sites.
+
+    Args:
+        cur: Open cursor to execute on.
+        statement: Statement text, or a psycopg ``sql.SQL`` composable. Named
+            for the psycopg ``sql`` module this file imports, not against it.
+        binds: Bind values, logged alongside the statement.
+        private: Set for the *user's* own statement, whose binds are user data
+            rather than the schema and object names a catalog query binds.
+    """
+    log_query(logger, str(statement), None if private else binds)
+    # params stays an explicit positional: psycopg only skips placeholder
+    # interpolation when it is None, which a query containing a literal % needs.
+    await cur.execute(statement, list(binds) if binds else None)
+
 
 # Pairs conkey[i] with confkey[i] element-wise so composite foreign keys keep
 # the correct local/referenced column ordering (unlike a name-based join
@@ -107,11 +138,12 @@ def build_preview_query(schema: str, table: str) -> str:
 async def fetch_schemas(conn: AsyncConnection) -> list[str]:
     """Return non-system schema names, ordered alphabetically."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT nspname FROM pg_namespace"
         " WHERE nspname NOT IN ('pg_catalog', 'information_schema')"
         " AND nspname NOT LIKE 'pg\\_%'"
-        " ORDER BY nspname"
+        " ORDER BY nspname",
     )
     return [r[0] for r in await cur.fetchall()]
 
@@ -122,7 +154,8 @@ async def fetch_tables_and_views(
 ) -> list[tuple[str, str]]:
     """Return (name, type) pairs for all tables and views in *schema*."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT table_name, table_type FROM information_schema.tables"
         " WHERE table_schema = %s ORDER BY table_name",
         [schema],
@@ -139,7 +172,8 @@ async def fetch_column_names_and_types(
 ) -> list[tuple[str, str]]:
     """Return (column_name, data_type) pairs ordered by column position."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT column_name, data_type FROM information_schema.columns"
         " WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position",
         [schema, table],
@@ -153,7 +187,8 @@ async def fetch_index_names_and_types(
 ) -> list[tuple[str, str]]:
     """Return (index_name, index_type) pairs ordered by index name."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT ic.relname, am.amname"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -178,7 +213,8 @@ async def fetch_column_details(
 ) -> list[ColumnDetail]:
     """Return column metadata ordered by column position."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT column_name, data_type, is_nullable, column_default"
         " FROM information_schema.columns"
         " WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position",
@@ -199,7 +235,8 @@ async def fetch_column_details(
 async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> set[str]:
     """Return the set of column names that form the primary key."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT kcu.column_name"
         " FROM information_schema.table_constraints tc"
         " JOIN information_schema.key_column_usage kcu"
@@ -219,7 +256,8 @@ async def fetch_unique_columns(
     """Return columns covered by a single-column UNIQUE index (PKs included,
     since Postgres backs every PK with a unique index)."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT a.attname"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -239,7 +277,8 @@ async def fetch_outgoing_references(
 ) -> list[TableReference]:
     """Return foreign keys defined on *table* that reference other tables."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT la.attname, fn.nspname, fc.relname, fa.attname, con.conname"
         f" {_FK_COLUMN_PAIRS_SQL}"
         " WHERE con.contype = 'f' AND ln.nspname = %s AND lc.relname = %s"
@@ -268,7 +307,8 @@ async def fetch_incoming_references(
 ) -> list[TableReference]:
     """Return foreign keys on other tables in *schema* that reference *table*."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT fa.attname, ln.nspname, lc.relname, la.attname, con.conname"
         f" {_FK_COLUMN_PAIRS_SQL}"
         " WHERE con.contype = 'f' AND fn.nspname = %s AND fc.relname = %s"
@@ -304,7 +344,8 @@ async def fetch_column_index_mapping(
     do not name a single backing column.
     """
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT a.attname, ic.relname"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -332,7 +373,8 @@ async def fetch_index_metas_for_table(
 ) -> list[IndexMeta]:
     """Return metadata for all indexes on *table*, ordered by index name."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT ic.relname, am.amname, ix.indisunique, ix.indisvalid, pgi.indexdef"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -361,7 +403,8 @@ async def fetch_index_fields_for_table(
     Excludes non-key (``INCLUDE``) columns — see :func:`fetch_index_included_for_table`.
     """
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT ic.relname, a.attname, (ix.indoption[k.ord - 1] & 1) <> 0"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -387,7 +430,8 @@ async def fetch_index_included_for_table(
 ) -> dict[str, list[str]]:
     """Return ``{index_name: [column, ...]}`` INCLUDE columns for all indexes on *table*."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT ic.relname, a.attname"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -416,7 +460,8 @@ async def fetch_index_meta(
 ) -> IndexMeta | None:
     """Return metadata for a single index, or None if not found."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT am.amname, ix.indisunique, ix.indisvalid, pgi.indexdef"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -444,7 +489,8 @@ async def fetch_index_fields_for_index(
 ) -> list[IndexKeyField]:
     """Return key fields for a single index, ordered by column position."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT a.attname, (ix.indoption[k.ord - 1] & 1) <> 0"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -468,7 +514,8 @@ async def fetch_index_included_for_index(
 ) -> list[str]:
     """Return INCLUDE columns for a single index, ordered by column position."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT a.attname"
         " FROM pg_index ix"
         " JOIN pg_class ic ON ic.oid = ix.indexrelid"
@@ -519,7 +566,8 @@ async def fetch_table_comment(
 ) -> str | None:
     """Return the table-level comment, or None if unsupported or not set."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT d.description"
         " FROM pg_description d"
         " JOIN pg_class c ON d.objoid = c.oid"
@@ -537,7 +585,8 @@ async def fetch_all_column_comments(
 ) -> dict[str, str | None]:
     """Return ``{column_name: comment}`` for commented columns; absent columns have no comment."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT a.attname, d.description"
         " FROM pg_description d"
         " JOIN pg_class c ON d.objoid = c.oid"
@@ -566,7 +615,7 @@ async def fetch_column_sample(
             schema=sql.Identifier(schema),
             table=sql.Identifier(table),
         )
-        await cur.execute(query, [n])
+        await _exec(cur, query, [n])
         return [r[0] for r in await cur.fetchall()]
     except Exception:
         return []
@@ -586,7 +635,7 @@ async def fetch_table_sample_rows(
         query = sql.SQL("SELECT * FROM {schema}.{table} LIMIT %s").format(
             schema=sql.Identifier(schema), table=sql.Identifier(table)
         )
-        await cur.execute(query, [SAMPLE_SCAN_ROWS])
+        await _exec(cur, query, [SAMPLE_SCAN_ROWS])
         columns = [d.name for d in cur.description or []]
         return columns, await cur.fetchall()
     except Exception:

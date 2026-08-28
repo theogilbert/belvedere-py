@@ -1,5 +1,6 @@
 """Prometheus driver — requires: pip install aiohttp"""
 
+import logging
 import asyncio
 import base64
 import math
@@ -12,6 +13,7 @@ from urllib.parse import quote
 
 import aiohttp
 
+from ..log import log_query
 from ..protocol import (
     DescribeResult,
     DriverParam,
@@ -43,6 +45,9 @@ _DURATION_UNITS = {
     "y": 365 * 86400,
 }
 _DURATION_RE = re.compile(r"^(-?\d+(?:\.\d+)?)(ms|s|m|h|d|w|y)$")
+
+
+logger = logging.getLogger(__name__)
 
 
 class PrometheusDriver(BaseDriver):
@@ -273,6 +278,9 @@ job name; instance/job already group the record).
         return _data_to_result(data)
 
     async def _get(self, path: str, params: dict[str, str]) -> Any:
+        # Every request this driver makes goes through here. The PromQL sits in
+        # params, so it is folded into the logged line rather than split out.
+        log_query(logger, f"GET {path} {params}" if params else f"GET {path}")
         if self._http.closed:
             raise ConnectionLostError("Session is closed")
         try:

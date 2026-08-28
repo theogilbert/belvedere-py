@@ -9,6 +9,7 @@ from . import log
 from .dispatcher import DispatchError, Dispatcher
 from .drivers import SENSITIVE_PARAM_KEYS
 from .drivers.base import DriverError, DriverSettings
+from .log import truncate
 from .protocol import (
     DecodeError,
     Method,
@@ -21,8 +22,6 @@ from .protocol import (
     encode,
 )
 
-
-_LOG_CAP = 512
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,7 @@ class Server:
             try:
                 req: Request = decode(line)
                 logger.debug(
-                    f"Received {_truncate(json.dumps({'id': req.id, 'method': req.method, 'params': _redact(req.params)}))}"
+                    f"Received {truncate(json.dumps({'id': req.id, 'method': req.method, 'params': _redact(req.params)}))}"
                 )
                 if req.method == Method.CANCEL:
                     asyncio.create_task(self._handle_cancel(req))
@@ -138,11 +137,7 @@ class Server:
         async with self._lock:
             self._out.write(data)
             self._out.flush()
-            logger.debug(f"Sent {_truncate(data.decode(errors='replace').rstrip())}")
-
-
-def _truncate(text: str) -> str:
-    return text[:_LOG_CAP] + "…" if len(text) > _LOG_CAP else text
+            logger.debug(f"Sent {truncate(data.decode(errors='replace').rstrip())}")
 
 
 def _redact(params: dict[str, Any]) -> dict[str, Any]:

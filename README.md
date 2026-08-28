@@ -30,7 +30,7 @@ grannos [--log] [-v] [--max-concurrency N]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--log` | off | Log all requests and responses to `~/.local/state/grannos/server.log` |
-| `-v` | off | Log at DEBUG level (requires `--log`) |
+| `-v` | off | Log at DEBUG level (requires `--log`). Adds one line per query any driver sends to the database — the statements you run *and* the catalog queries the tree, describe and find views generate. Bind values are logged for the driver's own catalog queries (schema and object names), never for your statements. |
 | `--max-concurrency N` | 5 | Max concurrent requests per connection |
 
 ## Supported drivers

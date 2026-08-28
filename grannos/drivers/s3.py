@@ -1,5 +1,6 @@
 """S3 driver — requires: pip install boto3 pyyaml"""
 
+import logging
 import asyncio
 import base64
 import fnmatch
@@ -14,6 +15,7 @@ import boto3
 import yaml
 from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
 
+from ..log import log_query
 from ..protocol import (
     DescribeResult,
     DownloadResult,
@@ -37,6 +39,9 @@ _MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 usefully load into a Neovim buffer."""
 
 _NOT_FOUND_CODES = {"404", "NoSuchKey", "NotFound", "NoSuchBucket"}
+
+
+logger = logging.getLogger(__name__)
 
 
 class S3Driver(BaseDriver):
@@ -580,6 +585,10 @@ objects larger than 25 MB are refused.
     # -- plumbing -----------------------------------------------------------
 
     async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        # Every S3 API call goes through here; the operation name plus its
+        # keyword arguments (Bucket, Key, Prefix) is the useful record.
+        op = getattr(fn, "__name__", repr(fn))
+        log_query(logger, f"s3 {op} {kwargs}" if kwargs else f"s3 {op}")
         try:
             return await asyncio.get_running_loop().run_in_executor(
                 None, lambda: fn(*args, **kwargs)

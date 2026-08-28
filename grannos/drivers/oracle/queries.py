@@ -1,6 +1,7 @@
 """Oracle query functions — one per SQL query, with typed return values."""
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any
@@ -8,6 +9,7 @@ from weakref import WeakKeyDictionary
 
 from oracledb import AsyncConnection, AsyncCursor
 
+from ...log import log_query
 from ...protocol import IndexDescription, IndexKeyField, LobPlaceholder, TableReference
 from ..base import SAMPLE_SCAN_ROWS
 
@@ -59,6 +61,31 @@ _PRE12_SYSTEM_SCHEMAS_SQL = ", ".join(
 
 _cache_stores: list[WeakKeyDictionary] = []
 """All per-connection cache dicts, registered at decoration time for bulk invalidation."""
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _exec(
+    cur: Any, sql: str, binds: Sequence[Any] | None = None, *, private: bool = False
+) -> None:
+    """Log *sql* and run it on *cur*.
+
+    Every statement this module sends to the database goes through here, so
+    debug logging of them needs no change at the call sites.
+
+    Args:
+        cur: Open cursor to execute on.
+        sql: Statement text.
+        binds: Bind values, logged alongside the statement.
+        private: Set for the *user's* own statement, whose binds are user data
+            rather than the schema and object names a catalog query binds.
+    """
+    log_query(logger, str(sql), None if private else binds)
+    if binds:
+        await cur.execute(sql, list(binds))
+    else:
+        await cur.execute(sql)
 
 
 def _conn_cache(fn):
@@ -139,7 +166,7 @@ async def fetch_explain_plan(cur: AsyncCursor) -> list[str]:
     Returns:
         A list of str representing the formatted lines of the plan.
     """
-    await cur.execute("SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())")
+    await _exec(cur, "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())")
     return [r[0] for r in await cur.fetchall()]
 
 
@@ -211,7 +238,7 @@ async def fetch_compilation_errors(
     CREATE, so this is the only way to see why it is broken.
     """
     cur = conn.cursor()
-    await cur.execute(_COMPILATION_ERRORS_SQL, [name, object_type])
+    await _exec(cur, _COMPILATION_ERRORS_SQL, [name, object_type])
     return [(int(line), int(pos), text) for line, pos, text in await cur.fetchall()]
 
 
@@ -232,15 +259,17 @@ async def fetch_schemas(
     """Return non-system schema names, ordered alphabetically."""
     cur = conn.cursor()
     if has_oracle_maintained:
-        await cur.execute(
+        await _exec(
+            cur,
             "SELECT USERNAME FROM ALL_USERS"
-            " WHERE ORACLE_MAINTAINED = 'N' ORDER BY USERNAME"
+            " WHERE ORACLE_MAINTAINED = 'N' ORDER BY USERNAME",
         )
     else:
-        await cur.execute(
+        await _exec(
+            cur,
             "SELECT USERNAME FROM ALL_USERS"
             f" WHERE USERNAME NOT IN ({_PRE12_SYSTEM_SCHEMAS_SQL})"
-            " ORDER BY USERNAME"
+            " ORDER BY USERNAME",
         )
     return [r[0] for r in await cur.fetchall()]
 
@@ -251,7 +280,8 @@ async def fetch_tables_and_views(
 ) -> list[tuple[str, str]]:
     """Return (name, type) pairs for all tables and views in *schema*."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT TABLE_NAME AS N, 'table' AS T FROM ALL_TABLES WHERE OWNER = :1"
         " UNION ALL"
         " SELECT VIEW_NAME, 'view' FROM ALL_VIEWS WHERE OWNER = :2"
@@ -267,7 +297,8 @@ async def fetch_column_names_and_types(
 ) -> list[tuple[str, str]]:
     """Return (column_name, data_type) pairs ordered by column position."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS"
         " WHERE OWNER = :1 AND TABLE_NAME = :2 ORDER BY COLUMN_ID",
         [schema, table],
@@ -281,7 +312,8 @@ async def fetch_index_names_and_types(
 ) -> list[tuple[str, str]]:
     """Return (index_name, index_type) pairs ordered by index name."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT INDEX_NAME, LOWER(INDEX_TYPE) FROM ALL_INDEXES"
         " WHERE TABLE_OWNER = :1 AND TABLE_NAME = :2 ORDER BY INDEX_NAME",
         [schema, table],
@@ -389,7 +421,7 @@ async def fetch_find_tables_and_views(
         "ALL_VIEWS", "VIEW_NAME", names, schemas, has_oracle_maintained, binds
     )
     cur = conn.cursor()
-    await cur.execute(f"{tables} UNION {views} ORDER BY 1, 2", binds)
+    await _exec(cur, f"{tables} UNION {views} ORDER BY 1, 2", binds)
     return [(r[0], r[1]) for r in await cur.fetchall()]
 
 
@@ -416,7 +448,8 @@ async def fetch_find_columns(
     names = _name_forms(name)
     binds: list[str] = list(names)
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT OWNER, TABLE_NAME, COLUMN_NAME FROM ALL_TAB_COLUMNS"
         f" WHERE COLUMN_NAME IN ({_in_binds(names, 1)})"
         f"{_owner_filter('OWNER', has_oracle_maintained)}"
@@ -452,7 +485,8 @@ async def fetch_find_indexes(
     names = _name_forms(name)
     binds: list[str] = list(names)
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT TABLE_OWNER, TABLE_NAME, INDEX_NAME FROM ALL_INDEXES"
         f" WHERE INDEX_NAME IN ({_in_binds(names, 1)})"
         f"{_owner_filter('TABLE_OWNER', has_oracle_maintained)}"
@@ -475,7 +509,8 @@ async def fetch_column_details(
 ) -> list[ColumnDetail]:
     """Return column metadata ordered by column position."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT,"
         " CHAR_LENGTH, DATA_LENGTH"
         " FROM ALL_TAB_COLUMNS"
@@ -499,7 +534,8 @@ async def fetch_column_details(
 async def fetch_pk_columns(conn: AsyncConnection, schema: str, table: str) -> set[str]:
     """Return the set of column names that form the primary key."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT cc.COLUMN_NAME FROM ALL_CONSTRAINTS con"
         " JOIN ALL_CONS_COLUMNS cc"
         "  ON con.OWNER = cc.OWNER"
@@ -519,7 +555,8 @@ async def fetch_unique_columns(
     """Return columns constrained to unique values by a single-column PK or
     UNIQUE constraint."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT con.CONSTRAINT_NAME, cc.COLUMN_NAME"
         " FROM ALL_CONSTRAINTS con"
         " JOIN ALL_CONS_COLUMNS cc"
@@ -540,7 +577,8 @@ async def fetch_outgoing_references(
 ) -> list[TableReference]:
     """Return foreign keys defined on *table* that reference other tables."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT lc.COLUMN_NAME, rcon.OWNER, rcon.TABLE_NAME, rc.COLUMN_NAME,"
         " con.CONSTRAINT_NAME"
         " FROM ALL_CONSTRAINTS con"
@@ -578,7 +616,8 @@ async def fetch_incoming_references(
 ) -> list[TableReference]:
     """Return foreign keys on other tables in *schema* that reference *table*."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT rc.COLUMN_NAME, con.OWNER, con.TABLE_NAME, lc.COLUMN_NAME,"
         " con.CONSTRAINT_NAME"
         " FROM ALL_CONSTRAINTS con"
@@ -618,7 +657,8 @@ async def fetch_column_index_mapping(
 ) -> dict[str, list[str]]:
     """Return ``{column_name: [index_name, ...]}`` for all indexed columns."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT aic.COLUMN_NAME, aic.INDEX_NAME"
         " FROM ALL_IND_COLUMNS aic"
         " JOIN ALL_INDEXES ai"
@@ -643,7 +683,8 @@ async def fetch_index_metas_for_table(
 ) -> list[IndexMeta]:
     """Return metadata for all indexes on *table*, ordered by index name."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT OWNER, INDEX_NAME, INDEX_TYPE, UNIQUENESS, VISIBILITY, GENERATED"
         " FROM ALL_INDEXES"
         " WHERE TABLE_OWNER = :1 AND TABLE_NAME = :2"
@@ -669,7 +710,8 @@ async def fetch_index_fields_for_table(
 ) -> dict[str, list[IndexKeyField]]:
     """Return ``{index_name: [IndexKeyField, ...]}`` for all indexes on *table*."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT INDEX_NAME, COLUMN_NAME, DESCEND"
         " FROM ALL_IND_COLUMNS"
         " WHERE INDEX_OWNER = :1 AND TABLE_NAME = :2"
@@ -696,7 +738,8 @@ async def fetch_join_tables_for_table(
     """
     cur = conn.cursor()
     try:
-        await cur.execute(
+        await _exec(
+            cur,
             "SELECT DISTINCT INDEX_NAME, INNER_TABLE_NAME, OUTER_TABLE_NAME"
             " FROM ALL_JOIN_IND_COLUMNS"
             " WHERE INDEX_OWNER = :1",
@@ -724,7 +767,8 @@ async def fetch_index_meta(
 ) -> IndexMeta | None:
     """Return metadata for a single index, or None if not found."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT INDEX_TYPE, UNIQUENESS, VISIBILITY, GENERATED"
         " FROM ALL_INDEXES"
         " WHERE OWNER = :1 AND INDEX_NAME = :2",
@@ -750,7 +794,8 @@ async def fetch_index_fields_for_index(
 ) -> list[IndexKeyField]:
     """Return key fields for a single index, ordered by column position."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT COLUMN_NAME, DESCEND FROM ALL_IND_COLUMNS"
         " WHERE INDEX_OWNER = :1 AND INDEX_NAME = :2"
         " ORDER BY COLUMN_POSITION",
@@ -774,7 +819,8 @@ async def fetch_join_tables_for_index(
     cur = conn.cursor()
     tables = [table]
     try:
-        await cur.execute(
+        await _exec(
+            cur,
             "SELECT DISTINCT INNER_TABLE_NAME, OUTER_TABLE_NAME"
             " FROM ALL_JOIN_IND_COLUMNS"
             " WHERE INDEX_OWNER = :1 AND INDEX_NAME = :2",
@@ -800,7 +846,8 @@ async def fetch_table_comment(
 ) -> str | None:
     """Return the table-level comment, or None if unsupported or not set."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT COMMENTS FROM ALL_TAB_COMMENTS WHERE OWNER = :1 AND TABLE_NAME = :2",
         [schema, table],
     )
@@ -814,7 +861,8 @@ async def fetch_all_column_comments(
 ) -> dict[str, str | None]:
     """Return ``{column_name: comment}`` for all columns; value is None when no comment is set."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT COLUMN_NAME, COMMENTS FROM ALL_COL_COMMENTS"
         " WHERE OWNER = :1 AND TABLE_NAME = :2",
         [schema, table],
@@ -832,9 +880,10 @@ async def fetch_column_sample(
     """Return up to *n* distinct non-null values sampled from *col_name*."""
     cur = conn.cursor()
     try:
-        await cur.execute(
+        await _exec(
+            cur,
             f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
-            f' WHERE "{col_name}" IS NOT NULL FETCH FIRST {n} ROWS ONLY'
+            f' WHERE "{col_name}" IS NOT NULL FETCH FIRST {n} ROWS ONLY',
         )
         return [await render_lob(r[0]) for r in await cur.fetchall()]
     except Exception:
@@ -852,9 +901,10 @@ async def fetch_table_sample_rows(
     """
     cur = conn.cursor()
     try:
-        await cur.execute(
+        await _exec(
+            cur,
             f'SELECT * FROM "{schema}"."{table}"'
-            f" FETCH FIRST {SAMPLE_SCAN_ROWS} ROWS ONLY"
+            f" FETCH FIRST {SAMPLE_SCAN_ROWS} ROWS ONLY",
         )
         columns = [d[0] for d in cur.description or []]
         rows = [[await render_lob(v) for v in row] for row in await cur.fetchall()]
@@ -931,13 +981,14 @@ def build_column_index_lists(
 async def apply_metadata_transform(conn: AsyncConnection) -> None:
     """Set DBMS_METADATA session transform params to suppress storage/segment clauses."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "BEGIN"
         " DBMS_METADATA.SET_TRANSFORM_PARAM("
         "  DBMS_METADATA.SESSION_TRANSFORM, 'STORAGE', FALSE);"
         " DBMS_METADATA.SET_TRANSFORM_PARAM("
         "  DBMS_METADATA.SESSION_TRANSFORM, 'SEGMENT_ATTRIBUTES', FALSE);"
-        " END;"
+        " END;",
     )
 
 
@@ -947,7 +998,8 @@ async def fetch_index_ddl(
 ) -> str | None:
     """Return the CREATE INDEX DDL for *index_name*, or None if unavailable."""
     cur = conn.cursor()
-    await cur.execute(
+    await _exec(
+        cur,
         "SELECT DBMS_METADATA.GET_DDL('INDEX', :1, :2) FROM DUAL",
         [index_name, schema],
     )

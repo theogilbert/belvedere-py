@@ -1,3 +1,4 @@
+import logging
 import pathlib
 from collections.abc import AsyncGenerator
 
@@ -596,3 +597,41 @@ class TestExploreFind:
         self, searchable: CachingDriver
     ) -> None:
         assert await searchable.explore_find(NodeType.COLUMN, "nope", []) == []
+
+
+class TestQueryLogging:
+    """Debug logging has to show every statement that reached the database —
+    without writing the user's own data into the log file."""
+
+    async def test_catalog_queries_are_logged_with_their_binds(
+        self, driver: SQLiteDriver, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await driver.execute("CREATE TABLE t (id INTEGER, name TEXT)", [])
+        with caplog.at_level(logging.DEBUG):
+            await driver.explore_list([])
+        assert "query SELECT name, type FROM sqlite_master" in caplog.text
+
+    async def test_user_statement_is_logged(
+        self, driver: SQLiteDriver, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.DEBUG):
+            await driver.execute("CREATE TABLE t (id INTEGER, name TEXT)", [])
+        assert "query CREATE TABLE t (id INTEGER, name TEXT)" in caplog.text
+
+    async def test_user_bind_values_are_never_logged(
+        self, driver: SQLiteDriver, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The one guarantee worth a test of its own: a driver's own catalog
+        binds are object names, but the user's are their data."""
+        await driver.execute("CREATE TABLE t (id INTEGER, name TEXT)", [])
+        with caplog.at_level(logging.DEBUG):
+            await driver.execute("INSERT INTO t VALUES (?, ?)", [1, "s3cret-value"])
+        assert "INSERT INTO t VALUES (?, ?)" in caplog.text
+        assert "s3cret-value" not in caplog.text
+
+    async def test_nothing_is_logged_above_debug(
+        self, driver: SQLiteDriver, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.INFO):
+            await driver.execute("CREATE TABLE t (id INTEGER)", [])
+        assert "query" not in caplog.text

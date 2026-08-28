@@ -1,9 +1,11 @@
 import asyncio
 import dataclasses
+import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, ClassVar, TypeVar
 
+from ..log import log_query
 from ..protocol import (
     DescribeResult,
     DriverParam,
@@ -30,6 +32,9 @@ from .base import (
 )
 
 T = TypeVar("T")
+
+
+logger = logging.getLogger(__name__)
 
 
 class SQLiteDriver(BaseDriver):
@@ -134,9 +139,26 @@ nullability, primary key flag).
         """
         return await self._run(self._execute_sync, query, binds)
 
+    def _sql(
+        self, sql: str, binds: Sequence[Any] = (), *, private: bool = False
+    ) -> sqlite3.Cursor:
+        """Log a statement, then run it on the connection.
+
+        Every query this driver sends goes through here, so debug logging of
+        them needs no change at the call sites.
+
+        Args:
+            sql: Statement text.
+            binds: Bind values, logged alongside the statement.
+            private: Set for the *user's* own statement, whose binds are user
+                data rather than the object names a catalog query binds.
+        """
+        log_query(logger, sql, None if private else binds)
+        return self._conn.execute(sql, binds) if binds else self._conn.execute(sql)
+
     def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | WriteResult:
 
-        cur = self._conn.execute(sql, binds)
+        cur = self._sql(sql, binds, private=True)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
             rows: list[list[Any]] = [
@@ -160,7 +182,7 @@ nullability, primary key flag).
 
         match path:
             case []:
-                rows = self._conn.execute(
+                rows = self._sql(
                     "SELECT name, type FROM sqlite_master"
                     " WHERE type IN ('table','view') ORDER BY name"
                 ).fetchall()
@@ -176,13 +198,13 @@ nullability, primary key flag).
                 ]
 
             case [table, "columns"]:
-                rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+                rows = self._sql(f"PRAGMA table_info({table})").fetchall()
                 return [
                     ExploreItem(name=r[1], type=r[2], expandable=False) for r in rows
                 ]
 
             case [table, "indices"]:
-                rows = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
+                rows = self._sql(f"PRAGMA index_list({table})").fetchall()
                 return [
                     ExploreItem(name=r[1], type="index", expandable=False) for r in rows
                 ]
@@ -253,7 +275,7 @@ nullability, primary key flag).
                 return None
 
     def _describe_entity_sync(self, table: str) -> EntityDescription:
-        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        cols = self._sql(f"PRAGMA table_info({table})").fetchall()
         idx_desc_list = self._describe_indices_sync(table)
         col_excl: dict[str, list[IndexDescription]] = {}
         col_comp: dict[str, list[IndexDescription]] = {}
@@ -290,7 +312,7 @@ nullability, primary key flag).
         )
 
     def _describe_indices_sync(self, table: str) -> list[IndexDescription]:
-        index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
+        index_list = self._sql(f"PRAGMA index_list({table})").fetchall()
         indices = []
         for idx_row in index_list:
             idx = self._describe_index_sync(table, idx_row[1])
@@ -301,18 +323,18 @@ nullability, primary key flag).
     def _describe_index_sync(
         self, table: str, index_name: str
     ) -> IndexDescription | None:
-        index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
+        index_list = self._sql(f"PRAGMA index_list({table})").fetchall()
         index_row = next((r for r in index_list if r[1] == index_name), None)
         if index_row is None:
             return None
         unique = bool(index_row[2])
-        xinfo = self._conn.execute(f"PRAGMA index_xinfo({index_name})").fetchall()
+        xinfo = self._sql(f"PRAGMA index_xinfo({index_name})").fetchall()
         fields = [
             IndexKeyField(name=r[2], direction="desc" if r[3] else "asc")
             for r in xinfo
             if r[5]  # key=1: part of the index key; 0 = implicit rowid
         ]
-        row = self._conn.execute(
+        row = self._sql(
             "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
             (index_name,),
         ).fetchone()
@@ -329,7 +351,7 @@ nullability, primary key flag).
     def _describe_field_sync(
         self, table: str, col_name: str
     ) -> FieldDescription | None:
-        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        cols = self._sql(f"PRAGMA table_info({table})").fetchall()
         row = next((r for r in cols if r[1] == col_name), None)
         if row is None:
             return None
@@ -364,7 +386,7 @@ nullability, primary key flag).
         )
 
     def _outgoing_references_sync(self, table: str) -> list[TableReference]:
-        rows = self._conn.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+        rows = self._sql(f"PRAGMA foreign_key_list({table})").fetchall()
         unique_cols = self._unique_columns_sync(table)
         return [
             TableReference(
@@ -378,15 +400,13 @@ nullability, primary key flag).
         ]
 
     def _incoming_references_sync(self, table: str) -> list[TableReference]:
-        other_tables = self._conn.execute(
+        other_tables = self._sql(
             "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name != ?",
             (table,),
         ).fetchall()
         references = []
         for (other_table,) in other_tables:
-            rows = self._conn.execute(
-                f"PRAGMA foreign_key_list({other_table})"
-            ).fetchall()
+            rows = self._sql(f"PRAGMA foreign_key_list({other_table})").fetchall()
             matching = [r for r in rows if r[2].lower() == table.lower()]
             if not matching:
                 continue
@@ -406,14 +426,14 @@ nullability, primary key flag).
     def _unique_columns_sync(self, table: str) -> set[str]:
         """Columns constrained to unique values: the table's own PK (unless
         composite) or covered by a single-column UNIQUE index."""
-        cols = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        cols = self._sql(f"PRAGMA table_info({table})").fetchall()
         pk_cols = [r[1] for r in cols if r[5]]
         unique = set(pk_cols) if len(pk_cols) == 1 else set()
-        index_list = self._conn.execute(f"PRAGMA index_list({table})").fetchall()
+        index_list = self._sql(f"PRAGMA index_list({table})").fetchall()
         for idx_row in index_list:
             if not idx_row[2]:
                 continue  # not a UNIQUE index
-            xinfo = self._conn.execute(f"PRAGMA index_xinfo({idx_row[1]})").fetchall()
+            xinfo = self._sql(f"PRAGMA index_xinfo({idx_row[1]})").fetchall()
             key_cols = [r[2] for r in xinfo if r[5]]
             if len(key_cols) == 1:
                 unique.add(key_cols[0])
@@ -432,7 +452,7 @@ nullability, primary key flag).
         try:
             return [
                 r[0]
-                for r in self._conn.execute(
+                for r in self._sql(
                     f'SELECT DISTINCT "{col_name}" FROM "{table}"'
                     f' WHERE "{col_name}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
                 ).fetchall()

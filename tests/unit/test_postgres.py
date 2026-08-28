@@ -301,7 +301,9 @@ class TestReconnectReplaysSessionStatements:
         monkeypatch.setattr(PostgresDriver, "_open", staticmethod(fake_open))
         asyncio.run(driver.reconnect())
 
-        new_cur.execute.assert_awaited_with(sql.SQL(stmt))
+        # params is an explicit None now that every statement routes through
+        # _exec; psycopg treats that the same as omitting the argument.
+        new_cur.execute.assert_awaited_with(sql.SQL(stmt), None)
 
     def test_no_statements_means_no_replay(
         self, monkeypatch: pytest.MonkeyPatch

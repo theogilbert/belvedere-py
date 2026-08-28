@@ -1,5 +1,6 @@
 """Neo4j driver — requires: pip install neo4j"""
 
+import logging
 import asyncio
 from collections.abc import Callable
 from typing import Any, LiteralString
@@ -7,6 +8,7 @@ from typing import Any, LiteralString
 import neo4j
 import neo4j.exceptions
 
+from ..log import log_query
 from ..protocol import (
     Connection,
     DescribeResult,
@@ -32,6 +34,28 @@ from .base import (
     DriverSettings,
     build_column_samples,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+async def _cypher(
+    session: Any, query: str, params: Any = None, *, private: bool = False
+) -> Any:
+    """Log *query* and run it on *session*.
+
+    Every Cypher statement this driver sends goes through here, so debug
+    logging of them needs no change at the call sites.
+
+    Args:
+        session: Open Neo4j async session.
+        query: Cypher text.
+        params: Query parameters, logged alongside the statement.
+        private: Set for the *user's* own statement, whose parameters are user
+            data rather than the labels and property names a catalog query binds.
+    """
+    log_query(logger, query, None if private else params)
+    return await session.run(query, params) if params else await session.run(query)
 
 
 class Neo4jDriver(BaseDriver):
@@ -145,7 +169,7 @@ describing a single property adds a value sample.
         db = self.params.get("database", "neo4j")
         try:
             async with self._driver.session(database=db) as session:
-                result = await session.run(query, params)  # ty: ignore[invalid-argument-type]
+                result = await _cypher(session, query, params, private=True)
                 keyword = _plan_keyword(query)
                 if keyword:
                     summary = await result.consume()
@@ -384,35 +408,38 @@ describing a single property adds a value sample.
     async def _all_index_specs(self) -> list[dict]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
+            result = await _cypher(
+                session,
                 "SHOW INDEXES YIELD name, type, properties, labelsOrTypes,"
                 " owningConstraint, createStatement"
                 " RETURN name, type, properties, labelsOrTypes,"
-                " owningConstraint, createStatement"
+                " owningConstraint, createStatement",
             )
             return await result.data()
 
     async def _query_column(self, query: LiteralString, key: str) -> list[str]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(query)
+            result = await _cypher(session, query)
             return [r[key] for r in await result.data()]
 
     async def _node_properties(self, label: str) -> list[str]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
-                f"MATCH (n:`{label}`) UNWIND keys(n) AS prop"  # ty: ignore[invalid-argument-type]
-                " RETURN DISTINCT prop ORDER BY prop"
+            result = await _cypher(
+                session,
+                f"MATCH (n:`{label}`) UNWIND keys(n) AS prop"
+                " RETURN DISTINCT prop ORDER BY prop",
             )
             return [r["prop"] for r in await result.data()]
 
     async def _relationship_properties(self, rel_type: str) -> list[str]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
-                f"MATCH ()-[r:`{rel_type}`]->() UNWIND keys(r) AS prop"  # ty: ignore[invalid-argument-type]
-                " RETURN DISTINCT prop ORDER BY prop"
+            result = await _cypher(
+                session,
+                f"MATCH ()-[r:`{rel_type}`]->() UNWIND keys(r) AS prop"
+                " RETURN DISTINCT prop ORDER BY prop",
             )
             return [r["prop"] for r in await result.data()]
 
@@ -421,7 +448,8 @@ describing a single property adds a value sample.
     ) -> list[tuple[str, list[str], bool]]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
+            result = await _cypher(
+                session,
                 "CALL db.schema.nodeTypeProperties()"
                 " YIELD nodeLabels, propertyName, propertyTypes, mandatory"
                 " WHERE $label IN nodeLabels AND propertyName IS NOT NULL"
@@ -435,11 +463,12 @@ describing a single property adds a value sample.
     ) -> list[tuple[str, list[str], bool]]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
+            result = await _cypher(
+                session,
                 "CALL db.schema.relTypeProperties()"
                 " YIELD relType, propertyName, propertyTypes, mandatory"
                 " WHERE propertyName IS NOT NULL"
-                " RETURN relType, propertyName, propertyTypes, mandatory"
+                " RETURN relType, propertyName, propertyTypes, mandatory",
             )
             rows = [
                 r
@@ -451,10 +480,11 @@ describing a single property adds a value sample.
     async def _node_connections(self, label: str) -> list[Connection]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
-                f"MATCH (n:`{label}`)-[r]-(m)"  # ty: ignore[invalid-argument-type]
+            result = await _cypher(
+                session,
+                f"MATCH (n:`{label}`)-[r]-(m)"
                 " RETURN DISTINCT type(r) AS relType,"
-                " labels(startNode(r)) AS fromLabels, labels(endNode(r)) AS toLabels"
+                " labels(startNode(r)) AS fromLabels, labels(endNode(r)) AS toLabels",
             )
             rows = await result.data()
         seen: set[tuple[str, str, str]] = set()
@@ -478,9 +508,10 @@ describing a single property adds a value sample.
     async def _relationship_type_connections(self, rel_type: str) -> list[Connection]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
-                f"MATCH (a)-[r:`{rel_type}`]->(b)"  # ty: ignore[invalid-argument-type]
-                " RETURN DISTINCT labels(a) AS fromLabels, labels(b) AS toLabels"
+            result = await _cypher(
+                session,
+                f"MATCH (a)-[r:`{rel_type}`]->(b)"
+                " RETURN DISTINCT labels(a) AS fromLabels, labels(b) AS toLabels",
             )
             rows = await result.data()
         seen: set[tuple[str, str]] = set()
@@ -513,8 +544,9 @@ describing a single property adds a value sample.
     async def _fetch_node_samples(self, label: str) -> dict[str, list[Any]]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
-                f"MATCH (n:`{label}`) RETURN n LIMIT $limit",  # ty: ignore[invalid-argument-type]
+            result = await _cypher(
+                session,
+                f"MATCH (n:`{label}`) RETURN n LIMIT $limit",
                 {"limit": SAMPLE_SCAN_ROWS},
             )
             nodes = [dict(record["n"]) async for record in result]
@@ -534,8 +566,9 @@ describing a single property adds a value sample.
     async def _fetch_relationship_samples(self, rel_type: str) -> dict[str, list[Any]]:
         db = self.params.get("database", "neo4j")
         async with self._driver.session(database=db) as session:
-            result = await session.run(
-                f"MATCH ()-[r:`{rel_type}`]->() RETURN r LIMIT $limit",  # ty: ignore[invalid-argument-type]
+            result = await _cypher(
+                session,
+                f"MATCH ()-[r:`{rel_type}`]->() RETURN r LIMIT $limit",
                 {"limit": SAMPLE_SCAN_ROWS},
             )
             rels = [dict(record["r"]) async for record in result]

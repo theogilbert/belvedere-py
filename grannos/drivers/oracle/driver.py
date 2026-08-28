@@ -37,6 +37,7 @@ from ..base import (
     group_references_by_ref_column,
 )
 from .queries import (
+    _exec,
     MAX_DBMS_OUTPUT_LINES,
     ColumnDetail,
     apply_metadata_transform,
@@ -225,7 +226,7 @@ after an idle timeout.
         for stmt in self._session_statements.values():
             try:
                 cur = self._conn.cursor()
-                await cur.execute(stmt)
+                await _exec(cur, stmt)
             except Exception as exc:
                 _maybe_raise_connection_lost(exc)
                 if isinstance(exc, oracledb.DatabaseError):
@@ -258,7 +259,7 @@ after an idle timeout.
 
         try:
             cur = self._conn.cursor()
-            await cur.execute(query, binds)
+            await _exec(cur, query, binds, private=True)
             prop = _alter_session_property(query)
             if prop is not None:
                 self._session_statements[prop] = query

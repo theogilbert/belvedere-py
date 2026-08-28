@@ -40,6 +40,7 @@ from .copy import (
     parse_copy_to,
 )
 from .queries import (
+    _exec,
     build_column_index_lists,
     build_preview_query,
     fetch_all_column_comments,
@@ -200,7 +201,7 @@ after an idle timeout).
         for stmt in self._session_statements.values():
             try:
                 cur = self._conn.cursor()
-                await cur.execute(sql.SQL(stmt))  # ty: ignore[invalid-argument-type]
+                await _exec(cur, sql.SQL(stmt))  # ty: ignore[invalid-argument-type]
             except Exception as exc:
                 _maybe_raise_connection_lost(exc)
                 if isinstance(exc, psycopg.Error):
@@ -240,7 +241,7 @@ after an idle timeout).
 
         try:
             cur = self._conn.cursor()
-            await cur.execute(sql.SQL(query), params)  # ty: ignore[invalid-argument-type]
+            await _exec(cur, sql.SQL(query), params, private=True)  # ty: ignore[invalid-argument-type]
             prop = _set_property(query)
             if prop is not None:
                 self._session_statements[prop] = query

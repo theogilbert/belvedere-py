@@ -1,5 +1,6 @@
 """MongoDB driver — requires: pip install pymongo"""
 
+import logging
 import base64
 import json
 from collections.abc import Callable
@@ -13,6 +14,7 @@ from bson import ObjectId, json_util
 from bson.errors import InvalidId
 from gridfs import AsyncGridFSBucket
 
+from ..log import log_query
 from ..protocol import (
     DescribeResult,
     DownloadResult,
@@ -40,6 +42,9 @@ bucket. See MongoDriver._find_gridfs."""
 _GRIDFS_REF_PREFIX = "gridfs:"
 """LobPlaceholder.ref prefix identifying a GridFS file cell (as opposed to an
 ordinary in-memory-cached LOB ref) — see MongoDriver.explore_download_ref."""
+
+
+logger = logging.getLogger(__name__)
 
 
 class _Op(StrEnum):
@@ -241,6 +246,9 @@ to fetch its full content later without re-running the query.
                 ``"db"`` is required and names the target database.
             binds: Unused for MongoDB.
         """
+        # The command as submitted is the statement here; the driver calls it
+        # fans out to are logged separately at their own call sites.
+        log_query(logger, query)
         try:
             cmd: dict[str, Any] = json_util.loads(query)
             if "db" not in cmd:
@@ -395,11 +403,13 @@ to fetch its full content later without re-running the query.
     async def _explore_list(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
+                log_query(logger, "list_database_names")
                 return [
                     ExploreItem(name=n, type="database", expandable=True)
                     for n in sorted(await self._client.list_database_names())
                 ]
             case [db_name]:
+                log_query(logger, f"list_collection_names {db_name}")
                 names = sorted(await self._client[db_name].list_collection_names())
                 buckets = _gridfs_buckets(names)
                 items = [
@@ -417,6 +427,7 @@ to fetch its full content later without re-running the query.
                 # of thousands of files, so individual files aren't tree-listed
                 # at all; describing the bucket gives stats + example query
                 # syntax, and files are reached via a "gridfs.<bucket>" find.
+                log_query(logger, f"list_collection_names {db_name}")
                 names = await self._client[db_name].list_collection_names()
                 return [
                     ExploreItem(name=b, type="gridfs_bucket", expandable=False)
@@ -470,12 +481,14 @@ to fetch its full content later without re-running the query.
     async def _explore_describe(self, path: list[str]) -> DescribeResult:
         match path:
             case [db_name, collection_name, "indexes"]:
+                log_query(logger, f"index_information {db_name}.{collection_name}")
                 info = await self._client[db_name][collection_name].index_information()
                 return [
                     _spec_to_index_description(name, spec, collection_name)
                     for name, spec in sorted(info.items())
                 ]
             case [db_name, collection_name, "indexes", index_name]:
+                log_query(logger, f"index_information {db_name}.{collection_name}")
                 info = await self._client[db_name][collection_name].index_information()
                 spec = info.get(index_name)
                 if spec is None:
@@ -517,6 +530,7 @@ to fetch its full content later without re-running the query.
         """Cheap aggregate stats (count + total size), not a file listing —
         a bucket can hold tens of thousands of files. Includes example query
         syntax, since that's now the only way to reach individual files."""
+        log_query(logger, f"aggregate {db_name}.{bucket_name}.files")
         cursor = await self._client[db_name][f"{bucket_name}.files"].aggregate(
             [
                 {
@@ -581,6 +595,7 @@ to fetch its full content later without re-running the query.
             await grid_out.close()
 
     async def _sample_fields(self, db_name: str, collection_name: str) -> list[str]:
+        log_query(logger, f"aggregate {db_name}.{collection_name}")
         cursor = await self._client[db_name][collection_name].aggregate(
             [{"$sample": {"size": 10}}]
         )
@@ -592,6 +607,7 @@ to fetch its full content later without re-running the query.
         return list(seen)
 
     async def _list_indexes(self, db_name: str, collection_name: str) -> list[str]:
+        log_query(logger, f"index_information {db_name}.{collection_name}")
         return sorted(await self._client[db_name][collection_name].index_information())
 
 
@@ -715,6 +731,7 @@ async def _make_mongo_client(params: dict[str, Any]) -> pymongo.AsyncMongoClient
         # ConfigurationError, ...) before any connection is made
         client = pymongo.AsyncMongoClient(params["uri"], **kwargs)
         # pymongo is lazy — force a connection to verify credentials
+        log_query(logger, "admin.command ping")
         await client.admin.command("ping")
     except Exception as exc:
         if client is not None:

@@ -1,11 +1,13 @@
 import asyncio
 import dataclasses
+import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, ClassVar, TypeVar
 
 import duckdb
 
+from ..log import log_query
 from ..protocol import (
     DescribeResult,
     DriverParam,
@@ -32,6 +34,9 @@ from .base import (
 )
 
 T = TypeVar("T")
+
+
+logger = logging.getLogger(__name__)
 
 
 class DuckDBDriver(BaseDriver):
@@ -134,8 +139,25 @@ SELECT * FROM 'glob/**/*.parquet'
         """
         return await self._run(self._execute_sync, query, binds)
 
+    def _sql(
+        self, sql: str, binds: Sequence[Any] = (), *, private: bool = False
+    ) -> duckdb.DuckDBPyConnection:
+        """Log a statement, then run it on the connection.
+
+        Every query this driver sends goes through here, so debug logging of
+        them needs no change at the call sites.
+
+        Args:
+            sql: Statement text.
+            binds: Bind values, logged alongside the statement.
+            private: Set for the *user's* own statement, whose binds are user
+                data rather than the object names a catalog query binds.
+        """
+        log_query(logger, sql, None if private else binds)
+        return self._conn.execute(sql, binds) if binds else self._conn.execute(sql)
+
     def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | WriteResult:
-        cur = self._conn.execute(sql, binds)
+        cur = self._sql(sql, binds, private=True)
         desc = cur.description
         # DuckDB returns a synthetic "Count" column for DML instead of description=None
         if desc is None or (len(desc) == 1 and desc[0][0] == "Count"):
@@ -158,7 +180,7 @@ SELECT * FROM 'glob/**/*.parquet'
     def _explore_list_sync(self, path: list[str]) -> list[ExploreItem]:
         match path:
             case []:
-                rows = self._conn.execute(
+                rows = self._sql(
                     "SELECT schema_name FROM information_schema.schemata"
                     " WHERE catalog_name = current_catalog()"
                     " AND schema_name NOT IN ('information_schema', 'pg_catalog')"
@@ -169,7 +191,7 @@ SELECT * FROM 'glob/**/*.parquet'
                 ]
 
             case [schema]:
-                rows = self._conn.execute(
+                rows = self._sql(
                     "SELECT table_name, table_type FROM information_schema.tables"
                     " WHERE table_schema = ? ORDER BY table_name",
                     [schema],
@@ -191,7 +213,7 @@ SELECT * FROM 'glob/**/*.parquet'
                 ]
 
             case [schema, table, "columns"]:
-                rows = self._conn.execute(
+                rows = self._sql(
                     "SELECT column_name, data_type FROM information_schema.columns"
                     " WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
                     [schema, table],
@@ -201,7 +223,7 @@ SELECT * FROM 'glob/**/*.parquet'
                 ]
 
             case [schema, table, "indices"]:
-                rows = self._conn.execute(
+                rows = self._sql(
                     "SELECT index_name FROM duckdb_indexes()"
                     " WHERE schema_name = ? AND table_name = ? ORDER BY index_name",
                     [schema, table],
@@ -272,7 +294,7 @@ SELECT * FROM 'glob/**/*.parquet'
                 return self._describe_indices_sync(schema, table)
 
             case [schema, table, "indices", index_name]:
-                rows = self._conn.execute(
+                rows = self._sql(
                     "SELECT is_unique, sql FROM duckdb_indexes()"
                     " WHERE schema_name = ? AND table_name = ? AND index_name = ?",
                     [schema, table, index_name],
@@ -296,13 +318,13 @@ SELECT * FROM 'glob/**/*.parquet'
                 return None
 
     def _describe_entity_sync(self, schema: str, table: str) -> EntityDescription:
-        col_rows = self._conn.execute(
+        col_rows = self._sql(
             "SELECT column_name, data_type, is_nullable"
             " FROM information_schema.columns"
             " WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
             [schema, table],
         ).fetchall()
-        pk_rows = self._conn.execute(
+        pk_rows = self._sql(
             "SELECT constraint_column_names FROM duckdb_constraints()"
             " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'",
             [schema, table],
@@ -322,7 +344,7 @@ SELECT * FROM 'glob/**/*.parquet'
 
         col_comments: dict[str, str | None] = {}
         try:
-            for r in self._conn.execute(
+            for r in self._sql(
                 "SELECT column_name, comment FROM duckdb_columns()"
                 " WHERE schema_name = ? AND table_name = ?",
                 [schema, table],
@@ -333,7 +355,7 @@ SELECT * FROM 'glob/**/*.parquet'
 
         table_comment: str | None = None
         try:
-            comment_rows = self._conn.execute(
+            comment_rows = self._sql(
                 "SELECT comment FROM duckdb_tables()"
                 " WHERE schema_name = ? AND table_name = ?",
                 [schema, table],
@@ -373,7 +395,7 @@ SELECT * FROM 'glob/**/*.parquet'
         )
 
     def _describe_indices_sync(self, schema: str, table: str) -> list[IndexDescription]:
-        rows = self._conn.execute(
+        rows = self._sql(
             "SELECT index_name, is_unique, sql FROM duckdb_indexes()"
             " WHERE schema_name = ? AND table_name = ? ORDER BY index_name",
             [schema, table],
@@ -392,7 +414,7 @@ SELECT * FROM 'glob/**/*.parquet'
     def _describe_field_sync(
         self, schema: str, table: str, col_name: str
     ) -> FieldDescription | None:
-        col_rows = self._conn.execute(
+        col_rows = self._sql(
             "SELECT column_name, data_type, is_nullable"
             " FROM information_schema.columns"
             " WHERE table_schema = ? AND table_name = ? AND column_name = ?",
@@ -402,7 +424,7 @@ SELECT * FROM 'glob/**/*.parquet'
             return None
         r = col_rows[0]
 
-        pk_rows = self._conn.execute(
+        pk_rows = self._sql(
             "SELECT constraint_column_names FROM duckdb_constraints()"
             " WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'",
             [schema, table],
@@ -423,7 +445,7 @@ SELECT * FROM 'glob/**/*.parquet'
 
         comment: str | None = None
         try:
-            rows = self._conn.execute(
+            rows = self._sql(
                 "SELECT comment FROM duckdb_columns()"
                 " WHERE schema_name = ? AND table_name = ? AND column_name = ?",
                 [schema, table, col_name],
@@ -455,7 +477,7 @@ SELECT * FROM 'glob/**/*.parquet'
     ) -> list[tuple[list[str], str, list[str], str]]:
         """Raw (local_columns, ref_table, ref_columns, constraint_name) rows for a
         table's foreign keys."""
-        return self._conn.execute(
+        return self._sql(
             "SELECT constraint_column_names, referenced_table, referenced_column_names,"
             " constraint_name"
             " FROM duckdb_constraints()"
@@ -486,7 +508,7 @@ SELECT * FROM 'glob/**/*.parquet'
     def _incoming_references_sync(
         self, schema: str, table: str
     ) -> list[TableReference]:
-        rows = self._conn.execute(
+        rows = self._sql(
             "SELECT table_name, constraint_column_names, referenced_column_names,"
             " constraint_name"
             " FROM duckdb_constraints()"
@@ -515,7 +537,7 @@ SELECT * FROM 'glob/**/*.parquet'
         """Columns constrained to unique values by a single-column PK or
         UNIQUE constraint. DuckDB doesn't back these with a listed entry in
         ``duckdb_indexes()``, so ``duckdb_constraints()`` is the source of truth."""
-        rows = self._conn.execute(
+        rows = self._sql(
             "SELECT constraint_column_names FROM duckdb_constraints()"
             " WHERE schema_name = ? AND table_name = ?"
             " AND constraint_type IN ('PRIMARY KEY', 'UNIQUE')",
@@ -536,7 +558,7 @@ SELECT * FROM 'glob/**/*.parquet'
         try:
             return [
                 row[0]
-                for row in self._conn.execute(
+                for row in self._sql(
                     f'SELECT DISTINCT "{col_name}" FROM "{schema}"."{table}"'
                     f' WHERE "{col_name}" IS NOT NULL LIMIT {self._settings.column_sample_size}'
                 ).fetchall()

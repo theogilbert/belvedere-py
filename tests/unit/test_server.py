@@ -10,24 +10,25 @@ import pytest
 
 from grannos.dispatcher import Dispatcher
 from grannos.drivers.base import DriverSettings
-from grannos.server import _LOG_CAP, Server, _redact, _truncate
+from grannos.log import LOG_CAP, truncate
+from grannos.server import Server, _redact
 
 
 class TestTruncate:
     def test_should_return_string_unchanged_when_under_cap(self) -> None:
-        text = "x" * _LOG_CAP
-        assert _truncate(text) == text
+        text = "x" * LOG_CAP
+        assert truncate(text) == text
 
     def test_should_truncate_and_append_ellipsis_when_over_cap(self) -> None:
-        text = "x" * (_LOG_CAP + 10)
-        result = _truncate(text)
-        assert len(result) == _LOG_CAP + 1  # cap chars + ellipsis character
+        text = "x" * (LOG_CAP + 10)
+        result = truncate(text)
+        assert len(result) == LOG_CAP + 1  # cap chars + ellipsis character
         assert result.endswith("…")
 
     def test_should_truncate_at_cap_boundary(self) -> None:
-        text = "x" * (_LOG_CAP + 1)
-        result = _truncate(text)
-        assert result == "x" * _LOG_CAP + "…"
+        text = "x" * (LOG_CAP + 1)
+        result = truncate(text)
+        assert result == "x" * LOG_CAP + "…"
 
 
 class TestRedact:

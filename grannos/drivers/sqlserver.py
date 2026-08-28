@@ -2,11 +2,13 @@
 
 import asyncio
 import dataclasses
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
 import mssql_python
 
+from ..log import log_query
 from ..protocol import (
     DescribeResult,
     DriverParam,
@@ -39,6 +41,31 @@ from .base import (
 T = TypeVar("T")
 
 _READ_ONLY_INTENT = "READ_ONLY"
+
+
+logger = logging.getLogger(__name__)
+
+
+def _exec(
+    cur: Any, sql: str, binds: Sequence[Any] | None = None, *, private: bool = False
+) -> None:
+    """Log *sql* and run it on *cur*.
+
+    Every statement this module sends to the database goes through here, so
+    debug logging of them needs no change at the call sites.
+
+    Args:
+        cur: Open cursor to execute on.
+        sql: Statement text.
+        binds: Bind values, logged alongside the statement.
+        private: Set for the *user's* own statement, whose binds are user data
+            rather than the schema and object names a catalog query binds.
+    """
+    log_query(logger, str(sql), None if private else binds)
+    if binds:
+        cur.execute(sql, list(binds))
+    else:
+        cur.execute(sql)
 
 
 class SQLServerDriver(BaseDriver):
@@ -181,6 +208,7 @@ nullability, default).
 
     def _execute_sync(self, sql: str, binds: list[Any]) -> ReadResult | WriteResult:
 
+        log_query(logger, sql)  # the user's own statement: text only, no binds
         cur = self._conn.execute(sql, binds)
         if cur.description is not None:
             columns = [d[0] for d in cur.description]
@@ -212,12 +240,13 @@ nullability, default).
         cur = self._conn.cursor()
         match path:
             case []:
-                cur.execute(
+                _exec(
+                    cur,
                     "SELECT name FROM sys.schemas"
                     " WHERE name NOT IN ('sys','INFORMATION_SCHEMA','guest','db_owner',"
                     "'db_accessadmin','db_securityadmin','db_ddladmin','db_backupoperator',"
                     "'db_datareader','db_datawriter','db_denydatareader','db_denydatawriter')"
-                    " ORDER BY name"
+                    " ORDER BY name",
                 )
                 return [
                     ExploreItem(name=r[0], type="schema", expandable=True)
@@ -225,7 +254,8 @@ nullability, default).
                 ]
 
             case [schema]:
-                cur.execute(
+                _exec(
+                    cur,
                     "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES"
                     " WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME",
                     (schema,),
@@ -242,7 +272,8 @@ nullability, default).
                 ]
 
             case [schema, table, "columns"]:
-                cur.execute(
+                _exec(
+                    cur,
                     "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS"
                     " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
                     " ORDER BY ORDINAL_POSITION",
@@ -254,7 +285,8 @@ nullability, default).
                 ]
 
             case [schema, table, "indices"]:
-                cur.execute(
+                _exec(
+                    cur,
                     "SELECT i.name, i.type_desc"
                     " FROM sys.indexes i"
                     " JOIN sys.objects o ON i.object_id = o.object_id"
@@ -339,7 +371,8 @@ nullability, default).
 
     def _describe_entity_sync(self, schema: str, table: str) -> EntityDescription:
         cur = self._conn.cursor()
-        cur.execute(
+        _exec(
+            cur,
             "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
             " FROM INFORMATION_SCHEMA.COLUMNS"
             " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
@@ -348,7 +381,8 @@ nullability, default).
         )
         col_rows = cur.fetchall()  # ty: ignore[missing-argument]
 
-        cur.execute(
+        _exec(
+            cur,
             "SELECT c.name FROM sys.key_constraints kc"
             " JOIN sys.index_columns ic"
             "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
@@ -361,7 +395,8 @@ nullability, default).
         )
         pk_cols: set[str] = {r[0] for r in cur.fetchall()}  # ty: ignore[missing-argument]
 
-        cur.execute(
+        _exec(
+            cur,
             "SELECT c.name, CAST(ep.value AS NVARCHAR(MAX))"
             " FROM sys.columns c"
             " JOIN sys.objects o ON c.object_id = o.object_id"
@@ -377,7 +412,8 @@ nullability, default).
             for r in cur.fetchall()  # ty: ignore[missing-argument]
         }
 
-        cur.execute(
+        _exec(
+            cur,
             "SELECT CAST(ep.value AS NVARCHAR(MAX))"
             " FROM sys.objects o"
             " JOIN sys.schemas s ON o.schema_id = s.schema_id"
@@ -436,7 +472,8 @@ nullability, default).
         self, schema: str, table: str, col_name: str
     ) -> FieldDescription | None:
         cur = self._conn.cursor()
-        cur.execute(
+        _exec(
+            cur,
             "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT"
             " FROM INFORMATION_SCHEMA.COLUMNS"
             " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
@@ -447,7 +484,8 @@ nullability, default).
             return None
         r = rows[0]
 
-        cur.execute(
+        _exec(
+            cur,
             "SELECT c.name FROM sys.key_constraints kc"
             " JOIN sys.index_columns ic"
             "  ON kc.unique_index_id = ic.index_id AND kc.parent_object_id = ic.object_id"
@@ -460,7 +498,8 @@ nullability, default).
         )
         pk_cols: set[str] = {row[0] for row in cur.fetchall()}  # ty: ignore[missing-argument]
 
-        cur.execute(
+        _exec(
+            cur,
             "SELECT CAST(ep.value AS NVARCHAR(MAX))"
             " FROM sys.columns c"
             " JOIN sys.objects o ON c.object_id = o.object_id"
@@ -509,7 +548,8 @@ nullability, default).
 
     def _describe_indices_sync(self, schema: str, table: str) -> list[IndexDescription]:
         cur = self._conn.cursor()
-        cur.execute(
+        _exec(
+            cur,
             "SELECT i.name, i.type_desc, i.is_unique,"
             "       i.is_disabled, i.filter_definition"
             " FROM sys.indexes i"
@@ -521,7 +561,8 @@ nullability, default).
         )
         index_rows = cur.fetchall()  # ty: ignore[missing-argument]
 
-        cur.execute(
+        _exec(
+            cur,
             "SELECT i.name, c.name, ic.is_descending_key, ic.is_included_column"
             " FROM sys.indexes i"
             " JOIN sys.index_columns ic"
@@ -585,7 +626,8 @@ nullability, default).
         self, schema: str, table: str, index_name: str
     ) -> IndexDescription | None:
         cur = self._conn.cursor()
-        cur.execute(
+        _exec(
+            cur,
             "SELECT i.type_desc, i.is_unique,"
             "       i.is_disabled, i.filter_definition"
             " FROM sys.indexes i"
@@ -600,7 +642,8 @@ nullability, default).
         type_desc, is_unique, is_disabled, filter_def = row
         is_clustered = (type_desc or "").upper() == "CLUSTERED"
 
-        cur.execute(
+        _exec(
+            cur,
             "SELECT c.name, ic.is_descending_key, ic.is_included_column"
             " FROM sys.indexes i"
             " JOIN sys.index_columns ic"
@@ -650,7 +693,8 @@ nullability, default).
         self, schema: str, table: str
     ) -> list[TableReference]:
         cur = self._conn.cursor()
-        cur.execute(
+        _exec(
+            cur,
             "SELECT pc.name, rs.name, ro.name, rc.name, fk.name"
             " FROM sys.foreign_keys fk"
             " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
@@ -685,7 +729,8 @@ nullability, default).
         self, schema: str, table: str
     ) -> list[TableReference]:
         cur = self._conn.cursor()
-        cur.execute(
+        _exec(
+            cur,
             "SELECT rc.name, ps.name, po.name, pc.name, fk.name"
             " FROM sys.foreign_keys fk"
             " JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id"
@@ -721,7 +766,8 @@ nullability, default).
         """Columns covered by a single-column UNIQUE index (PKs included,
         since SQL Server backs every PK with a unique index)."""
         cur = self._conn.cursor()
-        cur.execute(
+        _exec(
+            cur,
             "SELECT c.name, i.name"
             " FROM sys.indexes i"
             " JOIN sys.index_columns ic"
@@ -750,10 +796,11 @@ nullability, default).
     def _fetch_sample_sync(self, schema: str, table: str, col_name: str) -> list[Any]:
         cur = self._conn.cursor()
         try:
-            cur.execute(
+            _exec(
+                cur,
                 f"SELECT TOP {self._settings.column_sample_size} [{col_name}] FROM"
                 f" (SELECT DISTINCT [{col_name}] FROM [{schema}].[{table}]"
-                f"  WHERE [{col_name}] IS NOT NULL) AS _s"
+                f"  WHERE [{col_name}] IS NOT NULL) AS _s",
             )
             return [row[0] for row in cur.fetchall()]  # ty: ignore[missing-argument]
         except Exception:
@@ -774,7 +821,7 @@ nullability, default).
     ) -> tuple[list[str], list[tuple]]:
         cur = self._conn.cursor()
         try:
-            cur.execute(f"SELECT TOP {SAMPLE_SCAN_ROWS} * FROM [{schema}].[{table}]")
+            _exec(cur, f"SELECT TOP {SAMPLE_SCAN_ROWS} * FROM [{schema}].[{table}]")
             columns = [d[0] for d in cur.description or []]
             rows = cur.fetchall()  # ty: ignore[missing-argument]
             return columns, [tuple(r) for r in rows]

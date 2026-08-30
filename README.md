@@ -6,8 +6,8 @@ This server can be used by compatible clients (e.g. [grannos.nvim](https://githu
 
 ## Requirements
 
-- Python 3.14+
 - [uv](https://github.com/astral-sh/uv) (recommended)
+- Python 3.12+
 
 ## Installation
 

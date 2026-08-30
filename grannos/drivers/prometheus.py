@@ -488,7 +488,7 @@ job name; instance/job already group the record).
                 continue
             try:
                 series_counts[instance] = int(float(s["value"][1]))
-            except TypeError, ValueError, KeyError, IndexError:
+            except (TypeError, ValueError, KeyError, IndexError):
                 continue
 
         return metric_counts, series_counts
@@ -604,7 +604,7 @@ def _series_to_result(series: list[dict[str, Any]], ranged: bool) -> ReadResult:
 def _parse_value(value: str) -> Any:
     try:
         parsed = float(value)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return value
     if math.isnan(parsed) or math.isinf(parsed):
         return SpecialFloat(text=value)
@@ -640,7 +640,7 @@ def _format_health(value: str) -> str:
 def _format_scrape_age(value: str) -> str:
     try:
         scraped_at = datetime.fromisoformat(value)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return value
     if scraped_at.tzinfo is None:
         scraped_at = scraped_at.replace(tzinfo=UTC)
@@ -657,7 +657,7 @@ def _format_scrape_age(value: str) -> str:
 def _format_duration_ms(value: Any) -> str:
     try:
         return f"{round(float(value) * 1000)}ms"
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return str(value)
 
 

@@ -11,7 +11,7 @@ import pytest
 from grannos.dispatcher import Dispatcher
 from grannos.drivers.base import DriverSettings
 from grannos.log import LOG_CAP, truncate
-from grannos.server import Server, _redact
+from grannos.server import Server, _human_size, _redact
 
 
 class TestTruncate:
@@ -31,6 +31,17 @@ class TestTruncate:
         assert result == "x" * LOG_CAP + "…"
 
 
+class TestHumanSize:
+    def test_renders_whole_mebibytes(self) -> None:
+        assert _human_size(16 * 1024 * 1024) == "16 MiB"
+
+    def test_falls_back_to_kibibytes(self) -> None:
+        assert _human_size(64 * 1024) == "64 KiB"
+
+    def test_falls_back_to_bytes_when_not_a_whole_unit(self) -> None:
+        assert _human_size(1500) == "1500 bytes"
+
+
 class TestRedact:
     def test_redacts_password(self) -> None:
         assert _redact({"password": "secret"}) == {"password": "***"}
@@ -47,7 +58,9 @@ class TestRedact:
         assert _redact({}) == {}
 
 
-async def _run_server_streaming(tmp_path: pathlib.Path, *lines: str) -> io.BytesIO:
+async def _run_server_streaming(
+    tmp_path: pathlib.Path, *lines: str, max_request_bytes: int = 1024 * 1024
+) -> io.BytesIO:
     """Like _run_server, but feeds stdin from a thread so a line may exceed the pipe buffer."""
     r, w = os.pipe()
     stdin_r = os.fdopen(r, "rb", buffering=0)
@@ -60,7 +73,11 @@ async def _run_server_streaming(tmp_path: pathlib.Path, *lines: str) -> io.Bytes
 
     out = io.BytesIO()
     srv = Server(
-        stdin=stdin_r, stdout=out, cache_dir=tmp_path, driver_settings=DriverSettings()
+        stdin=stdin_r,
+        stdout=out,
+        cache_dir=tmp_path,
+        driver_settings=DriverSettings(),
+        max_request_bytes=max_request_bytes,
     )
     await asyncio.gather(asyncio.to_thread(_feed), srv.run())
     return out
@@ -126,18 +143,43 @@ class TestRunLoop:
     async def test_oversized_request_is_rejected_without_killing_the_loop(
         self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with patch("grannos.server.MAX_LINE_BYTES", 256):
-            with caplog.at_level(logging.WARNING, logger="grannos.server"):
-                out = await _run_server_streaming(
-                    tmp_path,
-                    _req(id=1, method="capabilities", params={"pad": "x" * 1024}),
-                    _req(id=2, method="capabilities", params={}),
-                )
+        with caplog.at_level(logging.WARNING, logger="grannos.server"):
+            out = await _run_server_streaming(
+                tmp_path,
+                _req(id=1, method="execute", params={"query": "x" * 4096}),
+                _req(id=2, method="capabilities", params={}),
+                max_request_bytes=256,
+            )
         messages = [json.loads(line) for line in out.getvalue().splitlines()]
-        assert messages[0]["id"] is None
-        assert messages[0]["error"] is not None
-        assert messages[-1]["id"] == 2
+        assert len(messages) == 2, "the discarded tail must not produce a second error"
+        assert messages[0]["id"] == 1
+        assert "too large" in messages[0]["error"]
+        assert messages[1]["id"] == 2
+        assert messages[1]["error"] is None
         assert any("oversized" in r.message.lower() for r in caplog.records)
+
+    async def test_oversized_request_reports_no_id_when_id_is_not_the_first_key(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        out = await _run_server_streaming(
+            tmp_path,
+            json.dumps({"method": "execute", "params": {"query": "x" * 4096}, "id": 1})
+            + "\n",
+            max_request_bytes=256,
+        )
+        msg = json.loads(out.getvalue())
+        assert msg["id"] is None
+        assert "too large" in msg["error"]
+
+    async def test_oversized_request_id_is_not_taken_from_the_query_text(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        out = await _run_server_streaming(
+            tmp_path,
+            _req(method="execute", params={"query": '{"id": 7,' + "x" * 4096}),
+            max_request_bytes=256,
+        )
+        assert json.loads(out.getvalue())["id"] is None
 
 
 class TestServerLogging:

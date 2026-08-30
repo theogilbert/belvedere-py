@@ -24,7 +24,7 @@ pip install "grannos-py[mssql]"
 The server is started by the Neovim plugin automatically. To run it manually:
 
 ```bash
-grannos [--log] [-v] [--max-concurrency N]
+grannos [--log] [-v] [--max-concurrency N] [--max-request-bytes N]
 ```
 
 | Flag | Default | Description |
@@ -32,6 +32,7 @@ grannos [--log] [-v] [--max-concurrency N]
 | `--log` | off | Log all requests and responses to `~/.local/state/grannos/server.log` |
 | `-v` | off | Log at DEBUG level (requires `--log`). Adds one line per query any driver sends to the database — the statements you run *and* the catalog queries the tree, describe and find views generate. Bind values are logged for the driver's own catalog queries (schema and object names), never for your statements. |
 | `--max-concurrency N` | 5 | Max concurrent requests per connection |
+| `--max-request-bytes N` | 16777216 (16 MiB) | Largest single request accepted. A longer one — a very long query, say — is answered with an error instead of being buffered. |
 
 ## Supported drivers
 

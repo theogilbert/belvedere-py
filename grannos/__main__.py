@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from grannos.drivers.base import DriverSettings
 
 from . import log
-from .server import Server
+from .server import DEFAULT_MAX_REQUEST_BYTES, Server
 
 logger = logging.getLogger()
 
@@ -31,6 +31,7 @@ def main() -> None:
     server = Server(
         cache_dir=cache_dir,
         max_concurrency=args.max_concurrency,
+        max_request_bytes=args.max_request_bytes,
         driver_settings=args.driver_settings,
     )
 
@@ -68,6 +69,7 @@ def _enable_faulthandler() -> None:
 @dataclass
 class CliArgs:
     max_concurrency: int
+    max_request_bytes: int
     log: bool
     verbose: bool
     driver_settings: DriverSettings
@@ -81,6 +83,16 @@ def parse_cli_args() -> CliArgs:
         type=int,
         default=5,
         help="Define the max number of requests that can be executed at the same time per connection.",
+    )
+
+    parser.add_argument(
+        "--max-request-bytes",
+        type=int,
+        default=DEFAULT_MAX_REQUEST_BYTES,
+        help=(
+            "Largest single request accepted, in bytes. A longer request is answered "
+            "with an error instead of being buffered."
+        ),
     )
 
     logs_grp = parser.add_argument_group(
@@ -125,6 +137,7 @@ def parse_cli_args() -> CliArgs:
 
     return CliArgs(
         max_concurrency=args.max_concurrency,
+        max_request_bytes=args.max_request_bytes,
         log=args.log,
         verbose=args.verbose,
         driver_settings=DriverSettings(

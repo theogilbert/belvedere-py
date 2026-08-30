@@ -25,6 +25,11 @@ from .protocol import (
 
 logger = logging.getLogger(__name__)
 
+MAX_LINE_BYTES = 16 * 1024 * 1024
+"""Largest request line stdin will buffer. Well above asyncio's 64 KiB default,
+which a single long SQL statement can exceed; a line past this is dropped rather
+than buffered without bound."""
+
 
 class Server:
     """Stdio JSON server — reads requests from stdin, writes responses to stdout.
@@ -63,7 +68,7 @@ class Server:
         Reads newline-delimited JSON requests from stdin and dispatches each as
         a concurrent task. Returns when stdin is closed.
         """
-        reader = asyncio.StreamReader()
+        reader = asyncio.StreamReader(limit=MAX_LINE_BYTES)
         loop = asyncio.get_event_loop()
         await loop.connect_read_pipe(
             lambda: asyncio.StreamReaderProtocol(reader),
@@ -71,7 +76,22 @@ class Server:
         )
         logger.info("Server ready")
         while True:
-            line = await reader.readline()
+            try:
+                line = await reader.readline()
+            except ValueError as e:
+                # readline() clears the oversized data from the buffer before
+                # raising, so the loop keeps serving instead of dying on it.
+                logger.warning(f"Discarded oversized request: {e}")
+                asyncio.create_task(
+                    self._send(
+                        Result(
+                            id=None,
+                            result=None,
+                            error=f"Request exceeds the {MAX_LINE_BYTES} byte limit",
+                        )
+                    )
+                )
+                continue
             if not line:
                 logger.info("Server exiting")
                 break

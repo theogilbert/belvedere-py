@@ -47,6 +47,25 @@ class TestRedact:
         assert _redact({}) == {}
 
 
+async def _run_server_streaming(tmp_path: pathlib.Path, *lines: str) -> io.BytesIO:
+    """Like _run_server, but feeds stdin from a thread so a line may exceed the pipe buffer."""
+    r, w = os.pipe()
+    stdin_r = os.fdopen(r, "rb", buffering=0)
+    stdin_w = os.fdopen(w, "wb", buffering=0)
+
+    def _feed() -> None:
+        for line in lines:
+            stdin_w.write(line.encode())
+        stdin_w.close()
+
+    out = io.BytesIO()
+    srv = Server(
+        stdin=stdin_r, stdout=out, cache_dir=tmp_path, driver_settings=DriverSettings()
+    )
+    await asyncio.gather(asyncio.to_thread(_feed), srv.run())
+    return out
+
+
 async def _run_server(tmp_path: pathlib.Path, *lines: str) -> io.BytesIO:
     """Write lines to a pipe, run the server to EOF, return the output buffer."""
     r, w = os.pipe()
@@ -92,6 +111,33 @@ class TestRunLoop:
         )
         ids = [json.loads(line)["id"] for line in out.getvalue().splitlines()]
         assert ids == [1, 2]
+
+    async def test_accepts_request_longer_than_asyncio_default_limit(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        query = "-- " + "x" * (128 * 1024)
+        out = await _run_server_streaming(
+            tmp_path,
+            _req(id=1, method="cancel", params={"request_id": 99, "pad": query}),
+        )
+        msg = json.loads(out.getvalue())
+        assert msg == {"id": 1, "result": {"ok": True}, "error": None}
+
+    async def test_oversized_request_is_rejected_without_killing_the_loop(
+        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with patch("grannos.server.MAX_LINE_BYTES", 256):
+            with caplog.at_level(logging.WARNING, logger="grannos.server"):
+                out = await _run_server_streaming(
+                    tmp_path,
+                    _req(id=1, method="capabilities", params={"pad": "x" * 1024}),
+                    _req(id=2, method="capabilities", params={}),
+                )
+        messages = [json.loads(line) for line in out.getvalue().splitlines()]
+        assert messages[0]["id"] is None
+        assert messages[0]["error"] is not None
+        assert messages[-1]["id"] == 2
+        assert any("oversized" in r.message.lower() for r in caplog.records)
 
 
 class TestServerLogging:

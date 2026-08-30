@@ -1,14 +1,17 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "grannos-py"
 version = "0.1.0"
 description = "Database backend for grannos.nvim"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+authors = [
+  { name = "Theo Gilbert" }
+]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+
+[project.urls]
+Homepage = "https://github.com/theogilbert/grannos-py"
 
 [project.optional-dependencies]
 duckdb = ["duckdb>=1.0"]
@@ -26,6 +29,10 @@ all = [
 
 [project.scripts]
 grannos = "grannos.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["grannos"]

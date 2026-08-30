@@ -1,5 +1,8 @@
 # grannos-py
 
+[![PyPI](https://img.shields.io/pypi/v/grannos-py.svg)](https://pypi.org/project/grannos-py/)
+[![Python versions](https://img.shields.io/pypi/pyversions/grannos-py.svg)](https://pypi.org/project/grannos-py/)
+
 JSON-over-stdio server backend to query databases.
 
 This server can be used by compatible clients (e.g. [grannos.nvim](https://github.com/theogilbert/grannos.nvim)) to explore and query databases in an IDE.
@@ -10,13 +13,26 @@ This server can be used by compatible clients (e.g. [grannos.nvim](https://githu
 
 ## Installation
 
+`grannos` is a command-line server that the editor client spawns, so install it as a
+tool — that puts the `grannos` executable on your `PATH` in its own isolated environment:
+
 ```bash
-pip install grannos-py
-# with all driver dependencies:
-pip install "grannos-py[all]"
-# or with a specific driver only, e.g. SQL Server:
-pip install "grannos-py[mssql]"
+uv tool install grannos-py[all]
 ```
+
+Database drivers are opt-in [extras](#supported-drivers) — install the ones you need:
+
+```bash
+uv tool install "grannos-py[postgres]"          # a single driver
+uv tool install "grannos-py[postgres,oracle]"   # several
+uv tool install "grannos-py[all]"               # every driver
+```
+
+To add a driver to an existing install, re-run the command with the extra included.
+
+Plain `pip install grannos-py` works too if you would rather manage the environment
+yourself — just make sure the resulting `grannos` executable is on the `PATH` your
+editor sees.
 
 ## Usage
 
@@ -35,18 +51,18 @@ grannos [--log] [-v] [--max-concurrency N] [--max-request-bytes N]
 
 ## Supported drivers
 
-| Driver | Dependency | Install |
-|--------|------------|---------|
-| `sqlite` | stdlib | — |
-| `duckdb` | `duckdb` | `pip install "grannos-py[duckdb]"` |
-| `postgres` | `psycopg[binary]` | `pip install "grannos-py[postgres]"` |
-| `sqlserver` | `mssql-python` | `pip install "grannos-py[mssql]"` |
-| `oracle` | `oracledb` | `pip install "grannos-py[oracle]"` |
-| `neo4j` | `neo4j` | `pip install "grannos-py[neo4j]"` |
-| `mongodb` | `pymongo` | `pip install "grannos-py[mongodb]"` |
-| `elasticsearch` | `elasticsearch`, `aiohttp` | `pip install "grannos-py[elasticsearch]"` |
-| `prometheus` | `aiohttp` | `pip install "grannos-py[prometheus]"` |
-| `s3` | `boto3`, `pyyaml` | `pip install "grannos-py[s3]"` |
+| Driver | Extra | Python package |
+|--------|-------|----------------|
+| `sqlite` | — (always available) | stdlib |
+| `duckdb` | `duckdb` | `duckdb` |
+| `postgres` | `postgres` | `psycopg[binary]` |
+| `sqlserver` | `mssql` | `mssql-python` |
+| `oracle` | `oracle` | `oracledb` |
+| `neo4j` | `neo4j` | `neo4j` |
+| `mongodb` | `mongodb` | `pymongo` |
+| `elasticsearch` | `elasticsearch` | `elasticsearch`, `aiohttp` |
+| `prometheus` | `prometheus` | `aiohttp` |
+| `s3` | `s3` | `boto3`, `pyyaml` |
 
 Only drivers whose package is installed are advertised via `capabilities`. See [docs/drivers.md](https://github.com/theogilbert/grannos-py/blob/main/docs/drivers.md) for connection parameters, query syntax, and explore tree structure for each driver.
 

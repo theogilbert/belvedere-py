@@ -9,13 +9,24 @@ authors = [
 ]
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
+keywords = ["database", "sql", "neovim", "ide", "stdio", "json"]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 [project.urls]
 Homepage = "https://github.com/theogilbert/grannos-py"
+Repository = "https://github.com/theogilbert/grannos-py"
+Issues = "https://github.com/theogilbert/grannos-py/issues"
 
 [project.optional-dependencies]
 duckdb = ["duckdb>=1.0"]
@@ -40,6 +51,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["grannos"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/grannos",
+    "/docs",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

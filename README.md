@@ -6,7 +6,6 @@ This server can be used by compatible clients (e.g. [grannos.nvim](https://githu
 
 ## Requirements
 
-- [uv](https://github.com/astral-sh/uv) (recommended)
 - Python 3.12+
 
 ## Installation
@@ -40,14 +39,16 @@ grannos [--log] [-v] [--max-concurrency N] [--max-request-bytes N]
 |--------|------------|---------|
 | `sqlite` | stdlib | — |
 | `duckdb` | `duckdb` | `pip install "grannos-py[duckdb]"` |
+| `postgres` | `psycopg[binary]` | `pip install "grannos-py[postgres]"` |
 | `sqlserver` | `mssql-python` | `pip install "grannos-py[mssql]"` |
-| `neo4j` | `neo4j` | `pip install neo4j` |
-| `oracle` | `oracledb` | `pip install oracledb` |
-| `mongodb` | `pymongo` | `pip install pymongo` |
-| `elasticsearch` | `elasticsearch` | `pip install elasticsearch` |
+| `oracle` | `oracledb` | `pip install "grannos-py[oracle]"` |
+| `neo4j` | `neo4j` | `pip install "grannos-py[neo4j]"` |
+| `mongodb` | `pymongo` | `pip install "grannos-py[mongodb]"` |
+| `elasticsearch` | `elasticsearch`, `aiohttp` | `pip install "grannos-py[elasticsearch]"` |
 | `prometheus` | `aiohttp` | `pip install "grannos-py[prometheus]"` |
+| `s3` | `boto3`, `pyyaml` | `pip install "grannos-py[s3]"` |
 
-Only drivers whose package is installed are advertised via `capabilities`. See [docs/drivers.md](docs/drivers.md) for connection parameters, query syntax, and explore tree structure for each driver.
+Only drivers whose package is installed are advertised via `capabilities`. See [docs/drivers.md](https://github.com/theogilbert/grannos-py/blob/main/docs/drivers.md) for connection parameters, query syntax, and explore tree structure for each driver.
 
 ## Protocol
 
@@ -90,8 +91,14 @@ Communication uses newline-delimited JSON (one message per line). See [docs/prot
   rate(http_requests_total[5m])
   ```
 
+- **`cancel`** — cancel an in-flight request by its id
 - **`explore.list`** — list child nodes in the database object tree (schemas, tables, columns, …)
-- **`explore.describe`** — return column metadata for a table
+- **`explore.describe`** — describe a node: column metadata for a table, index details, and so on
+- **`explore.find`** — resolve a symbol name and node type to `explore.describe` paths, without the client searching its own cache
+- **`explore.preview`** — return a small sample of rows for a node in the tree
+- **`explore.diagram`** — render a table and everything reachable from it by foreign key as an ASCII diagram, with regions mapping cursor positions back to `explore.describe` paths
+- **`explore.download`** — download the object at a path (or at an opaque `ref`) to a local file
+- **`session.set`** / **`session.get`** — set and read driver-specific session values
 
 Long-running operations emit progress notifications before the final response.
 
@@ -103,7 +110,9 @@ Long-running operations emit progress notifications before the final response.
 
 ## Development
 
+Requires [uv](https://github.com/astral-sh/uv).
+
 ```bash
-uv sync --group dev
+uv sync --group dev --all-extras
 uv run pytest
 ```

@@ -487,6 +487,29 @@ class TestBuildDiagramRegions:
         line = result.diagram.splitlines()[region.row]
         span = line.encode()[region.col_start : region.col_end].decode()
         assert span == "..."
+        # kind, not path shape, is what tells the ellipsis apart from a leaf
+        # column -- a table may itself have a column named "columns".
+        assert region.kind == "columns"
+
+    async def test_a_column_named_columns_is_still_a_leaf_column_region(self) -> None:
+        # A key column literally named "columns" is drawn, and a non-key one is
+        # hidden behind the "..." row, so both regions coexist on paths that
+        # differ only in length: ["users", "columns"] for the ellipsis and
+        # ["users", "columns", "columns"] for the real column.
+        desc = _entity(
+            "users",
+            fields=[
+                _field("id", pk=True),
+                _field("columns", "TEXT", pk=True),
+                _field("name", "TEXT"),
+            ],
+        )
+        describe = _describe_from({("users",): desc})
+        result = await build_diagram(["users"], describe)
+
+        kinds = {tuple(r.path): r.kind for r in result.regions}
+        assert kinds[("users", "columns")] == "columns"
+        assert kinds[("users", "columns", "columns")] == "column"
 
     async def test_unresolved_reference_still_gets_a_region(self) -> None:
         desc = _entity(

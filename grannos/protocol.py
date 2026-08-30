@@ -484,6 +484,9 @@ class DiagramRegion:
     just the left and right border characters (never the whole row, so these
     never overlap that row's ``kind="column"`` region). All share the table's
     ``path``.
+
+    A box whose columns don't all fit ends its body with a ``...`` row, emitted
+    as a single ``kind="columns"`` region pointing at the columns group path.
     """
 
     row: int
@@ -493,10 +496,14 @@ class DiagramRegion:
     col_end: int
     """0-indexed byte offset where the span ends (exclusive)."""
     kind: str
-    """``"table"``, ``"column"``, or ``"edge"`` — discriminates what ``path`` names."""
+    """``"table"``, ``"column"``, ``"columns"``, or ``"edge"`` — discriminates what
+    ``path`` names. ``"columns"`` marks the ``...`` row standing in for the columns
+    a box has no room to list: its ``path`` is the columns *group* path, not a leaf
+    column's. Since a table may itself have a column named ``columns``, the path
+    alone cannot tell the two apart — only this field can."""
     path: list[str]
     """Path to pass as explore.describe's ``path`` param to describe this table,
-    column, or relationship."""
+    column, column list, or relationship."""
 
 
 class MessageLevel(StrEnum):

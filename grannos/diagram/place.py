@@ -195,7 +195,12 @@ def _box_lines(node: GraphNode) -> list[_Line]:
                 [
                     left_border,
                     _Segment(" "),
-                    _Segment(ellipsis, cols_path, kind="column"),
+                    # kind="columns", not "column": this row stands in for the
+                    # whole set of columns the box has no room for, and its path
+                    # is the columns *group* path. A client must not mistake it
+                    # for a leaf column -- which the path alone cannot settle,
+                    # since a table may itself have a column named "columns".
+                    _Segment(ellipsis, cols_path, kind="columns"),
                     _Segment(padded[len(ellipsis) :] + " "),
                     right_border,
                 ]

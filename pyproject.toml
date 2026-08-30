@@ -5,10 +5,14 @@ description = "Database backend for grannos.nvim"
 readme = "README.md"
 requires-python = ">=3.14"
 authors = [
-  { name = "Theo Gilbert" }
+  { name="Theo Gilbert" }
 ]
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
 
 [project.urls]
 Homepage = "https://github.com/theogilbert/grannos-py"

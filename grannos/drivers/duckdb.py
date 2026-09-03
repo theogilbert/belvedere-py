@@ -81,6 +81,18 @@ SELECT * FROM read_csv('/path/to/file.csv', header = true)
 SELECT * FROM 'glob/**/*.parquet'
 ```
 
+**Create a table from a CSV file:**
+
+```sql
+CREATE TABLE users AS SELECT * FROM read_csv('/path/to/users.csv', header = true)
+CREATE TABLE users AS SELECT * FROM '/path/to/users.csv'   -- reader inferred from the extension
+COPY users FROM '/path/to/users.csv' (FORMAT csv, HEADER)  -- into an existing table
+```
+
+Column names and types are auto-detected. Pass
+`columns = {'id': 'INTEGER', 'name': 'VARCHAR'}` to `read_csv` to declare
+them yourself, or `delim`/`quote`/`skip` to override the dialect it sniffs.
+
 **Resources:**
 
 ```

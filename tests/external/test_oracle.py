@@ -103,6 +103,40 @@ async def table(driver: OracleDriver, schema: str) -> AsyncGenerator[str, None]:
 
 
 @pytest.fixture
+async def synonym(driver: OracleDriver, schema: str) -> AsyncGenerator[str, None]:
+    name = "S_" + uuid.uuid4().hex[:12].upper()
+    yield name
+    try:
+        await driver.execute(f"DROP SYNONYM {schema}.{name}", [])
+    except Exception:
+        pass
+
+
+@pytest.fixture
+async def synonyms(
+    driver: OracleDriver, schema: str
+) -> AsyncGenerator[tuple[str, str], None]:
+    first = "S_" + uuid.uuid4().hex[:12].upper()
+    second = "S_" + uuid.uuid4().hex[:12].upper()
+    yield first, second
+    for name in (second, first):
+        try:
+            await driver.execute(f"DROP SYNONYM {schema}.{name}", [])
+        except Exception:
+            pass
+
+
+@pytest.fixture
+async def public_synonym(driver: OracleDriver) -> AsyncGenerator[str, None]:
+    name = "S_" + uuid.uuid4().hex[:12].upper()
+    yield name
+    try:
+        await driver.execute(f"DROP PUBLIC SYNONYM {name}", [])
+    except Exception:
+        pass
+
+
+@pytest.fixture
 async def tables(
     driver: OracleDriver, schema: str
 ) -> AsyncGenerator[tuple[str, str], None]:
@@ -1087,6 +1121,88 @@ class TestExploreFind:
         assert await driver.explore_find(
             NodeType.TABLE, table, [SearchScope(name=schema, type=NodeType.SCHEMA)]
         ) == [[schema, table]]
+
+    async def test_finds_a_table_through_a_synonym(
+        self, driver: OracleDriver, table: str, synonym: str, schema: str
+    ) -> None:
+        """The tree holds no synonyms, so the synonym resolves to the path of
+        the table it points at."""
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE SYNONYM {synonym} FOR {table}", [])
+        assert await driver.explore_find(NodeType.TABLE, synonym, []) == [
+            [schema, table]
+        ]
+
+    async def test_found_synonym_path_is_describable(
+        self, driver: OracleDriver, table: str, synonym: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE SYNONYM {synonym} FOR {table}", [])
+        (path,) = await driver.explore_find(NodeType.TABLE, synonym, [])
+        described = await driver.explore_describe(path)
+        assert isinstance(described, EntityDescription)
+        assert described.name == table
+
+    async def test_every_synonym_of_a_table_resolves_to_the_same_path(
+        self, driver: OracleDriver, table: str, synonyms: tuple[str, str], schema: str
+    ) -> None:
+        """What makes one describe serve them all: the explore cache is keyed
+        by path, so the second name costs no describe."""
+        first, second = synonyms
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE SYNONYM {first} FOR {table}", [])
+        await driver.execute(f"CREATE SYNONYM {second} FOR {table}", [])
+        assert (
+            await driver.explore_find(NodeType.TABLE, first, [])
+            == await driver.explore_find(NodeType.TABLE, second, [])
+            == [[schema, table]]
+        )
+
+    async def test_finds_a_table_through_a_public_synonym(
+        self, driver: OracleDriver, table: str, public_synonym: str, schema: str
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE PUBLIC SYNONYM {public_synonym} FOR {table}", [])
+        assert await driver.explore_find(NodeType.TABLE, public_synonym, []) == [
+            [schema, table]
+        ]
+
+    async def test_public_synonym_is_excluded_by_a_schema_scope(
+        self, driver: OracleDriver, table: str, public_synonym: str, schema: str
+    ) -> None:
+        """A public synonym is owned by PUBLIC, which is no schema in the tree —
+        and a client scoping the search wrote a qualified name, which by
+        definition does not go through one."""
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE PUBLIC SYNONYM {public_synonym} FOR {table}", [])
+        assert (
+            await driver.explore_find(
+                NodeType.TABLE,
+                public_synonym,
+                [SearchScope(name=schema, type=NodeType.SCHEMA)],
+            )
+            == []
+        )
+
+    async def test_dangling_synonym_resolves_to_nothing(
+        self, driver: OracleDriver, synonym: str
+    ) -> None:
+        """Oracle lets a synonym name an object that does not exist; returning
+        it would hand the client a path describe cannot follow."""
+        await driver.execute(f"CREATE SYNONYM {synonym} FOR T_NO_SUCH_TABLE", [])
+        assert await driver.explore_find(NodeType.TABLE, synonym, []) == []
+
+    async def test_chained_synonym_resolves_to_nothing(
+        self, driver: OracleDriver, table: str, synonyms: tuple[str, str], schema: str
+    ) -> None:
+        """Chains are deliberately not followed: the first link resolves, the
+        one pointing at it does not, and neither yields a bad path."""
+        first, second = synonyms
+        await driver.execute(f"CREATE TABLE {table} (id NUMBER)", [])
+        await driver.execute(f"CREATE SYNONYM {first} FOR {table}", [])
+        await driver.execute(f"CREATE SYNONYM {second} FOR {first}", [])
+        assert await driver.explore_find(NodeType.TABLE, first, []) == [[schema, table]]
+        assert await driver.explore_find(NodeType.TABLE, second, []) == []
 
     async def test_does_not_resolve_to_a_system_table(
         self, driver: OracleDriver

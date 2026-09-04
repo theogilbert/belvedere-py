@@ -715,7 +715,7 @@ class TestExploreFind:
             [],
         )
         assert paths == [["HR", "EMPLOYEES"], ["PAYROLL", "EMPLOYEES"]]
-        assert "OWNER =" not in sql
+        assert "OWNER IN (:" not in sql  # no scope, so no bound owner predicate
 
     def test_ambiguous_table_returns_every_candidate(self) -> None:
         """Two schemas holding the same name is a picker, not an error."""
@@ -785,12 +785,12 @@ class TestExploreFind:
 
     def test_union_binds_each_branch_separately(self) -> None:
         """oracledb counts a repeated ``:1`` as a second positional bind, so the
-        two branches cannot share one placeholder list (DPY-4009)."""
+        branches cannot share one placeholder list (DPY-4009)."""
         _, sql, binds = self._find(
             [("HR", "EMPLOYEES")], NodeType.TABLE, "EMPLOYEES", []
         )
-        assert binds == ["EMPLOYEES", "EMPLOYEES"]
-        assert ":1" in sql and ":2" in sql
+        assert binds == ["EMPLOYEES", "EMPLOYEES", "EMPLOYEES"]
+        assert ":1" in sql and ":2" in sql and ":3" in sql
 
     def test_find_excludes_oracle_maintained_schemas(self) -> None:
         """A path the object tree does not contain would 404 on describe."""
@@ -803,6 +803,52 @@ class TestExploreFind:
         sql = driver._conn.cursor().execute.call_args[0][0]  # ty: ignore[unresolved-attribute]
         assert "ORACLE_MAINTAINED" not in sql
         assert "NOT IN" in sql
+
+    def test_synonym_resolves_to_its_base_object(self) -> None:
+        """The tree holds no synonyms, so a find returns the path of what the
+        synonym points at — which is also what makes every synonym of one table
+        share that table's describe, the explore cache being keyed by path."""
+        paths, sql, _ = self._find([("HR", "EMPLOYEES")], NodeType.TABLE, "emp", [])
+        assert paths == [["HR", "EMPLOYEES"]]
+        assert "ALL_SYNONYMS" in sql
+        assert "S.TABLE_OWNER, S.TABLE_NAME" in sql
+
+    def test_synonym_over_a_database_link_is_excluded(self) -> None:
+        """A remote object is in no schema of this tree."""
+        _, sql, _ = self._find([], NodeType.TABLE, "emp", [])
+        assert "DB_LINK IS NULL" in sql
+
+    def test_synonym_resolves_only_to_a_listed_table_or_view(self) -> None:
+        """Repeats what fetch_tables_and_views lists, so a dangling synonym —
+        or a chained one, whose base is another synonym — resolves to nothing
+        rather than to a path describe would 404 on."""
+        _, sql, _ = self._find([], NodeType.TABLE, "emp", [])
+        assert "EXISTS (SELECT 1 FROM ALL_TABLES T" in sql
+        assert "EXISTS (SELECT 1 FROM ALL_VIEWS V" in sql
+
+    def test_synonym_base_owner_is_filtered_like_every_other_path(self) -> None:
+        """A synonym onto a system schema would leave the tree."""
+        _, sql, _ = self._find([], NodeType.TABLE, "emp", [])
+        assert "S.TABLE_OWNER IN" in sql
+
+    def test_schema_scope_narrows_the_synonym_not_its_base(self) -> None:
+        """A client scoping ``SALES.EMP`` is naming where the synonym lives;
+        the path it resolves to is the base object's own owner."""
+        paths, sql, binds = self._find(
+            [("HR", "EMPLOYEES")],
+            NodeType.TABLE,
+            "emp",
+            [SearchScope(name="sales", type=NodeType.SCHEMA)],
+        )
+        assert paths == [["HR", "EMPLOYEES"]]
+        assert "S.OWNER IN (:" in sql
+        assert "SALES" in binds
+
+    def test_public_synonyms_answer_only_an_unqualified_name(self) -> None:
+        """PUBLIC is no schema in the tree, so it survives only while the
+        branch leaves the synonym's owner unconstrained."""
+        _, sql, _ = self._find([], NodeType.TABLE, "emp", [])
+        assert "S.OWNER IN (:" not in sql
 
     def test_schema_search_is_handed_to_the_walker(self) -> None:
         """The root listing is one cheap call the explore cache already serves."""

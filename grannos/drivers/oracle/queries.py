@@ -452,6 +452,51 @@ def _find_object_branch(
     )
 
 
+def _find_synonym_branch(
+    names: tuple[str, ...],
+    schemas: tuple[str, ...],
+    has_oracle_maintained: bool,
+    binds: list[str],
+) -> str:
+    """Render the synonym branch of the table/view union, appending its bind
+    values to *binds*.
+
+    Projects the synonym's *base* object rather than the synonym itself. The
+    object tree holds no synonyms, so resolving ``EMP`` to ``HR.EMPLOYEES``
+    both keeps the find inside the tree and lets every synonym of one table
+    share that table's describe, which the explore cache keys by path.
+
+    Three things the branch deliberately does not resolve to, since each would
+    hand back a path the tree cannot describe: a synonym over a database link,
+    a dangling one, and a chained one (whose base is itself a synonym). The
+    last two are dropped by the EXISTS pair, which repeats what
+    :func:`fetch_tables_and_views` lists.
+
+    Args:
+        names: Stored forms of the symbol, from :func:`_name_forms`.
+        schemas: Owner names to restrict to; empty searches every schema.
+        has_oracle_maintained: True on Oracle 12c+.
+        binds: Bind list to append to, shared across the union's branches.
+    """
+    start = len(binds) + 1
+    binds.extend(names)
+    branch = (
+        "SELECT S.TABLE_OWNER, S.TABLE_NAME FROM ALL_SYNONYMS S"
+        f" WHERE S.SYNONYM_NAME IN ({_in_binds(names, start)})"
+        " AND S.DB_LINK IS NULL"
+        f"{_owner_filter('S.TABLE_OWNER', has_oracle_maintained)}"
+        " AND (EXISTS (SELECT 1 FROM ALL_TABLES T"
+        " WHERE T.OWNER = S.TABLE_OWNER AND T.TABLE_NAME = S.TABLE_NAME)"
+        " OR EXISTS (SELECT 1 FROM ALL_VIEWS V"
+        " WHERE V.OWNER = S.TABLE_OWNER AND V.VIEW_NAME = S.TABLE_NAME))"
+    )
+    # A schema scope constrains where the synonym lives, not where its base
+    # does: the client scoping SALES.EMP is naming the synonym. Public synonyms
+    # (OWNER = 'PUBLIC') fall out of a scoped search for the same reason — the
+    # tree holds no PUBLIC schema, and a qualified name is not a public synonym.
+    return branch + _scope_filter("S.OWNER", schemas, binds)
+
+
 @_conn_cache
 async def fetch_find_tables_and_views(
     conn: AsyncConnection,
@@ -459,10 +504,13 @@ async def fetch_find_tables_and_views(
     schemas: tuple[str, ...],
     has_oracle_maintained: bool,
 ) -> list[tuple[str, str]]:
-    """Return (owner, name) pairs for every table or view called *name*.
+    """Return (owner, name) pairs for every table or view *name* resolves to.
 
     Unions the same two dictionary views :func:`fetch_tables_and_views` lists
-    from, so a find and the tree agree on what exists.
+    from, so a find and the tree agree on what exists, plus the synonyms that
+    resolve to one of them (see :func:`_find_synonym_branch`) — a synonym
+    yields the path of its base object, so ``UNION`` collapses it into the
+    direct match when the query named the table both ways.
 
     Args:
         conn: Open connection.
@@ -478,8 +526,9 @@ async def fetch_find_tables_and_views(
     views = _find_object_branch(
         "ALL_VIEWS", "VIEW_NAME", names, schemas, has_oracle_maintained, binds
     )
+    synonyms = _find_synonym_branch(names, schemas, has_oracle_maintained, binds)
     cur = conn.cursor()
-    await _exec(cur, f"{tables} UNION {views} ORDER BY 1, 2", binds)
+    await _exec(cur, f"{tables} UNION {views} UNION {synonyms} ORDER BY 1, 2", binds)
     return [(r[0], r[1]) for r in await cur.fetchall()]
 
 

@@ -24,6 +24,13 @@ from grannos.drivers.oracle.driver import (
     _replace_undecodable_text,
     _statement_start_line,
 )
+from grannos.drivers.oracle.load import (
+    LoadCommand,
+    LoadOptions,
+    build_insert_statement,
+    parse_load,
+    read_rows,
+)
 from grannos.drivers.oracle.queries import (
     _PRE12_SYSTEM_SCHEMAS_SQL,
     ColumnDetail,
@@ -36,6 +43,7 @@ from grannos.protocol import (
     NodeType,
     ReadResult,
     SearchScope,
+    WriteResult,
 )
 
 
@@ -806,3 +814,468 @@ class TestExploreFind:
         driver = _make_driver([], has_oracle_maintained=True)
         with pytest.raises(FindNotSupported):
             asyncio.run(driver.explore_find("relationship_type", "ACTED_IN", []))
+
+
+def _make_load_driver(
+    error: Exception | None = None, rowcount: int = 0
+) -> tuple[OracleDriver, MagicMock]:
+    cur = MagicMock()
+    cur.execute = AsyncMock()
+    cur.executemany = AsyncMock(side_effect=error)
+    cur.fetchall = AsyncMock(
+        return_value=[
+            ("NLS_DATE_FORMAT", "DD-MON-RR"),
+            ("NLS_TIMESTAMP_FORMAT", "DD-MON-RR HH.MI.SSXFF AM"),
+            ("NLS_TIMESTAMP_TZ_FORMAT", "DD-MON-RR HH.MI.SSXFF AM TZR"),
+        ]
+    )
+    cur.rowcount = rowcount
+    cur.warning = None
+    conn = MagicMock(spec=oracledb.AsyncConnection)
+    conn.cursor.return_value = cur
+    return OracleDriver({}, conn, True, DriverSettings()), cur
+
+
+def _alter_session_calls(cur: MagicMock) -> list[str]:
+    return [
+        call[0][0]
+        for call in cur.execute.call_args_list
+        if str(call[0][0]).startswith("ALTER SESSION")
+    ]
+
+
+class TestParseLoad:
+    def test_returns_none_for_non_load_query(self) -> None:
+        assert parse_load("SELECT 1 FROM dual") is None
+
+    def test_parses_table_and_path(self) -> None:
+        cmd = parse_load("LOAD employees FROM '/tmp/e.csv'")
+        assert cmd == LoadCommand(
+            table="employees", columns=None, path="/tmp/e.csv", options=LoadOptions()
+        )
+
+    def test_from_is_optional(self) -> None:
+        """SQLcl writes the path positionally, with no FROM."""
+        cmd = parse_load("LOAD employees '/tmp/e.csv'")
+        assert cmd is not None
+        assert cmd.path == "/tmp/e.csv"
+
+    def test_accepts_table_keyword(self) -> None:
+        cmd = parse_load("LOAD TABLE employees FROM '/tmp/e.csv'")
+        assert cmd is not None
+        assert cmd.table == "employees"
+
+    def test_parses_schema_qualified_table(self) -> None:
+        cmd = parse_load("LOAD hr.employees FROM '/tmp/e.csv'")
+        assert cmd is not None
+        assert cmd.table == "hr.employees"
+
+    def test_parses_column_list(self) -> None:
+        cmd = parse_load("LOAD employees (id, name) FROM '/tmp/e.csv'")
+        assert cmd is not None
+        assert cmd.columns == ["id", "name"]
+
+    def test_case_insensitive(self) -> None:
+        assert parse_load("load employees from '/tmp/e.csv'") is not None
+
+    def test_unescapes_doubled_quotes_in_path(self) -> None:
+        cmd = parse_load("LOAD employees FROM '/tmp/o''brien.csv'")
+        assert cmd is not None
+        assert cmd.path == "/tmp/o'brien.csv"
+
+    def test_unquoted_path_names_the_missing_quotes(self) -> None:
+        with pytest.raises(
+            DriverError, match="must be in single quotes: FROM '/tmp/e.csv'"
+        ):
+            parse_load("LOAD employees FROM /tmp/e.csv")
+
+    def test_unquoted_path_is_caught_without_the_from_keyword(self) -> None:
+        with pytest.raises(DriverError, match="must be in single quotes"):
+            parse_load("LOAD employees /tmp/e.csv (HEADER)")
+
+    def test_unterminated_quote_is_named_as_such(self) -> None:
+        with pytest.raises(DriverError, match="unterminated quote"):
+            parse_load("LOAD employees FROM '/tmp/e.csv")
+
+    def test_load_without_a_path_reports_the_syntax(self) -> None:
+        with pytest.raises(DriverError, match="malformed LOAD — syntax is"):
+            parse_load("LOAD employees")
+
+    def test_rejects_non_identifier_table(self) -> None:
+        with pytest.raises(DriverError, match="not a valid Oracle identifier"):
+            parse_load("LOAD emp;DROP FROM '/tmp/e.csv'")
+
+    def test_rejects_non_identifier_column(self) -> None:
+        with pytest.raises(DriverError, match="not a valid Oracle identifier"):
+            parse_load("LOAD employees (id, 1 + 1) FROM '/tmp/e.csv'")
+
+
+class TestParseLoadOptions:
+    def test_defaults(self) -> None:
+        cmd = parse_load("LOAD employees FROM '/tmp/e.csv'")
+        assert cmd is not None
+        assert cmd.options == LoadOptions()
+
+    def test_header_and_format(self) -> None:
+        cmd = parse_load("LOAD employees FROM '/tmp/e.csv' (FORMAT csv, HEADER)")
+        assert cmd is not None
+        assert cmd.options.header is True
+
+    def test_quoted_values(self) -> None:
+        cmd = parse_load(
+            "LOAD employees FROM '/tmp/e.csv' "
+            "(DELIMITER '|', QUOTE '#', NULL 'NA', ENCODING 'latin-1')"
+        )
+        assert cmd is not None
+        assert cmd.options.delimiter == "|"
+        assert cmd.options.quote == "#"
+        assert cmd.options.null == "NA"
+        assert cmd.options.encoding == "latin-1"
+
+    def test_tab_escape(self) -> None:
+        cmd = parse_load("LOAD employees FROM '/tmp/e.tsv' (DELIMITER '\\t')")
+        assert cmd is not None
+        assert cmd.options.delimiter == "\t"
+
+    def test_numeric_values(self) -> None:
+        cmd = parse_load("LOAD employees FROM '/tmp/e.csv' (SKIP 2, BATCH 50)")
+        assert cmd is not None
+        assert cmd.options.skip == 2
+        assert cmd.options.batch == 50
+
+    def test_comma_inside_quoted_value(self) -> None:
+        cmd = parse_load("LOAD employees FROM '/tmp/e.csv' (NULL 'a,b', HEADER)")
+        assert cmd is not None
+        assert cmd.options.null == "a,b"
+        assert cmd.options.header is True
+
+    def test_date_and_timestamp_formats(self) -> None:
+        cmd = parse_load(
+            "LOAD employees FROM '/tmp/e.csv' "
+            "(DATEFORMAT 'YYYY-MM-DD', TIMESTAMPFORMAT 'YYYY-MM-DD HH24:MI:SS')"
+        )
+        assert cmd is not None
+        assert cmd.options.date_format == "YYYY-MM-DD"
+        assert cmd.options.timestamp_format == "YYYY-MM-DD HH24:MI:SS"
+
+    def test_date_format_needs_a_value(self) -> None:
+        with pytest.raises(DriverError, match="DATEFORMAT needs a value"):
+            parse_load("LOAD employees FROM '/tmp/e.csv' (DATEFORMAT)")
+
+    def test_rejects_unknown_option(self) -> None:
+        with pytest.raises(DriverError, match="unknown LOAD option"):
+            parse_load("LOAD employees FROM '/tmp/e.csv' (TRUNCATE)")
+
+    def test_rejects_non_csv_format(self) -> None:
+        with pytest.raises(DriverError, match="only FORMAT csv"):
+            parse_load("LOAD employees FROM '/tmp/e.csv' (FORMAT binary)")
+
+    def test_rejects_multi_character_delimiter(self) -> None:
+        with pytest.raises(DriverError, match="single character"):
+            parse_load("LOAD employees FROM '/tmp/e.csv' (DELIMITER '::')")
+
+    def test_rejects_zero_batch(self) -> None:
+        with pytest.raises(DriverError, match="positive whole number"):
+            parse_load("LOAD employees FROM '/tmp/e.csv' (BATCH 0)")
+
+    def test_rejects_unparenthesised_options(self) -> None:
+        with pytest.raises(DriverError, match="parenthesised"):
+            parse_load("LOAD employees FROM '/tmp/e.csv' HEADER")
+
+
+class TestBuildInsertStatement:
+    def test_without_columns_uses_table_order(self) -> None:
+        assert (
+            build_insert_statement("employees", None, 2)
+            == "INSERT INTO employees VALUES (:1, :2)"
+        )
+
+    def test_with_columns(self) -> None:
+        assert (
+            build_insert_statement("hr.employees", ["id", "name"], 2)
+            == "INSERT INTO hr.employees (id, name) VALUES (:1, :2)"
+        )
+
+
+class TestReadRows:
+    def test_reads_plain_rows(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1,alice\n2,bob\n")
+        with open(path, newline="") as f:
+            header, rows = read_rows(f, LoadOptions())
+            assert header is None
+            assert list(rows) == [(1, ["1", "alice"]), (2, ["2", "bob"])]
+
+    def test_reads_header_and_skips_lines(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("# dump\nid,name\n1,alice\n")
+        with open(path, newline="") as f:
+            header, rows = read_rows(f, LoadOptions(header=True, skip=1))
+            assert header == ["id", "name"]
+            # line 1 was skipped and line 2 was the header, so the data starts at 3
+            assert list(rows) == [(3, ["1", "alice"])]
+
+    def test_unquoted_empty_field_is_null_quoted_is_not(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text('1,,""\n')
+        with open(path, newline="") as f:
+            _, rows = read_rows(f, LoadOptions())
+            assert list(rows) == [(1, ["1", None, ""])]
+
+    def test_null_option_maps_sentinel(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1,NA\n")
+        with open(path, newline="") as f:
+            _, rows = read_rows(f, LoadOptions(null="NA"))
+            assert list(rows) == [(1, ["1", None])]
+
+    def test_blank_lines_are_skipped(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1,alice\n\n2,bob\n")
+        with open(path, newline="") as f:
+            _, rows = read_rows(f, LoadOptions())
+            assert list(rows) == [(1, ["1", "alice"]), (3, ["2", "bob"])]
+
+
+class TestExecuteLoad:
+    def test_loads_file_in_table_column_order(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1,alice\n2,bob\n")
+        driver, cur = _make_load_driver()
+        result = asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 2
+        statement, rows = cur.executemany.call_args[0]
+        assert statement == "INSERT INTO employees VALUES (:1, :2)"
+        assert rows == [["1", "alice"], ["2", "bob"]]
+
+    def test_header_supplies_column_names(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("id,name\n1,alice\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(driver.execute(f"LOAD employees FROM '{path}' (HEADER)"))
+        statement, rows = cur.executemany.call_args[0]
+        assert statement == "INSERT INTO employees (id, name) VALUES (:1, :2)"
+        assert rows == [["1", "alice"]]
+
+    def test_explicit_column_list_wins_over_header(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("a,b\n1,alice\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(driver.execute(f"LOAD employees (id, name) FROM '{path}' (HEADER)"))
+        statement, _ = cur.executemany.call_args[0]
+        assert statement == "INSERT INTO employees (id, name) VALUES (:1, :2)"
+
+    def test_sends_one_round_trip_per_batch(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1\n2\n3\n")
+        driver, cur = _make_load_driver()
+        result = asyncio.run(driver.execute(f"LOAD employees FROM '{path}' (BATCH 2)"))
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 3
+        assert [call[0][1] for call in cur.executemany.call_args_list] == [
+            [["1"], ["2"]],
+            [["3"]],
+        ]
+
+    def test_empty_file_loads_nothing(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("")
+        driver, cur = _make_load_driver()
+        result = asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 0
+        cur.executemany.assert_not_called()
+
+    def test_missing_file_raises_driver_error(self, tmp_path) -> None:
+        driver, _ = _make_load_driver()
+        with pytest.raises(DriverError, match="could not read"):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{tmp_path}/nope.csv'"))
+
+    def test_ragged_row_raises_driver_error(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1,alice\n2\n")
+        driver, _ = _make_load_driver()
+        with pytest.raises(DriverError, match="line 2 .* has 1 fields, expected 2"):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+
+    def test_non_identifier_header_raises_driver_error(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("id,unit price\n1,3\n")
+        driver, _ = _make_load_driver()
+        with pytest.raises(DriverError, match="not a valid Oracle identifier"):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}' (HEADER)"))
+
+    def test_undecodable_file_raises_driver_error(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_bytes(b"1,caf\xe9\n")
+        driver, _ = _make_load_driver()
+        with pytest.raises(DriverError, match="not valid utf-8"):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+
+    def test_rejected_row_is_named_by_its_file_line(self, tmp_path) -> None:
+        """The line, not the row ordinal: the header shifts the two apart."""
+        path = tmp_path / "e.csv"
+        path.write_text("ID\n1\n2\nx\n")
+        error = _make_db_error("ORA-01722: invalid number")
+        driver, _ = _make_load_driver(error=error, rowcount=2)
+        with pytest.raises(DriverError, match=r"invalid number \(line 4 of "):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}' (HEADER)"))
+
+    def test_dead_session_raises_connection_lost(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1\n")
+        error = oracledb.OperationalError("connection closed")
+        driver, _ = _make_load_driver(error=error)
+        with pytest.raises(ConnectionLostError):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+
+
+class TestLoadNlsFormats:
+    def test_no_format_option_leaves_the_session_alone(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("1\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+        assert _alter_session_calls(cur) == []
+
+    def test_date_format_is_applied_then_restored(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2024-03-01\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(
+            driver.execute(f"LOAD employees FROM '{path}' (DATEFORMAT 'YYYY-MM-DD')")
+        )
+        applied, restored = _alter_session_calls(cur)[:3], _alter_session_calls(cur)[3:]
+        assert applied == [
+            "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'",
+            "ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD'",
+            "ALTER SESSION SET NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD'",
+        ]
+        assert restored == [
+            "ALTER SESSION SET NLS_DATE_FORMAT = 'DD-MON-RR'",
+            "ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'DD-MON-RR HH.MI.SSXFF AM'",
+            "ALTER SESSION SET NLS_TIMESTAMP_TZ_FORMAT = "
+            "'DD-MON-RR HH.MI.SSXFF AM TZR'",
+        ]
+
+    def test_both_formats_are_applied(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2024-03-01\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(
+            driver.execute(
+                f"LOAD employees FROM '{path}' "
+                "(DATEFORMAT 'YYYY-MM-DD', TIMESTAMPFORMAT 'YYYY-MM-DD HH24:MI:SS')"
+            )
+        )
+        assert _alter_session_calls(cur)[:3] == [
+            "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'",
+            "ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS'",
+            "ALTER SESSION SET NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS'",
+        ]
+
+    def test_format_is_restored_after_a_failed_load(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2024-03-01\n")
+        error = _make_db_error("ORA-01843: not a valid month")
+        driver, cur = _make_load_driver(error=error)
+        with pytest.raises(DriverError):
+            asyncio.run(
+                driver.execute(
+                    f"LOAD employees FROM '{path}' (DATEFORMAT 'DD/MM/YYYY')"
+                )
+            )
+        assert _alter_session_calls(cur)[3] == (
+            "ALTER SESSION SET NLS_DATE_FORMAT = 'DD-MON-RR'"
+        )
+
+    def test_timestamp_format_overrides_the_date_format(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2024-03-01\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(
+            driver.execute(
+                f"LOAD employees FROM '{path}' "
+                "(DATEFORMAT 'YYYY-MM-DD', TIMESTAMPFORMAT 'YYYY-MM-DD HH24:MI:SS')"
+            )
+        )
+        applied = _alter_session_calls(cur)[:3]
+        assert "NLS_DATE_FORMAT = 'YYYY-MM-DD'" in applied[0]
+        assert "NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS'" in applied[1]
+
+    def test_timestamp_format_alone_leaves_the_date_format(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2024-03-01\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(
+            driver.execute(
+                f"LOAD employees FROM '{path}' (TIMESTAMPFORMAT 'YYYY-MM-DD')"
+            )
+        )
+        applied = _alter_session_calls(cur)[:2]
+        assert applied == [
+            "ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD'",
+            "ALTER SESSION SET NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD'",
+        ]
+
+    def test_quotes_in_a_format_model_are_escaped(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2024-03-01\n")
+        driver, cur = _make_load_driver()
+        asyncio.run(
+            driver.execute(f"LOAD employees FROM '{path}' (DATEFORMAT 'YY''MM')")
+        )
+        assert _alter_session_calls(cur)[0] == (
+            "ALTER SESSION SET NLS_DATE_FORMAT = 'YY''MM'"
+        )
+
+
+class TestLoadConversionHint:
+    def test_date_error_names_the_session_format(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2026-09-04\n")
+        error = _make_db_error("ORA-01843: not a valid month")
+        driver, _ = _make_load_driver(error=error)
+        with pytest.raises(DriverError, match="NLS_DATE_FORMAT 'DD-MON-RR'"):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+
+    def test_date_error_suggests_the_option(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2026-09-04\n")
+        error = _make_db_error("ORA-01861: literal does not match format string")
+        driver, _ = _make_load_driver(error=error)
+        with pytest.raises(DriverError, match="DATEFORMAT 'YYYY-MM-DD'"):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+
+    def test_hint_points_at_the_given_format_when_one_was_set(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("2026-09-04\n")
+        error = _make_db_error("ORA-01843: not a valid month")
+        driver, _ = _make_load_driver(error=error)
+        with pytest.raises(DriverError, match="neither format the load set"):
+            asyncio.run(
+                driver.execute(
+                    f"LOAD employees FROM '{path}' (DATEFORMAT 'DD/MM/YYYY')"
+                )
+            )
+
+    def test_hint_names_the_timestamp_model_too(self, tmp_path) -> None:
+        """A TIMESTAMP column converts through its own model, not the date one."""
+        path = tmp_path / "e.csv"
+        path.write_text("2026-09-04\n")
+        error = _make_db_error("ORA-01843: not a valid month")
+        driver, _ = _make_load_driver(error=error)
+        with pytest.raises(
+            DriverError, match="NLS_TIMESTAMP_FORMAT 'DD-MON-RR HH.MI.SSXFF AM'"
+        ):
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+
+    def test_unrelated_error_gets_no_hint(self, tmp_path) -> None:
+        path = tmp_path / "e.csv"
+        path.write_text("x\n")
+        error = _make_db_error("ORA-01722: invalid number")
+        driver, _ = _make_load_driver(error=error)
+        with pytest.raises(DriverError) as excinfo:
+            asyncio.run(driver.execute(f"LOAD employees FROM '{path}'"))
+        assert "NLS_DATE_FORMAT" not in str(excinfo.value)

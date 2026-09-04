@@ -1,6 +1,7 @@
 """Oracle driver — requires: pip install oracledb"""
 
 import asyncio
+import csv
 import logging
 import re
 from typing import Any
@@ -36,8 +37,17 @@ from ..base import (
     group_references_by_column,
     group_references_by_ref_column,
 )
+from .load import (
+    LoadCommand,
+    LoadOptions,
+    build_insert_statement,
+    parse_load,
+    read_rows,
+    validate_identifier,
+)
 from .queries import (
     _exec,
+    _executemany,
     MAX_DBMS_OUTPUT_LINES,
     ColumnDetail,
     apply_metadata_transform,
@@ -62,6 +72,7 @@ from .queries import (
     fetch_incoming_references,
     fetch_index_names_and_types,
     fetch_join_tables_for_index,
+    fetch_nls_formats,
     fetch_join_tables_for_table,
     fetch_column_sample,
     fetch_outgoing_references,
@@ -71,6 +82,7 @@ from .queries import (
     fetch_table_sample_rows,
     fetch_tables_and_views,
     render_lob,
+    set_nls_format,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,7 +127,9 @@ class OracleDriver(BaseDriver):
 
 Uses the `oracledb` driver in thin mode — no Oracle Instant Client required.
 
-**Queries:** Standard SQL.
+### Queries
+
+Standard SQL.
 
 ```sql
 SELECT * FROM employees WHERE department_id = 10 AND hire_date > DATE '2024-01-01'
@@ -124,7 +138,55 @@ INSERT INTO employees (department_id, name) VALUES (10, 'Alice')
 ALTER SESSION SET NLS_LENGTH_SEMANTICS = CHAR
 ```
 
-**Resources:**
+### Importing from a file
+
+```
+LOAD <table> [(column_list)] [FROM] '/local/path' [(options)]
+```
+
+Oracle has no `\\copy`: SQL*Loader is a separate binary and an external table
+reads the *database server's* filesystem, so this does what SQLcl's `LOAD`
+does — the file is read on the machine running grannos-py, parsed here, and
+sent as batched INSERTs. `FROM` is optional, so SQLcl's
+`LOAD <table> '/local/path'` works too.
+
+Target columns come from the explicit `(column_list)` if given, else from the
+file's header row if `HEADER` is set, else from the table's own column order.
+
+**Options** — comma-separated inside the parentheses, in any order:
+
+- `FORMAT csv` — the only format, and the default.
+- `HEADER` — the first row names the columns instead of carrying data.
+- `DELIMITER ','` — field separator, one character; `'\\t'` means tab.
+- `QUOTE '"'` — quote character.
+- `NULL 'text'` — field value to load as NULL. An unquoted empty field is
+  always NULL, a quoted `""` never is.
+- `SKIP 0` — leading lines to discard before the header.
+- `BATCH 1000` — rows per round-trip.
+- `ENCODING 'utf-8'` — how to decode the file.
+- `DATEFORMAT 'YYYY-MM-DD'` — how the file writes its dates. Values are bound
+  as text and converted by Oracle through the session's NLS format models,
+  which default to `DD-MON-RR` and reject an ISO date with `ORA-01843`; this
+  sets them for the load and puts the session's back afterwards. It covers
+  DATE *and* TIMESTAMP columns, which convert through separate models.
+- `TIMESTAMPFORMAT 'YYYY-MM-DD HH24:MI:SS'` — overrides `DATEFORMAT` for
+  TIMESTAMP columns, for a file whose timestamps carry a time and whose dates
+  don't.
+
+**Examples:**
+
+```sql
+LOAD employees FROM '/tmp/employees.csv' (FORMAT csv, HEADER)
+LOAD employees FROM '/tmp/employees.csv' (HEADER, DATEFORMAT 'YYYY-MM-DD')
+LOAD hr.employees (name, department_id) FROM '/tmp/employees.csv' (HEADER, BATCH 5000)
+LOAD employees FROM '/tmp/employees.tsv' (DELIMITER '\\t', SKIP 2, NULL 'NA')
+```
+
+A row Oracle rejects aborts the load, naming the line it occupies in the file
+(counting from 1, header included); rows already sent stay uncommitted, so
+`ROLLBACK` undoes a partial load.
+
+### Resources
 
 ```
 (root)  ← non-system schemas (ALL_USERS where ORACLE_MAINTAINED = 'N')
@@ -138,11 +200,14 @@ Describing a table or view returns column metadata (name, type, nullability,
 primary key flag, default). Describing an index returns its key fields,
 direction, and uniqueness.
 
-**Session properties:** run `ALTER SESSION SET <property> = <value>` like any
-other statement. It's remembered per-connection and automatically re-applied
+### Session properties
+
+Run `ALTER SESSION SET <property> = <value>` like any other statement. It's remembered per-connection and automatically re-applied
 if the connection is silently reconnected (e.g. after an idle timeout).
 
-**PL/SQL:** anonymous blocks and `CREATE PROCEDURE`/`FUNCTION`/`PACKAGE` run as
+### PL/SQL
+
+Anonymous blocks and `CREATE PROCEDURE`/`FUNCTION`/`PACKAGE` run as
 ordinary statements — send the whole block, embedded `;` and all. Do *not*
 include a trailing `/`: that's a SQL\\*Plus command, not SQL, and it's rejected
 with an explicit error.
@@ -160,7 +225,9 @@ A PL/SQL object that compiles *with errors* is reported by Oracle as a
 successful CREATE; its compilation errors come back as `warning` messages
 carrying the line and column of the offending token.
 
-**Transactions:** writes are not auto-committed. Run `COMMIT` (or `ROLLBACK`)
+### Transactions
+
+Writes are not auto-committed. Run `COMMIT` (or `ROLLBACK`)
 explicitly — anything uncommitted is lost when the connection closes, including
 after an idle timeout.
 """
@@ -254,6 +321,10 @@ after an idle timeout.
         Raises:
             ConnectionLostError: If the connection was lost during execution.
         """
+        load_cmd = parse_load(query)
+        if load_cmd is not None:
+            return await self._execute_load(load_cmd)
+
         binds = binds or []
         _reject_sqlplus_terminator(query)
 
@@ -302,6 +373,172 @@ after an idle timeout.
             if isinstance(exc, oracledb.DatabaseError):
                 raise DriverError(_format_db_error(exc, query)) from exc
             raise
+
+    async def _execute_load(self, cmd: LoadCommand) -> WriteResult:
+        """Load a local delimited file into a table, a batch of rows per round-trip.
+
+        Oracle's own loaders are out of reach from here: SQL*Loader is a
+        separate binary and an external table reads the *server's* filesystem,
+        so — like SQLcl's LOAD — the file is parsed client-side and sent as
+        ordinary array INSERTs. Values are bound as text and left to Oracle's
+        implicit conversion, which for DATE and TIMESTAMP columns runs through
+        the session's NLS formats — hence the DATEFORMAT option, applied to the
+        session for the duration of the load and put back afterwards.
+        """
+        options = cmd.options
+        try:
+            handle = open(cmd.path, newline="", encoding=options.encoding)
+        except OSError as exc:
+            raise DriverError(f"could not read {cmd.path!r}: {exc}") from exc
+        except LookupError as exc:
+            raise DriverError(f"unknown encoding {options.encoding!r}") from exc
+
+        loaded = 0
+        cur = self._conn.cursor()
+        restore = await self._apply_load_formats(cur, options)
+        try:
+            with handle:
+                header, rows = read_rows(handle, options)
+                columns = cmd.columns or header
+                if columns is not None:
+                    for name in columns:
+                        validate_identifier(name, "column name")
+
+                statement = ""
+                width = 0
+                batch: list[tuple[int, list[str | None]]] = []
+                for line, row in rows:
+                    if not statement:
+                        width = len(columns) if columns else len(row)
+                        statement = build_insert_statement(cmd.table, columns, width)
+                    if len(row) != width:
+                        raise DriverError(
+                            f"line {line} of {cmd.path} has "
+                            f"{len(row)} fields, expected {width}"
+                        )
+                    batch.append((line, row))
+                    if len(batch) >= options.batch:
+                        await self._load_batch(cur, statement, batch, cmd)
+                        loaded += len(batch)
+                        batch = []
+                if batch:
+                    await self._load_batch(cur, statement, batch, cmd)
+                    loaded += len(batch)
+
+            invalidate_cache(self._conn)
+            return WriteResult(
+                rows_affected=loaded,
+                messages=await self._collect_messages(cur, ""),
+            )
+        except DriverError:
+            raise
+        except UnicodeDecodeError as exc:
+            raise DriverError(
+                f"{cmd.path!r} is not valid {exc.encoding} at byte {exc.start} "
+                f"({exc.reason}) — set a different ENCODING"
+            ) from exc
+        except csv.Error as exc:
+            raise DriverError(f"could not parse {cmd.path!r}: {exc}") from exc
+        except OSError as exc:
+            raise DriverError(f"could not read {cmd.path!r}: {exc}") from exc
+        finally:
+            await self._restore_load_formats(cur, restore)
+
+    async def _apply_load_formats(
+        self, cur: Any, options: LoadOptions
+    ) -> dict[str, str]:
+        """Apply the NLS formats a load asked for, returning what to put back.
+
+        A text bind reaches a DATE or TIMESTAMP column through the session's
+        format model, so this is set on the session rather than per value —
+        and only for the load, since a query run afterwards would otherwise
+        silently render its dates a different way.
+        """
+        # A DATE and a TIMESTAMP column are converted through different models,
+        # and a file's dates are written one way whatever column they land in,
+        # so DATEFORMAT alone covers both unless TIMESTAMPFORMAT overrides it.
+        timestamp = options.timestamp_format or options.date_format
+        wanted = {
+            "NLS_DATE_FORMAT": options.date_format,
+            "NLS_TIMESTAMP_FORMAT": timestamp,
+            "NLS_TIMESTAMP_TZ_FORMAT": timestamp,
+        }
+        wanted = {k: v for k, v in wanted.items() if v is not None}
+        if not wanted:
+            return {}
+
+        previous = await fetch_nls_formats(self._conn)
+        for parameter, value in wanted.items():
+            await set_nls_format(cur, parameter, value)
+        return {k: v for k, v in previous.items() if k in wanted}
+
+    async def _restore_load_formats(self, cur: Any, previous: dict[str, str]) -> None:
+        """Put back what :meth:`_apply_load_formats` replaced.
+
+        Never raises: this runs in a finally, where an exception of its own
+        would replace the error the client actually needs to see.
+        """
+        for parameter, value in previous.items():
+            try:
+                await set_nls_format(cur, parameter, value)
+            except Exception as exc:
+                logger.debug("Failed to restore %s: %s", parameter, exc)
+
+    async def _load_batch(
+        self,
+        cur: Any,
+        statement: str,
+        batch: list[tuple[int, list[str | None]]],
+        cmd: LoadCommand,
+    ) -> None:
+        """Send one batch of rows, naming the offending line if Oracle rejects one.
+
+        After a failed array DML ``rowcount`` holds the rows that did go in, so
+        the row the client has to go and fix can be pointed at by the line it
+        occupies in the file rather than left for them to find.
+        """
+        try:
+            await _executemany(cur, statement, [values for _, values in batch])
+        except Exception as exc:
+            _maybe_raise_connection_lost(exc)
+            if isinstance(exc, oracledb.DatabaseError):
+                done = min(max(cur.rowcount or 0, 0), len(batch) - 1)
+                message = _exc_message(exc)
+                raise DriverError(
+                    f"{message} (line {batch[done][0]} of {cmd.path})"
+                    f"{await self._conversion_hint(message, cmd.options)}"
+                ) from exc
+            raise
+
+    async def _conversion_hint(self, message: str, options: LoadOptions) -> str:
+        """Name the format models behind a failed datetime conversion.
+
+        ORA-01843 on a row that looks perfectly well-formed is a session
+        setting, not a broken file — but the error says only that the month was
+        invalid, leaving the reader to guess which layout Oracle expected. Both
+        models are named because the error doesn't say which column it came
+        from, and a DATE and a TIMESTAMP column don't share one.
+        """
+        if not any(code in message for code in _DATE_CONVERSION_ERRORS):
+            return ""
+        try:
+            formats = await fetch_nls_formats(self._conn)
+        except Exception as exc:
+            logger.debug("Failed to read NLS formats: %s", exc)
+            return ""
+
+        shown = ", ".join(
+            f"{parameter} {formats[parameter]!r}"
+            for parameter in ("NLS_DATE_FORMAT", "NLS_TIMESTAMP_FORMAT")
+            if parameter in formats
+        )
+        if options.date_format is not None or options.timestamp_format is not None:
+            return f" — the value matches neither format the load set ({shown})"
+        return (
+            f" — datetime values in the file must match the session's format "
+            f"models ({shown}); add e.g. (DATEFORMAT 'YYYY-MM-DD') to the LOAD, "
+            "which sets both"
+        )
 
     async def _collect_messages(self, cur: Any, query: str) -> list[ExecuteMessage]:
         """Gather the out-of-band messages a just-executed statement produced.
@@ -702,6 +939,25 @@ _TEXT_DB_TYPES = (
     oracledb.DB_TYPE_LONG,
 )
 """Character types fetched as str, and so decoded with the database charset."""
+
+
+_DATE_CONVERSION_ERRORS = frozenset(
+    {
+        "ORA-01830",  # date format picture ends before converting entire string
+        "ORA-01839",  # date not valid for month specified
+        "ORA-01840",  # input value not long enough for date format
+        "ORA-01841",  # full year must be between -4713 and +9999
+        "ORA-01843",  # not a valid month
+        "ORA-01846",  # not a valid day of the week
+        "ORA-01847",  # day of month must be between 1 and last day of month
+        "ORA-01858",  # a non-numeric character was found where a numeric was expected
+        "ORA-01861",  # literal does not match format string
+        "ORA-01862",  # the numeric value does not match the length of the format item
+        "ORA-01865",  # not a valid era
+    }
+)
+"""Errors Oracle raises when a text value doesn't fit the format model it's
+being converted through — in a load, almost always the session's own."""
 
 
 def _replace_undecodable_text(cursor: Any, metadata: Any) -> Any:

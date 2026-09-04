@@ -1099,3 +1099,188 @@ class TestExploreFind:
         self, driver: OracleDriver
     ) -> None:
         assert await driver.explore_find(NodeType.TABLE, "T_NO_SUCH_TABLE", []) == []
+
+
+_NLS_DATE_FORMAT_QUERY = (
+    "SELECT value FROM nls_session_parameters WHERE parameter = 'NLS_DATE_FORMAT'"
+)
+
+
+class TestLoad:
+    async def test_loads_a_csv_with_a_header(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (ID NUMBER, NAME VARCHAR2(50))", []
+        )
+        path = tmp_path / "rows.csv"
+        path.write_text("ID,NAME\n1,alice\n2,bob\n")
+
+        result = await driver.execute(f"LOAD {schema}.{table} FROM '{path}' (HEADER)")
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 2
+
+        rows = await driver.execute(
+            f"SELECT ID, NAME FROM {schema}.{table} ORDER BY ID"
+        )
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [[1, "alice"], [2, "bob"]]
+
+    async def test_loads_a_headerless_file_in_table_column_order(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (ID NUMBER, NAME VARCHAR2(50))", []
+        )
+        path = tmp_path / "rows.csv"
+        path.write_text("1,alice\n")
+
+        result = await driver.execute(f"LOAD {schema}.{table} '{path}'")
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+        rows = await driver.execute(f"SELECT NAME FROM {schema}.{table}")
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [["alice"]]
+
+    async def test_loads_a_subset_of_columns_and_nulls(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} "
+            "(ID NUMBER, NAME VARCHAR2(50), NOTE VARCHAR2(50))",
+            [],
+        )
+        path = tmp_path / "rows.tsv"
+        path.write_text("1\tNA\n2\tzed\n")
+
+        result = await driver.execute(
+            f"LOAD {schema}.{table} (ID, NAME) FROM '{path}' "
+            "(DELIMITER '\\t', NULL 'NA')"
+        )
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 2
+
+        rows = await driver.execute(f"SELECT NAME FROM {schema}.{table} ORDER BY ID")
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [[None], ["zed"]]
+
+    async def test_dates_convert_through_the_session_format(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (HIRED DATE)", [])
+        await driver.execute("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'", [])
+        path = tmp_path / "rows.csv"
+        path.write_text("2024-03-01\n")
+
+        result = await driver.execute(f"LOAD {schema}.{table} FROM '{path}'")
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+        rows = await driver.execute(
+            f"SELECT TO_CHAR(HIRED, 'YYYY-MM-DD') FROM {schema}.{table}"
+        )
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [["2024-03-01"]]
+
+    async def test_date_format_option_converts_iso_dates(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (HIRED DATE)", [])
+        path = tmp_path / "rows.csv"
+        path.write_text("HIRED\n2026-09-04\n")
+
+        result = await driver.execute(
+            f"LOAD {schema}.{table} FROM '{path}' (HEADER, DATEFORMAT 'YYYY-MM-DD')"
+        )
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+        rows = await driver.execute(
+            f"SELECT TO_CHAR(HIRED, 'YYYY-MM-DD') FROM {schema}.{table}"
+        )
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [["2026-09-04"]]
+
+    async def test_date_format_option_is_restored_after_the_load(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (HIRED DATE)", [])
+        before = await driver.execute(_NLS_DATE_FORMAT_QUERY, [])
+        assert isinstance(before, ReadResult)
+        path = tmp_path / "rows.csv"
+        path.write_text("2026-09-04\n")
+
+        await driver.execute(
+            f"LOAD {schema}.{table} FROM '{path}' (DATEFORMAT 'YYYY-MM-DD')"
+        )
+
+        after = await driver.execute(_NLS_DATE_FORMAT_QUERY, [])
+        assert isinstance(after, ReadResult)
+        assert after.rows == before.rows
+
+    async def test_date_conversion_failure_names_the_session_format(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (HIRED DATE)", [])
+        path = tmp_path / "rows.csv"
+        path.write_text("2026-09-04\n")
+
+        with pytest.raises(Exception, match="NLS_DATE_FORMAT"):
+            await driver.execute(f"LOAD {schema}.{table} FROM '{path}'")
+
+    async def test_date_format_covers_timestamp_columns(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        """A TIMESTAMP column converts through NLS_TIMESTAMP_FORMAT, which
+        DATEFORMAT has to reach as well or an ISO file still fails."""
+        await driver.execute(f"CREATE TABLE {schema}.{table} (SEEN TIMESTAMP(6))", [])
+        path = tmp_path / "rows.csv"
+        path.write_text("SEEN\n2026-09-04\n")
+
+        result = await driver.execute(
+            f"LOAD {schema}.{table} FROM '{path}' (HEADER, DATEFORMAT 'YYYY-MM-DD')"
+        )
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+        rows = await driver.execute(
+            f"SELECT TO_CHAR(SEEN, 'YYYY-MM-DD') FROM {schema}.{table}"
+        )
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [["2026-09-04"]]
+
+    async def test_timestamp_conversion_failure_names_both_models(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (SEEN TIMESTAMP(6))", [])
+        path = tmp_path / "rows.csv"
+        path.write_text("2026-09-04\n")
+
+        with pytest.raises(Exception, match="NLS_TIMESTAMP_FORMAT"):
+            await driver.execute(f"LOAD {schema}.{table} FROM '{path}'")
+
+    async def test_rejected_row_is_named_by_its_file_line(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (ID NUMBER)", [])
+        path = tmp_path / "rows.csv"
+        path.write_text("ID\n1\n2\nnot-a-number\n")
+
+        with pytest.raises(Exception, match="line 4 of"):
+            await driver.execute(f"LOAD {schema}.{table} FROM '{path}' (HEADER)")
+
+    async def test_a_partial_load_can_be_rolled_back(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        await driver.execute(f"CREATE TABLE {schema}.{table} (ID NUMBER)", [])
+        path = tmp_path / "rows.csv"
+        path.write_text("1\n2\nnot-a-number\n")
+
+        with pytest.raises(Exception):
+            await driver.execute(f"LOAD {schema}.{table} FROM '{path}' (BATCH 1)")
+        await driver.execute("ROLLBACK", [])
+
+        rows = await driver.execute(f"SELECT COUNT(*) FROM {schema}.{table}")
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [[0]]

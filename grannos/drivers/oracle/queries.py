@@ -88,6 +88,22 @@ async def _exec(
         await cur.execute(sql)
 
 
+async def _executemany(cur: Any, sql: str, rows: Sequence[Sequence[Any]]) -> None:
+    """Log *sql* and run it over every row in *rows* in one array-DML round-trip.
+
+    The bulk counterpart of :func:`_exec`, logged as a single line since the
+    statement is the same for all of them. Binds are never logged: the only
+    caller is a load of the user's own data.
+
+    Args:
+        cur: Open cursor to execute on.
+        sql: Statement text, with one bind placeholder per column.
+        rows: One sequence of bind values per row.
+    """
+    log_query(logger, f"{sql} -- {len(rows)} rows")
+    await cur.executemany(sql, [list(row) for row in rows])
+
+
 def _conn_cache(fn):
     """Cache async query results per connection, keyed on positional args after *conn*.
 
@@ -168,6 +184,48 @@ async def fetch_explain_plan(cur: AsyncCursor) -> list[str]:
     """
     await _exec(cur, "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())")
     return [r[0] for r in await cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Session NLS formats
+# ---------------------------------------------------------------------------
+
+NLS_FORMAT_PARAMETERS = (
+    "NLS_DATE_FORMAT",
+    "NLS_TIMESTAMP_FORMAT",
+    "NLS_TIMESTAMP_TZ_FORMAT",
+)
+"""The session formats a text bind is converted through on its way into a
+datetime column — one per column type, so a DATE and a TIMESTAMP holding the
+same text are converted through different models."""
+
+
+async def fetch_nls_formats(conn: AsyncConnection) -> dict[str, str]:
+    """Return the session's current date and timestamp conversion formats.
+
+    Never cached: a load sets them for its own duration, and the user can set
+    them at any time with ALTER SESSION.
+    """
+    cur = conn.cursor()
+    placeholders = ", ".join(f":{i}" for i in range(1, len(NLS_FORMAT_PARAMETERS) + 1))
+    await _exec(
+        cur,
+        "SELECT parameter, value FROM nls_session_parameters "
+        f"WHERE parameter IN ({placeholders})",
+        NLS_FORMAT_PARAMETERS,
+    )
+    return {parameter: value for parameter, value in await cur.fetchall()}
+
+
+async def set_nls_format(cur: Any, parameter: str, value: str) -> None:
+    """Set one NLS format for the session.
+
+    *parameter* is picked from :data:`NLS_FORMAT_PARAMETERS`, never from user
+    text; *value* is a user-supplied format model, which ALTER SESSION takes
+    as a literal rather than a bind, so its quotes are escaped here.
+    """
+    literal = value.replace("'", "''")
+    await _exec(cur, f"ALTER SESSION SET {parameter} = '{literal}'")
 
 
 # ---------------------------------------------------------------------------

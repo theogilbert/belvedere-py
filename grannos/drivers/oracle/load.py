@@ -71,7 +71,8 @@ class LoadOptions:
     """First row (after SKIP) names the target columns rather than carrying data."""
     skip: int = 0
     null: str | None = None
-    """Field value to load as NULL. Unquoted empty fields are always NULL."""
+    """Field value to load as NULL. Empty fields already load as NULL, Oracle
+    storing a zero-length string that way in every column type."""
     batch: int = DEFAULT_BATCH
     encoding: str = "utf-8"
     date_format: str | None = None
@@ -245,15 +246,16 @@ def read_rows(
 ) -> tuple[list[str] | None, Iterator[tuple[int, list[str | None]]]]:
     """Return the header row (if any) and a lazy iterator over the data rows.
 
-    ``QUOTE_NOTNULL`` makes the reader hand back an unquoted empty field as
-    None and a quoted one as an empty string, which is the distinction the
-    ``NULL`` option would otherwise have to encode by hand.
+    Empty fields are left as empty strings rather than read back as None:
+    Oracle stores a zero-length string as NULL in every column type, so the
+    quoted/unquoted distinction ``csv.QUOTE_NOTNULL`` draws cannot reach a
+    table — and the reader honours that flag only from Python 3.13. A file
+    that marks its nulls some other way is served by the ``NULL`` option.
     """
     reader = csv.reader(
         f,
         delimiter=options.delimiter,
         quotechar=options.quote,
-        quoting=csv.QUOTE_NOTNULL,
     )
     for _ in range(options.skip):
         next(reader, None)
@@ -277,9 +279,7 @@ def _data_rows(
     for row in reader:
         if not row:  # a blank line in the middle of the file
             continue
-        # QUOTE_NOTNULL hands back an unquoted empty field as None, which the
-        # stdlib's own signature — written for the default dialect — can't say.
-        values: list[str | None] = row
+        values: list[str | None] = list(row)
         if options.null is not None:
             values = [None if v == options.null else v for v in values]
         yield reader.line_num, values

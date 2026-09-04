@@ -1281,6 +1281,27 @@ class TestLoad:
         assert isinstance(rows, ReadResult)
         assert rows.rows == [[None], ["zed"]]
 
+    async def test_empty_fields_load_as_null_whatever_the_column_type(
+        self, driver: OracleDriver, schema: str, table: str, tmp_path
+    ) -> None:
+        """What lets the reader stop telling a quoted \"\" from an unquoted empty
+        field: Oracle stores a zero-length string as NULL in every column type,
+        so neither form can reach a table as anything else."""
+        await driver.execute(
+            f"CREATE TABLE {schema}.{table} (ID NUMBER, NAME VARCHAR2(50), HIRED DATE)",
+            [],
+        )
+        path = tmp_path / "rows.csv"
+        path.write_text('1,"",\n')
+
+        result = await driver.execute(f"LOAD {schema}.{table} FROM '{path}'")
+        assert isinstance(result, WriteResult)
+        assert result.rows_affected == 1
+
+        rows = await driver.execute(f"SELECT ID, NAME, HIRED FROM {schema}.{table}")
+        assert isinstance(rows, ReadResult)
+        assert rows.rows == [[1, None, None]]
+
     async def test_dates_convert_through_the_session_format(
         self, driver: OracleDriver, schema: str, table: str, tmp_path
     ) -> None:

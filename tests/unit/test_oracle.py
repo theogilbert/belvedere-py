@@ -804,6 +804,14 @@ class TestExploreFind:
         assert "ORACLE_MAINTAINED" not in sql
         assert "NOT IN" in sql
 
+    def test_find_stays_one_round_trip(self) -> None:
+        """The union's branches are SQL fragments built in Python, not queries
+        of their own — a driver that resolved synonyms with a second execute
+        would double the cost of every table find."""
+        driver = _make_driver([], has_oracle_maintained=True)
+        asyncio.run(driver.explore_find(NodeType.TABLE, "emp", []))
+        assert driver._conn.cursor().execute.call_count == 1  # ty: ignore[unresolved-attribute]
+
     def test_synonym_resolves_to_its_base_object(self) -> None:
         """The tree holds no synonyms, so a find returns the path of what the
         synonym points at — which is also what makes every synonym of one table
@@ -1061,12 +1069,15 @@ class TestReadRows:
             # line 1 was skipped and line 2 was the header, so the data starts at 3
             assert list(rows) == [(3, ["1", "alice"])]
 
-    def test_unquoted_empty_field_is_null_quoted_is_not(self, tmp_path) -> None:
+    def test_empty_field_is_read_as_an_empty_string(self, tmp_path) -> None:
+        """Quoted or not, an empty field lands in Oracle as NULL — it stores a
+        zero-length string that way whatever the column type — so the reader
+        need not tell the two apart (and could not before Python 3.13)."""
         path = tmp_path / "e.csv"
         path.write_text('1,,""\n')
         with open(path, newline="") as f:
             _, rows = read_rows(f, LoadOptions())
-            assert list(rows) == [(1, ["1", None, ""])]
+            assert list(rows) == [(1, ["1", "", ""])]
 
     def test_null_option_maps_sentinel(self, tmp_path) -> None:
         path = tmp_path / "e.csv"

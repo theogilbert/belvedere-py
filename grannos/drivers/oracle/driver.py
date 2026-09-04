@@ -159,8 +159,8 @@ file's header row if `HEADER` is set, else from the table's own column order.
 - `HEADER` — the first row names the columns instead of carrying data.
 - `DELIMITER ','` — field separator, one character; `'\\t'` means tab.
 - `QUOTE '"'` — quote character.
-- `NULL 'text'` — field value to load as NULL. An unquoted empty field is
-  always NULL, a quoted `""` never is.
+- `NULL 'text'` — field value to load as NULL. An empty field, quoted or not,
+  is already NULL: Oracle stores a zero-length string that way.
 - `SKIP 0` — leading lines to discard before the header.
 - `BATCH 1000` — rows per round-trip.
 - `ENCODING 'utf-8'` — how to decode the file.
